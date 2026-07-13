@@ -4,6 +4,8 @@
 #include "freertos/task.h"
 #include "usb_cdc.h"
 #include "config_store.h"
+#include "display_model.h"
+#include "display_view.h"
 #include "unity.h"
 
 static const char *TAG = "main";
@@ -68,6 +70,14 @@ void app_main(void)
     RUN_TEST(test_overflow_drops_oldest);
     RUN_TEST(test_client_at_enumerates);
     UNITY_END();
+
+    /* 显示初始化 + 演示渲染（无 Wi-Fi 时显示配网态） */
+    dv_init();
+    dm_init();
+    dm_notify("espdev:claude", "demo", "hello", "build ok");
+    dv_render_status_bar();
+    dv_render_main();
+    dv_flush();
 
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(1000));
