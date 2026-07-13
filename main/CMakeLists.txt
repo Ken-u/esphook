@@ -1,8 +1,10 @@
 idf_component_register(
     SRCS "main.c" "usb_cdc.c" "config_store.c" "display_model.c" "display_view.c"
          "net_wifi.c" "beeper.c" "events.c" "http_server.c"
+         "input_task.c" "display_task.c"
          "test/test_config_store.c" "test/test_display_model.c"
     INCLUDE_DIRS "."
     REQUIRES nvs_flash esp_driver_usb_serial_jtag esp_driver_spi esp_driver_gpio
-             esp_driver_ledc esp_wifi esp_netif esp_event esp_http_server json unity
+             esp_driver_ledc esp_wifi esp_netif esp_event esp_http_server esp_http_client
+             json unity
 )
