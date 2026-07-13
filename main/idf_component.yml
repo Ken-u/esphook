@@ -1,5 +1,4 @@
 ## IDF Component Manager Manifest File
+## C3 用内置 USB Serial/JTAG（IDF driver 组件），不需要 esp_tinyusb
 dependencies:
-  espressif/esp_tinyusb:
-    version: "^2.0.0"
   idf: "^5.0"
