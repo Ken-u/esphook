@@ -13,33 +13,8 @@
 #include "http_server.h"
 #include "input_task.h"
 #include "display_task.h"
-#include "unity.h"
 
 static const char *TAG = "main";
-
-/* test_config_store.c */
-void test_keymap_default(void);
-void test_keymap_set_get(void);
-void test_keymap_partial_set(void);
-void test_keymap_index_out_of_range(void);
-void test_display_name_missing(void);
-void test_display_name_set_get(void);
-void test_display_name_delete(void);
-void test_wifi_roundtrip(void);
-
-/* test_display_model.c */
-void test_notify_increments(void);
-void test_dismiss_decrements(void);
-void test_dismiss_removes_when_zero(void);
-void test_dismiss_nonexistent_noop(void);
-void test_multi_session_same_client_sums(void);
-void test_dismiss_one_session_only(void);
-void test_multi_client_separate(void);
-void test_current_set_on_notify(void);
-void test_clear_current(void);
-void test_dismiss_current_clears_current(void);
-void test_overflow_drops_oldest(void);
-void test_client_at_enumerates(void);
 
 static bool s_http_started = false;
 
@@ -88,31 +63,6 @@ void app_main(void)
     /* 尝试连 Wi-Fi（有凭证则连，连上后启 http） */
     wifi_set_state_cb(on_wifi_state);
     wifi_start();
-
-    /* unity 自测（开发期；发布可关） */
-    UNITY_BEGIN();
-    RUN_TEST(test_keymap_default);
-    RUN_TEST(test_keymap_partial_set);
-    RUN_TEST(test_keymap_index_out_of_range);
-    RUN_TEST(test_display_name_missing);
-    RUN_TEST(test_display_name_set_get);
-    RUN_TEST(test_display_name_delete);
-    RUN_TEST(test_wifi_roundtrip);
-    RUN_TEST(test_keymap_set_get);
-
-    RUN_TEST(test_notify_increments);
-    RUN_TEST(test_dismiss_decrements);
-    RUN_TEST(test_dismiss_removes_when_zero);
-    RUN_TEST(test_dismiss_nonexistent_noop);
-    RUN_TEST(test_multi_session_same_client_sums);
-    RUN_TEST(test_dismiss_one_session_only);
-    RUN_TEST(test_multi_client_separate);
-    RUN_TEST(test_current_set_on_notify);
-    RUN_TEST(test_clear_current);
-    RUN_TEST(test_dismiss_current_clears_current);
-    RUN_TEST(test_overflow_drops_oldest);
-    RUN_TEST(test_client_at_enumerates);
-    UNITY_END();
 
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(1000));
