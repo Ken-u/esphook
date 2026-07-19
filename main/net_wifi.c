@@ -52,6 +52,11 @@ esp_err_t wifi_start(void)
         return ESP_OK;
     }
 
+    /* netif 必须在创建 wifi sta 接口前初始化（否则断言失败 abort） */
+    ESP_ERROR_CHECK(esp_netif_init());
+    /* 事件循环（esp_event 库默认循环，若已创建则跳过） */
+    esp_event_loop_create_default();
+
     char ssid[64] = {0}, pass[64] = {0};
     config_get_wifi_ssid(ssid, sizeof ssid);
     config_get_wifi_pass(pass, sizeof pass);

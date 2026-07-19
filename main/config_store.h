@@ -20,3 +20,9 @@ esp_err_t config_set_display_name(const char *type, const char *id, const char *
 const char *config_get_display_name(const char *type, const char *id, char *out, size_t len);
 
 esp_err_t config_factory_reset(void);
+
+/* 已见 client/session 列表（持久化，供 Web 页渲染可编辑列表）。
+   type="client" 或 "session"。上限各 32。 */
+void config_seen_add(const char *type, const char *id);
+int  config_seen_count(const char *type);            /* 当前已见条数 */
+void config_seen_at(const char *type, int idx, char *out, size_t len); /* 取第 idx 个，越界返回空 */

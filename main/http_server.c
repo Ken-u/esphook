@@ -18,20 +18,30 @@
 
 static const char *TAG = "http";
 
-static const char *WEB_PAGE =
-"<!DOCTYPE html><html><head><meta charset='utf-8'>"
-"<meta name='viewport' content='width=device-width,initial-scale=1'>"
-"<title>aihook</title></head><body>"
-"<h2>Keymap</h2>"
-"<form method='post' action='/config'>"
-"K1:<input name='k0' maxlength='15'><br>"
-"K2:<input name='k1' maxlength='15'><br>"
-"K3:<input name='k2' maxlength='15'><br>"
-"<h2>Display names</h2>"
-"<textarea name='display' rows='5' cols='40' "
-"placeholder='type:id=name per line&#10;client:espdev:claude=Desktop&#10;session:abc=NES'></textarea><br>"
-"<button type='submit'>Save</button></form>"
-"</body></html>";
+static const char *WEB_CSS =
+":root{--bg:#0a0e14;--panel:#141a23;--line:#1f2733;--txt:#c5d0de;--dim:#5c6a7a;"
+"--acc:#00d9a3;--acc2:#00a3ff;--red:#ff4757;--y:#ffb800}"
+"*{box-sizing:border-box;margin:0;padding:0}"
+"body{background:var(--bg);color:var(--txt);font:14px/1.5 'SF Mono',Consolas,Menlo,monospace;"
+"padding:16px;max-width:520px;margin:0 auto}"
+"h1{font-size:18px;color:var(--acc);margin-bottom:16px;letter-spacing:1px}"
+"h1:before{content:'> ';color:var(--dim)}"
+".card{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:14px;margin-bottom:14px}"
+".card h2{font-size:13px;color:var(--acc2);margin-bottom:12px;text-transform:uppercase;letter-spacing:1px}"
+"label{display:flex;align-items:center;gap:10px;margin-bottom:8px}"
+"label span{color:var(--dim);width:28px;flex-shrink:0}"
+"input[type=text],textarea{flex:1;background:var(--bg);border:1px solid var(--line);color:var(--txt);"
+"border-radius:4px;padding:7px 9px;font:inherit;outline:none;min-width:0}"
+"input:focus,textarea:focus{border-color:var(--acc)}"
+"textarea{resize:vertical;min-height:70px;font-size:12px}"
+"button{background:var(--acc);color:var(--bg);border:0;border-radius:4px;padding:9px 18px;"
+"font:inherit;font-weight:bold;cursor:pointer;letter-spacing:1px;width:100%}"
+"button:hover{background:#00f0b5}"
+".hint{color:var(--dim);font-size:11px;margin-top:6px}"
+"code{color:var(--y)}"
+".row{display:flex;align-items:center;gap:8px;margin-bottom:7px}"
+".row .id{color:var(--dim);font-size:11px;width:38%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}"
+".row input{flex:1}";
 
 /* urldecode 极简：处理 %xx 和 + */
 static void urldecode(char *s)
@@ -114,6 +124,10 @@ static esp_err_t h_notify(httpd_req_t *req)
     set_last_callback(e.callback);
     cJSON_Delete(j);
 
+    /* 记已见 client/session（持久化，Web 页用） */
+    config_seen_add("client", e.client_id);
+    config_seen_add("session", e.session_id);
+
     xQueueSend(display_q, &e, 0);
     beep_kind_t bk = BEEP_NOTIFY;
     xQueueSend(beeper_q, &bk, 0);
@@ -167,33 +181,107 @@ static esp_err_t h_config(httpd_req_t *req)
     }
     config_set_keymap(keys);
 
-    /* display 名：解析 "type:id=name" 每行 */
-    char disp[512];
-    if (form_field(buf, "display=", disp, sizeof disp)) {
-        char *line = strtok(disp, "\r\n");
-        while (line) {
-            /* 格式 type:id=name */
-            char *eq = strchr(line, '=');
-            if (!eq) { line = strtok(NULL, "\r\n"); continue; }
-            *eq = '\0';
-            char *colon = strchr(line, ':');
-            if (colon) {
-                *colon = '\0';
-                config_set_display_name(line, colon + 1, eq + 1);
+    /* 解析形如 c:<id>=<name> 和 s:<id>=<name> 的字段（Web 页新格式）。
+       字段名以 c: 或 s: 开头。逐字段扫描，含末尾无 & 的最后一个字段。 */
+    const char *p = buf;
+    while (p && *p) {
+        const char *amp = strchr(p, '&');
+        const char *eq = strchr(p, '=');
+        if (eq && (!amp || eq < amp)) {
+            size_t namelen = eq - p;
+            if (namelen > 2 && p[1] == ':' && (p[0] == 'c' || p[0] == 's')) {
+                char id[64] = {0};
+                size_t idlen = namelen - 2;
+                if (idlen >= sizeof id) idlen = sizeof id - 1;
+                memcpy(id, p + 2, idlen); id[idlen] = '\0';
+                char val[32] = {0};
+                const char *vstart = eq + 1;
+                size_t vallen = amp ? (size_t)(amp - vstart) : strlen(vstart);
+                if (vallen >= sizeof val) vallen = sizeof val - 1;
+                memcpy(val, vstart, vallen); val[vallen] = '\0';
+                urldecode(id);
+                urldecode(val);
+                const char *type = (p[0] == 'c') ? "client" : "session";
+                if (val[0]) config_set_display_name(type, id, val);
             }
-            line = strtok(NULL, "\r\n");
         }
+        p = amp ? amp + 1 : NULL;
     }
 
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_sendstr(req, "{\"ok\":true}");
+    /* 返回带自动重定向的 HTML，避免白屏，刷新回配置页 */
+    httpd_resp_set_type(req, "text/html");
+    httpd_resp_sendstr(req,
+        "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+        "<meta http-equiv='refresh' content='0;url=/'>"
+        "<title>saved</title></head><body style='background:#0a0e14;color:#00d9a3;"
+        "font:14px monospace;padding:20px'>saved, redirecting...</body></html>");
     return ESP_OK;
 }
 
+/* 动态生成 Web 页：含已见 client/session 列表，每行带 id + 显示名输入框。 */
 static esp_err_t h_root(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html");
-    httpd_resp_sendstr(req, WEB_PAGE);
+    /* 逐块发，避免单次缓冲过大 */
+    httpd_resp_sendstr_chunk(req,
+        "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<title>aihook</title><style>");
+    httpd_resp_sendstr_chunk(req, WEB_CSS);
+    httpd_resp_sendstr_chunk(req, "</style></head><body>"
+        "<h1>aihook config</h1>"
+        "<form method='post' action='/config'>"
+        "<div class='card'><h2>Keymap</h2>"
+        "<label><span>K1</span><input type=text name='k0' maxlength='15'></label>"
+        "<label><span>K2</span><input type=text name='k1' maxlength='15'></label>"
+        "<label><span>K3</span><input type=text name='k2' maxlength='15'></label>"
+        "<div class='hint'>ASCII only. e.g. <code>ok continue done</code></div>"
+        "</div>");
+
+    /* client 列表卡片 */
+    httpd_resp_sendstr_chunk(req, "<div class='card'><h2>Clients</h2>");
+    int cn = config_seen_count("client");
+    if (cn == 0) {
+        httpd_resp_sendstr_chunk(req, "<div class='hint'>none yet (send a notify first)</div>");
+    }
+    for (int i = 0; i < cn; i++) {
+        char id[64] = {0};
+        config_seen_at("client", i, id, sizeof id);
+        char name[32] = {0};
+        config_get_display_name("client", id, name, sizeof name);
+        char row[320];
+        snprintf(row, sizeof(row),
+            "<div class='row'><span class='id'>%.30s</span>"
+            "<input name='c:%.50s' value='%.30s'></div>",
+            id, id, name);
+        httpd_resp_sendstr_chunk(req, row);
+    }
+    httpd_resp_sendstr_chunk(req, "</div>");
+
+    /* session 列表卡片 */
+    httpd_resp_sendstr_chunk(req, "<div class='card'><h2>Sessions</h2>");
+    int sn = config_seen_count("session");
+    if (sn == 0) {
+        httpd_resp_sendstr_chunk(req, "<div class='hint'>none yet</div>");
+    }
+    for (int i = 0; i < sn; i++) {
+        char id[64] = {0};
+        config_seen_at("session", i, id, sizeof id);
+        char name[32] = {0};
+        config_get_display_name("session", id, name, sizeof name);
+        char row[320];
+        snprintf(row, sizeof(row),
+            "<div class='row'><span class='id'>%.30s</span>"
+            "<input name='s:%.50s' value='%.30s'></div>",
+            id, id, name);
+        httpd_resp_sendstr_chunk(req, row);
+    }
+    httpd_resp_sendstr_chunk(req, "</div>");
+
+    httpd_resp_sendstr_chunk(req,
+        "<button type='submit'>SAVE</button>"
+        "</form></body></html>");
+    httpd_resp_sendstr_chunk(req, NULL);  /* 结束 */
     return ESP_OK;
 }
 

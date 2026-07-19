@@ -1,10 +1,18 @@
 /* main/display_view.c
- * ST7735 SPI 驱动 + 5x7 字库 + 布局。
- * 字库：Adafruit glcdfont 公共域 0x20~0x7E 段（95 字符 × 5 列）。
+ * ST7735 0.96" 80x160 横屏，用 esp_lcd 框架。
+ * panel_io(SPI) + ST7789 驱动复用(ST7735 命令集兼容)。
+ * 额外手动发 ST7735 专属 init 序列(FRMCTR/PWCTR/GAMMA/INVON)，
+ * 再用 esp_lcd 的 set_gap/mirror/invert/disp_on_off 完成配置。
+ *
+ * 验证参数(screen-test)：MADCTL=0x68(BGR+MV+MY), INVON, x_gap=1, y_gap=26
  */
 #include "display_view.h"
 #include "display_model.h"
 #include "config_store.h"
+#include "esp_lcd_panel_io.h"
+#include "esp_lcd_panel_ops.h"
+#include "esp_lcd_panel_vendor.h"
+#include "esp_lcd_panel_commands.h"
 #include "driver/spi_master.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
@@ -21,7 +29,11 @@ static const char *TAG = "dv";
 #define PIN_SDA 5
 #define PIN_BLK 1
 
-static spi_device_handle_t s_spi;
+#define X_GAP 1   /* 横屏 x 偏移(rowstart) */
+#define Y_GAP 26   /* 横屏 y 偏移(colstart) */
+
+static esp_lcd_panel_handle_t s_panel = NULL;
+static esp_lcd_panel_io_handle_t s_io = NULL;
 static uint16_t s_fb[DV_WIDTH * DV_HEIGHT];
 
 /* Adafruit glcdfont 5x7，0x20 起 95 字符。公共域。 */
@@ -60,61 +72,13 @@ static const uint8_t FONT[][5] = {
   {0x00,0x41,0x36,0x08,0x00},{0x02,0x01,0x02,0x04,0x02},{0x3C,0x26,0x23,0x26,0x3C},
 };
 
-static void dc_cmd(void) { gpio_set_level(PIN_DC, 0); }
-static void dc_data(void) { gpio_set_level(PIN_DC, 1); }
-
-static void spi_send_cmd(uint8_t cmd)
-{
-    dc_cmd();
-    spi_transaction_t t = {0};
-    t.length = 8;
-    t.tx_buffer = &cmd;
-    spi_device_polling_transmit(s_spi, &t);
-}
-
-static void spi_send_data(const uint8_t *data, int len)
-{
-    dc_data();
-    spi_transaction_t t = {0};
-    t.length = len * 8;
-    t.tx_buffer = data;
-    spi_device_polling_transmit(s_spi, &t);
-}
-
-static void st7735_init(void)
-{
-    gpio_set_level(PIN_RST, 0);
-    vTaskDelay(pdMS_TO_TICKS(100));
-    gpio_set_level(PIN_RST, 1);
-    vTaskDelay(pdMS_TO_TICKS(100));
-
-    spi_send_cmd(0x11); /* SLPOUT */
-    vTaskDelay(pdMS_TO_TICKS(120));
-
-    spi_send_cmd(0x3A); /* COLMOD 16bit */
-    uint8_t colmod = 0x05;
-    spi_send_data(&colmod, 1);
-
-    /* MINI160x80：列地址 0..80，行地址 0..160（横屏后宽160高80） */
-    spi_send_cmd(0x2A); uint8_t cx[4] = {0,0,0,80}; spi_send_data(cx,4);
-    spi_send_cmd(0x2B); uint8_t cy[4] = {0,26,0,154}; spi_send_data(cy,4);
-
-    /* MADCTL: 横屏。0x60 = MV+MX (横屏，颜色正常)。
-       若颜色错换 0x60/0xA0；若镜像换 MX/MY 位。 */
-    spi_send_cmd(0x36); uint8_t madctl = 0x60; spi_send_data(&madctl,1);
-
-    spi_send_cmd(0x29); /* DISPON */
-}
-
 esp_err_t dv_init(void)
 {
+    /* 背光 */
     gpio_set_direction(PIN_BLK, GPIO_MODE_OUTPUT);
     gpio_set_level(PIN_BLK, 1);
-    gpio_set_direction(PIN_DC, GPIO_MODE_OUTPUT);
-    gpio_set_direction(PIN_RST, GPIO_MODE_OUTPUT);
-    gpio_set_direction(PIN_CS, GPIO_MODE_OUTPUT);
-    gpio_set_level(PIN_CS, 1);
 
+    /* SPI 总线 */
     spi_bus_config_t buscfg = {
         .mosi_io_num = PIN_SDA,
         .sclk_io_num = PIN_SCL,
@@ -122,18 +86,60 @@ esp_err_t dv_init(void)
         .max_transfer_sz = DV_WIDTH * DV_HEIGHT * 2 + 8,
     };
     ESP_ERROR_CHECK(spi_bus_initialize(SPI2_HOST, &buscfg, SPI_DMA_CH_AUTO));
-    spi_device_interface_config_t devcfg = {
-        .clock_speed_hz = 24 * 1000 * 1000,
-        .mode = 0,
-        .spics_io_num = -1,
-        .queue_size = 6,
-    };
-    ESP_ERROR_CHECK(spi_bus_add_device(SPI2_HOST, &devcfg, &s_spi));
 
-    st7735_init();
+    /* panel IO：esp_lcd 自动管理 DC/CS 切换 */
+    esp_lcd_panel_io_spi_config_t io_cfg = {
+        .cs_gpio_num = PIN_CS,
+        .dc_gpio_num = PIN_DC,
+        .spi_mode = 0,
+        .pclk_hz = 20 * 1000 * 1000,
+        .trans_queue_depth = 10,
+        .lcd_cmd_bits = 8,
+        .lcd_param_bits = 8,
+    };
+    ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)SPI2_HOST, &io_cfg, &s_io));
+
+    /* ST7789 驱动复用（ST7735 命令兼容） */
+    esp_lcd_panel_dev_config_t panel_cfg = {
+        .reset_gpio_num = PIN_RST,
+        .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_BGR,
+        .bits_per_pixel = 16,
+    };
+    ESP_ERROR_CHECK(esp_lcd_new_panel_st7789(s_io, &panel_cfg, &s_panel));
+
+    /* 1. 复位 */
+    esp_lcd_panel_reset(s_panel);
+    /* 2. ST7789 驱动的 init（SLPOUT + MADCTL + COLMOD + RAMCTRL）。
+       ST7735 不认 RAMCTRL(0xB0)，但 tx_param 发不存在的命令屏会忽略，无害。 */
+    esp_lcd_panel_init(s_panel);
+
+    /* 3. 补 ST7735 专属 init 序列（FRMCTR/PWCTR/GAMMA） */
+    esp_lcd_panel_io_tx_param(s_io, 0xB1, (uint8_t[]){0x01,0x2C,0x2D}, 3);
+    esp_lcd_panel_io_tx_param(s_io, 0xB2, (uint8_t[]){0x01,0x2C,0x2D}, 3);
+    esp_lcd_panel_io_tx_param(s_io, 0xB3, (uint8_t[]){0x01,0x2C,0x2D,0x01,0x2C,0x2D}, 6);
+    esp_lcd_panel_io_tx_param(s_io, 0xB4, (uint8_t[]){0x07}, 1);
+    esp_lcd_panel_io_tx_param(s_io, 0xC0, (uint8_t[]){0xA2,0x02,0x84}, 3);
+    esp_lcd_panel_io_tx_param(s_io, 0xC1, (uint8_t[]){0xC5}, 1);
+    esp_lcd_panel_io_tx_param(s_io, 0xC2, (uint8_t[]){0x0A,0x00}, 2);
+    esp_lcd_panel_io_tx_param(s_io, 0xC3, (uint8_t[]){0x8A,0x2A}, 2);
+    esp_lcd_panel_io_tx_param(s_io, 0xC4, (uint8_t[]){0x8A,0xEE}, 2);
+    esp_lcd_panel_io_tx_param(s_io, 0xC5, (uint8_t[]){0x0E}, 1);
+    esp_lcd_panel_io_tx_param(s_io, 0xE0, (uint8_t[]){0x02,0x1c,0x07,0x12,0x37,0x32,0x29,0x2d,0x29,0x25,0x2B,0x39,0x00,0x01,0x03,0x10}, 16);
+    esp_lcd_panel_io_tx_param(s_io, 0xE1, (uint8_t[]){0x03,0x1d,0x07,0x06,0x2E,0x2C,0x29,0x2D,0x2E,0x2E,0x37,0x3F,0x00,0x00,0x02,0x10}, 16);
+    esp_lcd_panel_io_tx_param(s_io, 0x13, NULL, 0); /* NORON */
+    vTaskDelay(pdMS_TO_TICKS(10));
+
+    /* MADCTL = 0x68 = MX|MY|MV|BGR。MX=mirror_x, MY=mirror_y, MV=swap_xy, BGR=rgb_ele_order。
+       刚刚 mirror(false,true) 只有 MY 缺 MX，左右反；补 MX 即可。 */
+    esp_lcd_panel_swap_xy(s_panel, true);
+    esp_lcd_panel_mirror(s_panel, true, true);  /* MX+MY → 0x68 */
+    esp_lcd_panel_set_gap(s_panel, X_GAP, Y_GAP);
+    esp_lcd_panel_invert_color(s_panel, true);  /* INVON */
+    esp_lcd_panel_disp_on_off(s_panel, true);
+
     dv_clear();
     dv_flush();
-    ESP_LOGI(TAG, "ST7735 initialized %dx%d", DV_WIDTH, DV_HEIGHT);
+    ESP_LOGI(TAG, "ST7735(via esp_lcd) initialized %dx%d", DV_WIDTH, DV_HEIGHT);
     return ESP_OK;
 }
 
@@ -171,26 +177,15 @@ void dv_draw_text(int x, int y, const char *s, uint16_t color, int size)
 
 void dv_flush(void)
 {
-    gpio_set_level(PIN_CS, 0);
-    spi_send_cmd(0x2C);
-    static uint8_t buf[DV_WIDTH * DV_HEIGHT * 2];
-    for (int i = 0; i < DV_WIDTH * DV_HEIGHT; i++) {
-        buf[i * 2] = s_fb[i] >> 8;
-        buf[i * 2 + 1] = s_fb[i] & 0xFF;
-    }
-    dc_data();
-    spi_transaction_t t = {0};
-    t.length = sizeof(buf) * 8;
-    t.tx_buffer = buf;
-    spi_device_polling_transmit(s_spi, &t);
-    gpio_set_level(PIN_CS, 1);
+    /* esp_lcd_panel_draw_bitmap 自动加 gap 偏移、发 CASET/RASET/RAMWR。
+       data_endian: st7789 驱动默认大端(RGB565 高字节先)，与帧缓冲一致。 */
+    esp_lcd_panel_draw_bitmap(s_panel, 0, 0, DV_WIDTH, DV_HEIGHT, s_fb);
 }
 
 /* ===== 布局渲染 ===== */
 
 static int s_scroll = 0;
 
-/* 取 client 显示名：有映射用映射，否则取冒号后简写。写到 out，返回 out。 */
 static const char *client_label(const char *client_id, char *out, size_t len)
 {
     const char *r = config_get_display_name("client", client_id, out, len);
@@ -201,7 +196,15 @@ static const char *client_label(const char *client_id, char *out, size_t len)
     return out;
 }
 
-/* 画一个客户端红点徽章，返回下一个 x。unread=0 则不画，返回原 x。 */
+/* 画实心圆（中点画圆法，r<=10 够用） */
+static void fill_circle(int cx, int cy, int r, uint16_t color)
+{
+    for (int yy = -r; yy <= r; yy++)
+        for (int xx = -r; xx <= r; xx++)
+            if (xx*xx + yy*yy <= r*r)
+                dv_fill_rect(cx+xx, cy+yy, 1, 1, color);
+}
+
 static int draw_badge(int x, const char *client_id, uint16_t color)
 {
     int unread = dm_client_unread(client_id);
@@ -209,16 +212,24 @@ static int draw_badge(int x, const char *client_id, uint16_t color)
     char label[24];
     client_label(client_id, label, sizeof label);
     int n = (unread > 9) ? 9 : unread;
-    char buf[48];
-    snprintf(buf, sizeof buf, "%d%s ", n, label);
-    int w = 6 * strlen(buf);
-    dv_draw_text(x, 1, buf, color, 1);
-    return x + w;
+
+    /* 红点圆：圆心白字数字。圆 r=4，中心 (x+4, 4)，直径 9px 贴状态栏顶 */
+    fill_circle(x + 4, 4, 4, DV_RED);
+    char numbuf[12];
+    snprintf(numbuf, sizeof numbuf, "%d", n);
+    /* 数字居中画到圆心。5x7 字 size=1，宽约 3-6px，画在 (x+2, 1) */
+    dv_draw_text(x + 2, 1, numbuf, DV_WHITE, 1);
+
+    /* 圆右侧跟 client 名字 */
+    int nx = x + 10;  /* 圆右边留 1px */
+    dv_draw_text(nx, 1, label, DV_WHITE, 1);
+    return nx + 6 * strlen(label) + 4;
 }
 
 void dv_render_status_bar(void)
 {
-    dv_fill_rect(0, 0, DV_WIDTH, 12, DV_BLACK);
+    /* 红点圆 9px 高，状态栏 11px */
+    dv_fill_rect(0, 0, DV_WIDTH, 11, DV_BLACK);
     int x = 2 - s_scroll;
     int n = dm_client_count();
     for (int i = 0; i < n; i++) {
@@ -227,54 +238,53 @@ void dv_render_status_bar(void)
         x = draw_badge(x, cid, DV_RED);
         if (x > DV_WIDTH) break;
     }
-    dv_fill_rect(0, 12, DV_WIDTH, 1, DV_GRAY);
+    dv_fill_rect(0, 11, DV_WIDTH, 1, DV_GRAY);
 }
 
 void dv_render_main(void)
 {
-    dv_fill_rect(0, 13, DV_WIDTH, DV_HEIGHT - 13 - 9, DV_BLACK);
+    dv_fill_rect(0, 12, DV_WIDTH, DV_HEIGHT - 12 - 9, DV_BLACK);
     char client[24], session[48], title[32], body[128];
     if (!dm_current(client, session, sizeof client, sizeof session,
                     title, sizeof title, body, sizeof body)) {
         dv_render_idle();
         return;
     }
-    dv_draw_text(2, 16, title, DV_WHITE, 1);
-    dv_draw_text(2, 28, body, DV_YELLOW, 1);
+    dv_draw_text(2, 14, title, DV_WHITE, DV_SIZE_TITLE);
+    dv_draw_text(2, 40, body, DV_YELLOW, DV_SIZE_BODY);
     char cname[24], sname[24];
     const char *cn = config_get_display_name("client", client, cname, sizeof cname);
-    const char *sn = config_get_display_name("session", session, sname, sizeof sname);
+    const char *sn = config_get_display_name("session", client, sname, sizeof sname);
     char src[96];
     snprintf(src, sizeof src, "[%s/%s]", cn[0] ? cn : client, sn[0] ? sn : session);
-    dv_draw_text(2, 50, src, DV_GRAY, 1);
+    dv_draw_text(2, 66, src, DV_GRAY, DV_SIZE_BAR);
     dv_fill_rect(0, DV_HEIGHT - 9, DV_WIDTH, 1, DV_GRAY);
 }
 
 void dv_render_idle(void)
 {
-    dv_draw_text(2, 35, "idle", DV_GRAY, 1);
+    dv_draw_text(2, 35, "idle", DV_GRAY, DV_SIZE_BODY);
 }
 
 void dv_render_net(int state, const char *ip)
 {
     dv_clear();
     if (state == 0) {
-        dv_draw_text(4, 18, "no wifi cfg", DV_RED, 1);
-        dv_draw_text(4, 38, "esphook provision", DV_WHITE, 1);
-        dv_draw_text(4, 50, "<ssid> <pass>", DV_WHITE, 1);
+        dv_draw_text(4, 18, "no wifi cfg", DV_RED, DV_SIZE_NET);
+        dv_draw_text(4, 38, "esphook provision", DV_WHITE, DV_SIZE_NET);
+        dv_draw_text(4, 50, "<ssid> <pass>", DV_WHITE, DV_SIZE_NET);
     } else if (state == 1) {
-        dv_draw_text(20, 35, "connecting...", DV_YELLOW, 1);
+        dv_draw_text(20, 35, "connecting...", DV_YELLOW, DV_SIZE_NET);
     } else {
-        dv_draw_text(16, 18, "wifi connected", DV_GREEN, 1);
+        dv_draw_text(16, 18, "wifi connected", DV_GREEN, DV_SIZE_NET);
         char buf[32];
         snprintf(buf, sizeof buf, "ip: %s", ip ? ip : "");
-        dv_draw_text(16, 40, buf, DV_WHITE, 1);
+        dv_draw_text(16, 40, buf, DV_WHITE, DV_SIZE_NET);
     }
 }
 
 void dv_tick_scroll(void)
 {
-    /* 估算所有徽章总宽，超屏才滚动，否则归零。简化：每帧 +2，到末尾回卷。 */
     int n = dm_client_count();
     int total = 0;
     for (int i = 0; i < n; i++) {
