@@ -44,6 +44,9 @@ jobs:
         with:
           paths: "."
           target: esp32c3
+          # Avoid changed-files path detection inside the container; this
+          # repository has one root project and should build on every push.
+          modified_files: "CMakeLists.txt"
           artifact_name: esphook-firmware
       - name: Upload fixed font resource
         uses: actions/upload-artifact@v4
