@@ -39,7 +39,9 @@ jobs:
       - name: Check out
         uses: actions/checkout@v4
       - name: Build firmware
+        shell: bash
         run: |
+          . /opt/esp/idf/export.sh
           idf.py set-target esp32c3
           idf.py build
       - name: Upload firmware
