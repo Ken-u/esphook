@@ -474,6 +474,16 @@ void dv_activity(void)
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(s_panel, true));
     gpio_set_level(PIN_BLK, 1);
     s_screen_awake = true;
+
+    /*
+     * 部分 ST7735 模块在 DISPON 后不会自动重新锁存 GRAM 内容；如果
+     * 唤醒事件没有改变任何 label，LVGL 也可能认为没有脏区域可刷。
+     * 强制让整棵屏幕失效并立即刷新，保证按键/新提醒都能真正亮屏。
+     */
+    if (s_display) {
+        lv_obj_invalidate(lv_screen_active());
+        lv_refr_now(s_display);
+    }
 }
 
 void dv_process(void)
