@@ -1,6 +1,6 @@
 # AI-Hook 连接与管理设计
 
-> 实施状态（2026-07-20）：主机 daemon、管理页、client/session alias、notify/dismiss、设备专属 HMAC 配对、反向 device link、按键回传和四种 Agent Hook 已实现。daemon OTA、离线持久化队列和 TLS/WSS 尚未完成。
+> 实施状态（2026-07-20）：主机 daemon、管理页、client/session alias、notify/dismiss、设备专属 HMAC 配对、反向 device link、按键回传和四种 Agent Hook 已实现。设备直连 HTTP OTA 已实现；daemon 经 reverse device link 的固件分块传输、离线持久化队列和 TLS/WSS 尚未完成。
 
 ## 目标
 
@@ -28,7 +28,7 @@ AI-Hook 的显示和按键逻辑运行在 ESP32-C3 上，但通知来源可能�
 
 ### 直连模式
 
-主机通过 `GET /health` 能访问 ESP 时，主机侧可以直接调用 ESP 的 `/notify`、`/dismiss` 和 `/ota`。这是当前固件的兼容路径，也适合首次调试。
+主机通过 `GET /health` 能访问 ESP 时，主机侧可以直接调用 ESP 的 `/notify`、`/dismiss` 和 `/ota`。这是当前固件的兼容路径，也适合首次调试。OTA 只写下一个应用槽，不覆盖固定 `fontdata` 字库分区；具体命令见 [ota.md](ota.md)。
 
 ### 反向连接模式
 
@@ -180,12 +180,11 @@ Hook 适配器使用 fail-open 策略：daemon 或 ESP 不在线时丢弃提醒�
 
 ## OTA
 
-主机网页或 API 上传 app `.bin` 后：
+设备网页或主机直连设备的 HTTP API 上传 app `.bin` 后：
 
-1. daemon 向设备发送 OTA 请求。
-2. ESP 主动从 daemon 下载固件，或由 device link 分块接收。
-3. ESP 写入下一个 OTA app 分区并重启。
-4. `fontdata` 固定分区不参与 OTA。
+1. 主机通过直连 HTTP 向设备上传 app `.bin`。
+2. ESP 写入下一个 OTA app 分区并重启；reverse device link 的分块传输尚未实现。
+3. `fontdata` 固定分区不参与 OTA。
 
 ESP 原有 `/ota` 保留为直连救援路径。
 

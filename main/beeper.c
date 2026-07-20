@@ -46,6 +46,7 @@ void beeper_beep(beep_kind_t kind)
 {
     switch (kind) {
         case BEEP_NOTIFY: tone(3000, 120); break;
+        case BEEP_CONFIRM:tone(2400, 220); break;
         case BEEP_KEY:    tone(4000, 30);  break;
         case BEEP_ERROR:  tone(1500, 400); break;
     }

@@ -11,15 +11,18 @@
 #include "net_wifi.h"
 #include "display_model.h"
 #include "display_view.h"
+#include "device_link.h"
 #include "events.h"
 #include "beeper.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
+#include "esp_mac.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 static const char *TAG = "input";
 static const int KEY_GPIOS[3] = {6, 10, 11};
@@ -63,18 +66,26 @@ static void on_key(int idx)
     const char *word = config_get_key(idx);
     ESP_LOGI(TAG, "key%d pressed -> '%s'", idx, word);
 
-    /* 回传词到 host（同步，超时短） */
-    post_keyevent(word);
-
-    /* dismiss 当前通知（发事件，display_task 改 model） */
+    /* 取当前通知上下文；反向连接回传时不再需要 callback 地址。 */
     char client[24], session[48];
+    display_event_t e = {0};
+    e.kind = EVT_DISMISS;
     if (dm_current(client, session, sizeof client, sizeof session, NULL, 0, NULL, 0)) {
-        display_event_t e = {0};
-        e.kind = EVT_DISMISS;
         strncpy(e.client_id, client, sizeof e.client_id - 1);
         strncpy(e.session_id, session, sizeof e.session_id - 1);
-        xQueueSend(display_q, &e, 0);
+    } else {
+        client[0] = '\0';
+        session[0] = '\0';
     }
+
+    /* 优先沿已认证的 device link 回传；没有长连接时兼容旧 HTTP callback。 */
+    if (!device_link_send_key(client, session, word)) {
+        post_keyevent(word);
+    }
+
+    /* dismiss 当前通知（发事件，display_task 改 model）。即使没有当前通知，
+       也发事件，让按键可以唤醒已经熄灭的屏幕。 */
+    xQueueSend(display_q, &e, 0);
     beep_kind_t bk = BEEP_KEY;
     xQueueSend(beeper_q, &bk, 0);
 }
@@ -120,18 +131,45 @@ void input_cdc_handler(const char *line)
         cdc_write("connecting...");
         wifi_start();
     } else if (strcmp(line, "status") == 0) {
-        char buf[80];
-        snprintf(buf, sizeof buf, "wifi=%s ip=%s clients=%d",
+        char buf[112];
+        snprintf(buf, sizeof buf, "wifi=%s ip=%s clients=%d link=%s",
                  wifi_is_connected() ? "connected" : "disconnected",
-                 wifi_get_ip(), dm_client_count());
+                 wifi_get_ip(), dm_client_count(),
+                 device_link_is_connected() ? "connected" : "offline");
         cdc_write(buf);
+    } else if (strcmp(line, "id") == 0) {
+        uint8_t mac[6] = {0};
+        char id[24];
+        esp_read_mac(mac, ESP_MAC_WIFI_STA);
+        snprintf(id, sizeof id, "%02x%02x%02x%02x%02x%02x",
+                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        cdc_write(id);
+    } else if (strncmp(line, "daemon_host:", 12) == 0) {
+        config_set_link(line + 12, 0, NULL);
+        cdc_write("OK daemon host set");
+    } else if (strncmp(line, "daemon_port:", 12) == 0) {
+        unsigned long port = strtoul(line + 12, NULL, 10);
+        if (port == 0 || port > 65535) {
+            cdc_write("ERR bad daemon port");
+        } else {
+            config_set_link(NULL, (uint16_t)port, NULL);
+            cdc_write("OK daemon port set");
+        }
+    } else if (strncmp(line, "daemon_secret:", 14) == 0) {
+        const char *secret = line + 14;
+        if (strlen(secret) != 64) {
+            cdc_write("ERR daemon secret must be 64 hex chars");
+        } else {
+            config_set_link(NULL, 0, secret);
+            cdc_write("OK daemon secret set");
+        }
     } else if (strcmp(line, "reset") == 0) {
         config_factory_reset();
         cdc_write("OK factory reset, rebooting");
         vTaskDelay(pdMS_TO_TICKS(200));
         esp_restart();
     } else if (strcmp(line, "help") == 0) {
-        cdc_write("cmds: ssid:<s> pass:<p> connect status reset");
+        cdc_write("cmds: ssid:<s> pass:<p> daemon_host:<h> daemon_port:<p> daemon_secret:<64hex> connect status id reset");
     } else if (line[0] != '\0') {
         cdc_write("ERR unknown command (try: help)");
     }

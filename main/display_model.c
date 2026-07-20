@@ -10,6 +10,7 @@ typedef struct {
     char title[32];
     char body[128];
     uint8_t unread;
+    dm_status_t status;
     bool used;
 } session_entry_t;
 
@@ -58,6 +59,15 @@ static void copy_str(char *dst, size_t n, const char *src)
 
 void dm_notify(const char *client, const char *session, const char *title, const char *body)
 {
+    dm_notify_status(client, session, title, body, DM_STATUS_DONE);
+}
+
+void dm_notify_status(const char *client, const char *session, const char *title,
+                      const char *body, dm_status_t status)
+{
+    if (status < DM_STATUS_DONE || status > DM_STATUS_ERROR) {
+        status = DM_STATUS_DONE;
+    }
     session_entry_t *e = find_session(client, session);
     if (!e) {
         e = new_slot();
@@ -70,6 +80,7 @@ void dm_notify(const char *client, const char *session, const char *title, const
     e->unread++;
     copy_str(e->title, sizeof(e->title), title);
     copy_str(e->body, sizeof(e->body), body);
+    e->status = status;
 
     copy_str(s_cur_client, sizeof(s_cur_client), client);
     copy_str(s_cur_session, sizeof(s_cur_session), session);
@@ -149,4 +160,11 @@ bool dm_current(char *client_out, char *session_out, size_t clen, size_t slen,
 void dm_clear_current(void)
 {
     s_has_current = false;
+}
+
+dm_status_t dm_current_status(void)
+{
+    if (!s_has_current) return DM_STATUS_DONE;
+    session_entry_t *e = find_session(s_cur_client, s_cur_session);
+    return e ? e->status : DM_STATUS_DONE;
 }

@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  host-tests:
+    name: Host tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Compile Python sources
+        run: python3 -m py_compile host/esphookd.py host/install_hooks.py host/hooks/esphook_notify_hook.py
+      - name: Run hook tests
+        run: python3 host/test_hooks.py
+      - name: Run device-link tests
+        run: python3 host/test_device_link.py
+      - name: Check hook installer
+        run: ./scripts/install-hooks.sh --tools all --dry-run --home "$RUNNER_TEMP/esphook-hook-dry-run"
+      - name: Check patch whitespace
+        run: git diff --check
+
+  firmware:
+    name: ESP32-C3 firmware
+    runs-on: ubuntu-latest
+    container: espressif/idf:v5.5.4
+    steps:
+      # The official Espressif action performs the ESP-IDF build and uploads
+      # bootloader, partition table, app binaries and flash metadata.
+      - name: Build firmware
+        uses: espressif/build-esp-idf-projects-action@v1
+        with:
+          paths: "."
+          target: esp32c3
+          artifact_name: esphook-firmware
+      - name: Upload fixed font resource
+        uses: actions/upload-artifact@v4
+        with:
+          name: esphook-full-flash-resources
+          if-no-files-found: error
+          path: |
+            main/fontdata.bin
+            partitions_aihook.csv
+            dependencies.lock

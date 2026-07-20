@@ -1,0 +1,487 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SuperMini AI-Hook · Focus alert preview</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #080b10;
+      --panel: #111720;
+      --line: #263242;
+      --text: #edf4fb;
+      --muted: #8b9aad;
+      --green: #47e6ae;
+      --yellow: #ffd166;
+      --red: #ff6b7a;
+      --cyan: #6bb8ff;
+      --lcd: #071018;
+      --lcd-line: #254252;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: radial-gradient(circle at 10% 0, #1a2b40, transparent 38rem), var(--bg);
+      color: var(--text);
+      font: 14px/1.5 Inter, ui-sans-serif, system-ui, sans-serif;
+    }
+
+    .page {
+      width: min(1240px, calc(100% - 36px));
+      margin: 0 auto;
+      padding: 32px 0 48px;
+    }
+
+    .eyebrow {
+      margin: 0 0 6px;
+      color: var(--green);
+      font: 12px ui-monospace, SFMono-Regular, Consolas, monospace;
+      letter-spacing: .15em;
+      text-transform: uppercase;
+    }
+
+    h1 { margin: 0; font-size: clamp(26px, 4vw, 44px); line-height: 1.05; letter-spacing: -.045em; }
+    .intro p { max-width: 720px; margin: 12px 0 24px; color: var(--muted); }
+
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(300px, .7fr);
+      gap: 20px;
+      align-items: start;
+    }
+
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: #111720f2;
+      box-shadow: 0 20px 70px #0008;
+    }
+
+    .preview { padding: clamp(16px, 3vw, 30px); }
+    .side { padding: 20px; }
+
+    .card-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+
+    .card-head h2 { margin: 0; font-size: 15px; }
+    .card-head span { color: var(--muted); font: 12px ui-monospace, SFMono-Regular, Consolas, monospace; }
+
+    /* The mock LCD keeps the exact 160:80 ratio. */
+    .lcd {
+      position: relative;
+      width: min(960px, 100%);
+      margin: 0 auto;
+      aspect-ratio: 2 / 1;
+      overflow: hidden;
+      border: 10px solid #1c2430;
+      border-radius: 10px;
+      background: var(--lcd);
+      box-shadow: 0 0 0 1px #000, 0 0 44px #1a9c8a33, inset 0 0 35px #0008;
+      color: var(--text);
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      image-rendering: pixelated;
+      --status-color: var(--yellow);
+    }
+
+    .lcd::after {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      content: "";
+      background: repeating-linear-gradient(to bottom, transparent 0, transparent 2px, #ffffff05 3px, transparent 4px);
+      mix-blend-mode: screen;
+    }
+
+    /* Alert mode: only 12 px header + 58 px content + 10 px actions. */
+    .alert-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 13%;
+      padding: 0 3%;
+      border-bottom: 1px solid var(--lcd-line);
+      color: #c6d6e8;
+      font-size: clamp(13px, 2vw, 22px);
+      font-weight: 700;
+    }
+
+    .alert-header-left, .alert-header-right, .alert-type, .actions { display: flex; align-items: center; }
+    .alert-header-left { min-width: 0; gap: 7px; }
+    .alert-header-right { gap: 10px; color: #87a0b7; }
+    .client { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .led { width: .58em; height: .58em; flex: none; border-radius: 50%; background: var(--green); box-shadow: 0 0 10px var(--green); }
+    .unread { color: var(--red); }
+
+    .alert-body {
+      position: relative;
+      height: 74%;
+      padding: 1.2% 3% 0;
+    }
+
+    .alert-body::before {
+      position: absolute;
+      top: 4%;
+      bottom: 5%;
+      left: 0;
+      width: 1.2%;
+      content: "";
+      background: var(--status-color);
+      box-shadow: 0 0 18px var(--status-color);
+    }
+
+    .alert-type {
+      gap: 7px;
+      height: 14%;
+      color: var(--status-color);
+      font-size: clamp(12px, 1.8vw, 20px);
+      font-weight: 700;
+      letter-spacing: .08em;
+    }
+
+    .type-icon {
+      display: inline-grid;
+      width: 1.25em;
+      height: 1.25em;
+      place-items: center;
+      border: 1px solid currentColor;
+      border-radius: 4px;
+      font-size: .8em;
+    }
+
+    .marquee { position: relative; overflow: hidden; white-space: nowrap; mask-image: linear-gradient(to right, transparent 0, #000 3%, #000 97%, transparent 100%); }
+    .track { display: inline-block; min-width: 100%; padding-right: 16%; transform: translate3d(0, 0, 0); will-change: transform; }
+
+    /* Physical font intent: title ~= LVGL 14 px, body ~= LVGL 10 px. */
+    .title {
+      display: flex;
+      align-items: center;
+      height: 38%;
+      color: var(--status-color);
+      font-size: clamp(22px, 4.5vw, 52px);
+      line-height: 1;
+      font-weight: 800;
+      letter-spacing: -.065em;
+      text-shadow: 0 0 14px color-mix(in srgb, var(--status-color) 38%, transparent);
+    }
+
+    .body {
+      display: flex;
+      align-items: center;
+      height: 29%;
+      margin-top: 0;
+      color: var(--status-color);
+      font-size: clamp(15px, 2.8vw, 34px);
+      line-height: 1;
+      letter-spacing: -.04em;
+    }
+
+    .meta {
+      position: absolute;
+      right: 3%;
+      bottom: 3%;
+      left: 3%;
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      color: #7891a7;
+      font-size: clamp(11px, 1.4vw, 16px);
+      font-weight: 600;
+    }
+
+    .meta span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .meta span:last-child { flex: none; color: var(--cyan); }
+
+    .actions {
+      justify-content: space-between;
+      height: 13%;
+      padding: 0 3%;
+      border-top: 1px solid var(--lcd-line);
+      color: #c1d3e5;
+      font-size: clamp(11px, 1.6vw, 18px);
+      font-weight: 700;
+    }
+
+    .action-row { display: flex; gap: 6px; min-width: 0; }
+    .key { padding: 3px 8px; border: 1px solid #385268; border-radius: 4px; background: #142330; white-space: nowrap; }
+    .key b { color: var(--green); }
+    .online { color: var(--green); white-space: nowrap; }
+
+    /* Idle mode intentionally wastes less visual attention than alert mode. */
+    .idle {
+      position: absolute;
+      inset: 0;
+      display: none;
+      padding: 9%;
+      background: var(--lcd);
+    }
+
+    .idle h3 { margin: 0 0 5%; color: var(--green); font-size: clamp(16px, 2.8vw, 32px); }
+    .idle p { margin: 0; color: #93a9bd; font-size: clamp(11px, 1.6vw, 18px); }
+    .idle .idle-line { margin-top: 8%; color: #587185; font-size: clamp(9px, 1.2vw, 14px); }
+    .lcd.idle-mode .alert-header, .lcd.idle-mode .alert-body, .lcd.idle-mode .actions { display: none; }
+    .lcd.idle-mode .idle { display: block; }
+
+    .note {
+      margin: 16px 2px 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .controls { display: grid; gap: 10px; margin-bottom: 22px; }
+    button {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+      color: var(--text);
+      background: #171f2b;
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+    button:hover { border-color: var(--cyan); }
+    button.active { border-color: var(--green); color: var(--green); background: #102a27; }
+    .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 12px; }
+    input[type=range] { width: 52%; accent-color: var(--green); }
+    output { width: 62px; text-align: right; font: 12px ui-monospace, SFMono-Regular, Consolas, monospace; }
+
+    .principles {
+      display: grid;
+      gap: 11px;
+      margin: 0;
+    }
+    .principles div { padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+    .principles dt { margin-bottom: 2px; color: var(--green); font-weight: 700; }
+    .principles dd { margin: 0; color: var(--muted); }
+    .lvgl {
+      margin-top: 20px;
+      padding: 14px;
+      border: 1px solid #273c53;
+      border-radius: 10px;
+      color: #a5b9ce;
+      background: #0c1520;
+      font: 12px/1.65 ui-monospace, SFMono-Regular, Consolas, monospace;
+    }
+    .lvgl strong { color: var(--cyan); }
+
+    @media (max-width: 860px) {
+      .page { width: min(100% - 24px, 700px); padding-top: 22px; }
+      .grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <p class="eyebrow">SuperMini AI-Hook / focus alert concept</p>
+    <h1>提醒出现时，屏幕只做一件事：让你看懂它</h1>
+    <div class="intro">
+      <p>0.96 寸屏不适合长期展示完整仪表盘。这个版本把来源、未读数和 Wi-Fi 压缩成角标，把屏幕面积交给标题和正文；空闲时才回到极简待机画面。</p>
+    </div>
+
+    <section class="grid">
+      <article class="card preview">
+        <div class="card-head">
+          <h2 id="view-title">提醒态 · Confirm</h2>
+          <span id="fps">60 fps marquee</span>
+        </div>
+
+        <div class="lcd" id="lcd">
+          <div class="alert-header">
+            <div class="alert-header-left">
+              <span class="led"></span>
+              <span class="client" id="client">DESKTOP</span>
+              <span class="unread" id="unread">●2</span>
+            </div>
+            <div class="alert-header-right">
+              <span id="session">CC</span>
+              <span>▂▄▆</span>
+            </div>
+          </div>
+
+          <div class="alert-body">
+            <div class="alert-type" id="alert-type">
+              <span class="type-icon" id="type-icon">!</span>
+              <span id="type-label">CONFIRM</span>
+            </div>
+            <div class="marquee title"><span class="track" id="title-track"></span></div>
+            <div class="marquee body"><span class="track" id="body-track"></span></div>
+            <div class="meta">
+              <span id="source">[DESKTOP / supermini-aihook]</span>
+              <span id="position">scrolling</span>
+            </div>
+          </div>
+
+          <div class="actions">
+            <div class="action-row" id="action-row"></div>
+            <span class="online">● online</span>
+          </div>
+
+          <div class="idle">
+            <h3>AI-HOOK READY</h3>
+            <p>等待新的任务提醒</p>
+            <div class="idle-line">WiFi online · 192.168.31.180</div>
+          </div>
+        </div>
+        <p class="note">这里先观察“提醒态”是否足够醒目、标题和正文是否真的能读懂；来源信息可以牺牲，正文不能。</p>
+      </article>
+
+      <aside class="card side">
+        <div class="card-head">
+          <h2>交互预览</h2>
+          <span id="state">playing</span>
+        </div>
+
+        <div class="controls">
+          <button class="active" data-scenario="confirm">⚠ Confirm · 等待确认</button>
+          <button data-scenario="done">✓ Done · 任务完成</button>
+          <button data-scenario="error">× Error · 任务失败</button>
+          <button data-mode="idle">○ 切换到极简待机态</button>
+          <div class="row">
+            <label for="speed">滚动速度</label>
+            <input id="speed" type="range" min="20" max="180" value="70">
+            <output id="speed-value">70 px/s</output>
+          </div>
+          <div class="row">
+            <span>滚动状态</span>
+            <button id="toggle" type="button">暂停</button>
+          </div>
+        </div>
+
+        <dl class="principles">
+          <div>
+            <dt>提醒态优先</dt>
+            <dd>不在 160×80 上同时塞进完整 client、session、时间和状态栏。</dd>
+          </div>
+          <div>
+            <dt>信息分级</dt>
+            <dd>标题最大、正文其次；来源只保留短标签，详细信息交给滚动。</dd>
+          </div>
+          <div>
+            <dt>高帧率不等于高速</dt>
+            <dd>LVGL 每帧平滑更新，但滚动速度保持 50–80 px/s，保证能读。</dd>
+          </div>
+          <div>
+            <dt>空闲态降噪</dt>
+            <dd>没有未读提醒时只显示设备在线和等待状态，不持续制造视觉噪音。</dd>
+          </div>
+        </dl>
+
+        <div class="lvgl">
+          <strong>建议的 LVGL 对象树</strong><br>
+          screen<br>
+          ├─ alert_header · 12 px<br>
+          ├─ alert_body<br>
+          │  ├─ type_badge<br>
+          │  ├─ title_label · SCROLL_CIRCULAR<br>
+          │  └─ body_label · SCROLL_CIRCULAR<br>
+          └─ action_bar · 10 px
+        </div>
+      </aside>
+    </section>
+  </main>
+
+  <script>
+    const scenarios = {
+      confirm: {
+        label: 'Confirm', icon: '!', color: '#ffd166', client: 'DESKTOP', unread: '●2', session: 'CC',
+        title: '需要确认：继续执行 git push 到远端仓库',
+        body: '构建已成功，等待你的选择 · supermini-aihook.bin',
+        source: '[DESKTOP / supermini-aihook]', keys: ['YES', 'NO', 'LATER']
+      },
+      done: {
+        label: 'Done', icon: '✓', color: '#47e6ae', client: 'DESKTOP', unread: '●1', session: 'CC',
+        title: '任务完成：supermini-aihook.bin 已生成',
+        body: '编译通过 · 4 MB flash · 可进行下一步测试',
+        source: '[DESKTOP / build]', keys: ['OPEN', 'COPY', 'OK']
+      },
+      error: {
+        label: 'Error', icon: '×', color: '#ff6b7a', client: 'LAPTOP', unread: '●3', session: 'CODEX',
+        title: '任务失败：无法连接到 ESP32-C3',
+        body: '设备没有响应，请检查 USB 串口和供电状态',
+        source: '[LAPTOP / flash]', keys: ['RETRY', 'LOG', 'DISMISS']
+      }
+    };
+
+    const lcd = document.querySelector('#lcd');
+    const titleTrack = document.querySelector('#title-track');
+    const bodyTrack = document.querySelector('#body-track');
+    const speed = document.querySelector('#speed');
+    const speedValue = document.querySelector('#speed-value');
+    const toggle = document.querySelector('#toggle');
+    const state = document.querySelector('#state');
+    const position = document.querySelector('#position');
+    const lanes = [
+      { track: titleTrack, viewport: titleTrack.parentElement, phase: 0, gap: 56 },
+      { track: bodyTrack, viewport: bodyTrack.parentElement, phase: 0, gap: 42 }
+    ];
+    let playing = true;
+    let last = performance.now();
+
+    function setScenario(name) {
+      const data = scenarios[name];
+      lcd.classList.remove('idle-mode');
+      document.querySelector('#view-title').textContent = `提醒态 · ${data.label}`;
+      document.querySelector('#client').textContent = data.client;
+      document.querySelector('#unread').textContent = data.unread;
+      document.querySelector('#session').textContent = data.session;
+      lcd.style.setProperty('--status-color', data.color);
+      document.querySelector('#type-icon').textContent = data.icon;
+      document.querySelector('#type-label').textContent = data.label.toUpperCase();
+      titleTrack.textContent = data.title;
+      bodyTrack.textContent = data.body;
+      document.querySelector('#source').textContent = data.source;
+      document.querySelector('#action-row').innerHTML = data.keys.map((key, i) => `<span class="key"><b>${i + 1}</b> ${key}</span>`).join('');
+      lanes.forEach(lane => lane.phase = 0);
+      document.querySelectorAll('[data-scenario]').forEach(button => button.classList.toggle('active', button.dataset.scenario === name));
+    }
+
+    function updateSpeed() { speedValue.textContent = `${speed.value} px/s`; }
+
+    function tick(now) {
+      const dt = Math.min((now - last) / 1000, .1);
+      last = now;
+      if (playing && !lcd.classList.contains('idle-mode')) {
+        lanes.forEach(lane => {
+          const overflow = lane.track.scrollWidth - lane.viewport.clientWidth;
+          if (overflow > 0) {
+            lane.phase += Number(speed.value) * dt;
+            const loop = overflow + lane.gap;
+            if (lane.phase > loop) lane.phase = 0;
+            lane.track.style.transform = `translate3d(${-lane.phase}px, 0, 0)`;
+          } else {
+            lane.track.style.transform = 'translate3d(0, 0, 0)';
+          }
+        });
+        position.textContent = 'scrolling';
+      }
+      requestAnimationFrame(tick);
+    }
+
+    document.querySelectorAll('[data-scenario]').forEach(button => button.addEventListener('click', () => setScenario(button.dataset.scenario)));
+    document.querySelector('[data-mode="idle"]').addEventListener('click', () => {
+      lcd.classList.add('idle-mode');
+      document.querySelector('#view-title').textContent = '空闲态 · Idle';
+      document.querySelectorAll('[data-scenario]').forEach(button => button.classList.remove('active'));
+      position.textContent = 'idle';
+    });
+    speed.addEventListener('input', updateSpeed);
+    toggle.addEventListener('click', () => {
+      playing = !playing;
+      toggle.textContent = playing ? '暂停' : '播放';
+      state.textContent = playing ? 'playing' : 'paused';
+    });
+
+    setScenario('confirm');
+    updateSpeed();
+    requestAnimationFrame(tick);
+  </script>
+</body>
+</html>

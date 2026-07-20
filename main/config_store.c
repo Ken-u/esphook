@@ -6,10 +6,50 @@
 #include <stdio.h>
 
 static const char *NS_WIFI = "wifi";
+static const char *NS_LINK = "link";
 static const char *NS_KEYMAP = "keymap";
 static const char *NS_DISPLAY = "display";
 static const char *NS_SEEN = "seen";
 static const char *DEFAULT_KEYS[3] = {"ok", "continue", "done"};
+
+/* NVS key 名最多 15 个字符，不能直接把 client/session id 拼进 key。
+ * 显示名使用固定短 key 的 blob 记录，记录本身保存完整 type/id/name。 */
+#define MAX_DISPLAY_RECORDS 64
+
+typedef struct {
+    char type[8];
+    char id[64];
+    char name[32];
+} display_record_t;
+
+static void display_slot_key(int idx, char *out, size_t len)
+{
+    if (len < 4) {
+        if (len > 0) out[0] = '\0';
+        return;
+    }
+    out[0] = 'd';
+    out[1] = (char)('0' + (idx / 10) % 10);
+    out[2] = (char)('0' + idx % 10);
+    out[3] = '\0';
+}
+
+static esp_err_t display_read_slot(nvs_handle_t h, int idx, display_record_t *out)
+{
+    char key[8];
+    size_t len = sizeof(*out);
+    display_slot_key(idx, key, sizeof key);
+    esp_err_t err = nvs_get_blob(h, key, out, &len);
+    if (err != ESP_OK || len != sizeof(*out)) return ESP_ERR_NOT_FOUND;
+    return ESP_OK;
+}
+
+static bool legacy_display_key(const char *type, const char *id,
+                               char *out, size_t len)
+{
+    int n = snprintf(out, len, "%s:%s", type, id);
+    return n > 0 && (size_t)n < NVS_KEY_NAME_MAX_SIZE;
+}
 
 esp_err_t config_store_init(void)
 {
@@ -56,6 +96,54 @@ esp_err_t config_get_wifi_pass(char *out, size_t len)
     return e;
 }
 
+esp_err_t config_set_link(const char *host, uint16_t port, const char *secret_hex)
+{
+    nvs_handle_t h;
+    if (nvs_open(NS_LINK, NVS_READWRITE, &h) != ESP_OK) return ESP_FAIL;
+    esp_err_t err = ESP_OK;
+    if (host) err = nvs_set_str(h, "host", host);
+    if (err == ESP_OK && port > 0) err = nvs_set_u16(h, "port", port);
+    if (err == ESP_OK && secret_hex) err = nvs_set_str(h, "secret", secret_hex);
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    return err;
+}
+
+esp_err_t config_get_link_host(char *out, size_t len)
+{
+    if (len == 0) return ESP_ERR_INVALID_ARG;
+    out[0] = '\0';
+    nvs_handle_t h;
+    if (nvs_open(NS_LINK, NVS_READONLY, &h) != ESP_OK) return ESP_ERR_NOT_FOUND;
+    esp_err_t err = nvs_get_str(h, "host", out, &len);
+    nvs_close(h);
+    if (err != ESP_OK) out[0] = '\0';
+    return err;
+}
+
+uint16_t config_get_link_port(void)
+{
+    nvs_handle_t h;
+    uint16_t port = 0;
+    if (nvs_open(NS_LINK, NVS_READONLY, &h) == ESP_OK) {
+        nvs_get_u16(h, "port", &port);
+        nvs_close(h);
+    }
+    return port;
+}
+
+esp_err_t config_get_link_secret(char *out, size_t len)
+{
+    if (len == 0) return ESP_ERR_INVALID_ARG;
+    out[0] = '\0';
+    nvs_handle_t h;
+    if (nvs_open(NS_LINK, NVS_READONLY, &h) != ESP_OK) return ESP_ERR_NOT_FOUND;
+    esp_err_t err = nvs_get_str(h, "secret", out, &len);
+    nvs_close(h);
+    if (err != ESP_OK) out[0] = '\0';
+    return err;
+}
+
 esp_err_t config_set_keymap(const char *keys[3])
 {
     nvs_handle_t h;
@@ -89,26 +177,82 @@ const char *config_get_key(int index)
 
 esp_err_t config_set_display_name(const char *type, const char *id, const char *name)
 {
+    if (!type || !id ||
+        (strcmp(type, "client") != 0 && strcmp(type, "session") != 0))
+        return ESP_ERR_INVALID_ARG;
+    if (strlen(id) >= sizeof(((display_record_t *)0)->id) ||
+        (name && strlen(name) >= sizeof(((display_record_t *)0)->name)))
+        return ESP_ERR_INVALID_SIZE;
+
     nvs_handle_t h;
     if (nvs_open(NS_DISPLAY, NVS_READWRITE, &h) != ESP_OK) return ESP_FAIL;
-    char key[64];
-    snprintf(key, sizeof(key), "%s:%s", type, id);
-    if (name) nvs_set_str(h, key, name);
-    else nvs_erase_key(h, key);
-    nvs_commit(h);
+
+    int found = -1;
+    int empty = -1;
+    display_record_t rec;
+    for (int i = 0; i < MAX_DISPLAY_RECORDS; i++) {
+        if (display_read_slot(h, i, &rec) != ESP_OK) {
+            if (empty < 0) empty = i;
+            continue;
+        }
+        if (strcmp(rec.type, type) == 0 && strcmp(rec.id, id) == 0) {
+            found = i;
+            break;
+        }
+    }
+
+    esp_err_t err = ESP_OK;
+    if (name) {
+        int slot = found >= 0 ? found : empty;
+        if (slot < 0) {
+            nvs_close(h);
+            return ESP_ERR_NO_MEM;
+        }
+        memset(&rec, 0, sizeof rec);
+        snprintf(rec.type, sizeof rec.type, "%s", type);
+        snprintf(rec.id, sizeof rec.id, "%s", id);
+        snprintf(rec.name, sizeof rec.name, "%s", name);
+        char key[8];
+        display_slot_key(slot, key, sizeof key);
+        err = nvs_set_blob(h, key, &rec, sizeof rec);
+    } else if (found >= 0) {
+        char key[8];
+        display_slot_key(found, key, sizeof key);
+        err = nvs_erase_key(h, key);
+    }
+
+    /* 兼容早期短 id 版本，并在成功迁移后清掉旧记录。 */
+    char old_key[64];
+    if (legacy_display_key(type, id, old_key, sizeof old_key)) {
+        nvs_erase_key(h, old_key);
+    }
+    if (err == ESP_OK) err = nvs_commit(h);
     nvs_close(h);
-    return ESP_OK;
+    return err;
 }
 
 const char *config_get_display_name(const char *type, const char *id, char *out, size_t len)
 {
-    if (len == 0) return out;
+    if (!type || !id || len == 0) return out;
     out[0] = '\0';
     nvs_handle_t h;
     if (nvs_open(NS_DISPLAY, NVS_READONLY, &h) != ESP_OK) return out;
-    char key[64];
-    snprintf(key, sizeof(key), "%s:%s", type, id);
-    if (nvs_get_str(h, key, out, &len) != ESP_OK) out[0] = '\0';
+
+    display_record_t rec;
+    for (int i = 0; i < MAX_DISPLAY_RECORDS; i++) {
+        if (display_read_slot(h, i, &rec) == ESP_OK &&
+            strcmp(rec.type, type) == 0 && strcmp(rec.id, id) == 0) {
+            snprintf(out, len, "%s", rec.name);
+            nvs_close(h);
+            return out;
+        }
+    }
+
+    /* 兼容早期使用短 type:id key 的记录。 */
+    char old_key[64];
+    if (legacy_display_key(type, id, old_key, sizeof old_key)) {
+        if (nvs_get_str(h, old_key, out, &len) != ESP_OK) out[0] = '\0';
+    }
     nvs_close(h);
     return out;
 }
@@ -116,8 +260,8 @@ const char *config_get_display_name(const char *type, const char *id, char *out,
 esp_err_t config_factory_reset(void)
 {
     nvs_handle_t h;
-    const char *nss[4] = {NS_WIFI, NS_KEYMAP, NS_DISPLAY, NS_SEEN};
-    for (int i = 0; i < 4; i++) {
+    const char *nss[5] = {NS_WIFI, NS_LINK, NS_KEYMAP, NS_DISPLAY, NS_SEEN};
+    for (int i = 0; i < 5; i++) {
         if (nvs_open(nss[i], NVS_READWRITE, &h) == ESP_OK) {
             nvs_erase_all(h);
             nvs_commit(h);

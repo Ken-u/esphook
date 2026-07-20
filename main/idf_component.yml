@@ -2,3 +2,4 @@
 ## C3 用内置 USB Serial/JTAG（IDF driver 组件），不需要 esp_tinyusb
 dependencies:
   idf: "^5.0"
+  lvgl/lvgl: "9.5.0"

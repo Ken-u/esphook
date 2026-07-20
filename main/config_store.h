@@ -2,12 +2,19 @@
 #pragma once
 #include "esp_err.h"
 #include <stddef.h>
+#include <stdint.h>
 
 esp_err_t config_store_init(void);
 
 esp_err_t config_set_wifi(const char *ssid, const char *pass);
 esp_err_t config_get_wifi_ssid(char *out, size_t len);
 esp_err_t config_get_wifi_pass(char *out, size_t len);
+
+/* 主机 esphook daemon 反向连接配置。传 NULL/0 表示保持原值。 */
+esp_err_t config_set_link(const char *host, uint16_t port, const char *secret_hex);
+esp_err_t config_get_link_host(char *out, size_t len);
+uint16_t config_get_link_port(void);
+esp_err_t config_get_link_secret(char *out, size_t len);
 
 /* keymap: 3 个按键词。keys[i]=NULL 表示该项不变。 */
 esp_err_t config_set_keymap(const char *keys[3]);

@@ -1,0 +1,595 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SuperMini AI-Hook · LVGL 屏幕布局预览</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #080b10;
+      --panel: #111720;
+      --panel-2: #171f2b;
+      --line: #263242;
+      --text: #e7eef7;
+      --muted: #8b9aad;
+      --green: #47e6ae;
+      --blue: #6bb8ff;
+      --yellow: #ffd166;
+      --red: #ff6b7a;
+      --screen-bg: #071018;
+      --screen-line: #1c3848;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 15% 0%, #172638 0, transparent 36rem),
+        var(--bg);
+      color: var(--text);
+      font: 14px/1.5 Inter, ui-sans-serif, system-ui, sans-serif;
+    }
+
+    .page {
+      width: min(1320px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: 34px 0 48px;
+    }
+
+    .eyebrow {
+      margin: 0 0 5px;
+      color: var(--green);
+      font: 12px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(25px, 4vw, 44px);
+      line-height: 1.08;
+      letter-spacing: -.04em;
+    }
+
+    .intro {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 24px;
+    }
+
+    .intro p {
+      max-width: 650px;
+      margin: 12px 0 0;
+      color: var(--muted);
+    }
+
+    .badge {
+      flex: none;
+      padding: 7px 10px;
+      border: 1px solid #285b51;
+      border-radius: 999px;
+      color: var(--green);
+      background: #0d211f;
+      font: 12px ui-monospace, SFMono-Regular, Consolas, monospace;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1.5fr) minmax(300px, .75fr);
+      gap: 20px;
+      align-items: start;
+    }
+
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: color-mix(in srgb, var(--panel) 94%, transparent);
+      box-shadow: 0 20px 70px #0008;
+    }
+
+    .preview-card { padding: clamp(16px, 3vw, 30px); }
+
+    .card-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+
+    .card-title h2 {
+      margin: 0;
+      font-size: 15px;
+      letter-spacing: .01em;
+    }
+
+    .card-title span {
+      color: var(--muted);
+      font: 12px ui-monospace, SFMono-Regular, Consolas, monospace;
+    }
+
+    /* The LCD keeps the real 160:80 aspect ratio. All content below is
+       laid out as enlarged pixels, so coordinates map cleanly to LVGL. */
+    .lcd {
+      position: relative;
+      width: min(960px, 100%);
+      margin: 0 auto;
+      aspect-ratio: 2 / 1;
+      overflow: hidden;
+      border: 10px solid #1c2430;
+      border-radius: 10px;
+      background: var(--screen-bg);
+      box-shadow:
+        0 0 0 1px #000,
+        0 0 42px #1a9c8a33,
+        inset 0 0 35px #0008;
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      image-rendering: pixelated;
+      --status-color: var(--yellow);
+    }
+
+    .lcd::after {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      content: "";
+      background: repeating-linear-gradient(
+        to bottom,
+        transparent 0,
+        transparent 2px,
+        #ffffff05 3px,
+        transparent 4px
+      );
+      mix-blend-mode: screen;
+    }
+
+    .lcd-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 14%;
+      padding: 0 2.5%;
+      border-bottom: 1px solid var(--screen-line);
+      color: #c6d6e8;
+      font-size: clamp(13px, 2vw, 22px);
+      font-weight: 700;
+      letter-spacing: .03em;
+    }
+
+    .header-left,
+    .header-right,
+    .source,
+    .key-row,
+    .wifi {
+      display: flex;
+      align-items: center;
+    }
+
+    .header-left { min-width: 0; gap: 7px; }
+    .header-right { gap: 12px; color: #87a0b7; }
+    .client-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .led {
+      width: .6em;
+      height: .6em;
+      flex: none;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 10px var(--green);
+    }
+
+    .unread { color: var(--red); }
+    .wifi { gap: 4px; color: var(--green); }
+    .wifi-bars { letter-spacing: -.18em; }
+
+    .lcd-main {
+      position: relative;
+      height: 72%;
+      padding: 1.5% 2.5% 0;
+    }
+
+    .lcd-main::before {
+      position: absolute;
+      top: 4%;
+      bottom: 5%;
+      left: 0;
+      width: 1.2%;
+      content: "";
+      background: var(--status-color);
+      box-shadow: 0 0 18px var(--status-color);
+    }
+
+    .type-line {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      height: 14%;
+      color: var(--status-color);
+      font-size: clamp(12px, 1.8vw, 20px);
+      letter-spacing: .08em;
+      font-weight: 700;
+    }
+
+    .type-icon {
+      display: inline-grid;
+      width: 1.25em;
+      height: 1.25em;
+      place-items: center;
+      border: 1px solid currentColor;
+      border-radius: 4px;
+      font-size: .8em;
+    }
+
+    .marquee {
+      position: relative;
+      overflow: hidden;
+      white-space: nowrap;
+      mask-image: linear-gradient(to right, transparent 0, #000 2.5%, #000 97.5%, transparent 100%);
+    }
+
+    .title-marquee {
+      display: flex;
+      align-items: center;
+      height: 38%;
+      color: var(--status-color);
+      font-size: clamp(21px, 4vw, 46px);
+      line-height: 1;
+      font-weight: 800;
+      letter-spacing: -.06em;
+      text-shadow: 0 0 14px color-mix(in srgb, var(--status-color) 38%, transparent);
+    }
+
+    .body-marquee {
+      display: flex;
+      align-items: center;
+      height: 30%;
+      margin-top: 0;
+      color: var(--status-color);
+      font-size: clamp(15px, 2.5vw, 30px);
+      line-height: 1;
+      letter-spacing: -.04em;
+    }
+
+    .track {
+      display: inline-block;
+      min-width: 100%;
+      padding-right: 12%;
+      transform: translate3d(0, 0, 0);
+      will-change: transform;
+    }
+
+    .source {
+      position: absolute;
+      right: 2.5%;
+      bottom: 2.5%;
+      left: 2.5%;
+      justify-content: space-between;
+      gap: 12px;
+      color: #7c94a9;
+      font-size: clamp(11px, 1.4vw, 16px);
+      font-weight: 600;
+    }
+
+    .source-text {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .mode {
+      flex: none;
+      color: var(--blue);
+    }
+
+    .lcd-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 14%;
+      padding: 0 2.5%;
+      border-top: 1px solid var(--screen-line);
+      color: #7c94a9;
+      font-size: clamp(11px, 1.6vw, 18px);
+      font-weight: 700;
+    }
+
+    .key-row { gap: 7px; min-width: 0; }
+
+    .key {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      min-width: 0;
+      padding: 3px 8px;
+      border: 1px solid #385268;
+      border-radius: 4px;
+      color: #c1d3e5;
+      background: #142330;
+    }
+
+    .key b { color: var(--green); }
+
+    .side-card { padding: 20px; }
+
+    .controls {
+      display: grid;
+      gap: 10px;
+      margin-bottom: 22px;
+    }
+
+    button {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+      color: var(--text);
+      background: var(--panel-2);
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    button:hover { border-color: var(--blue); }
+    button.active { border-color: var(--green); color: var(--green); background: #102a27; }
+
+    .control-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    input[type=range] { width: 55%; accent-color: var(--green); }
+
+    .spec {
+      display: grid;
+      gap: 11px;
+      margin: 0;
+    }
+
+    .spec div {
+      display: grid;
+      grid-template-columns: 92px 1fr;
+      gap: 10px;
+      padding-bottom: 9px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .spec dt { color: var(--muted); }
+    .spec dd { margin: 0; color: var(--text); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+
+    .lvgl-note {
+      margin-top: 20px;
+      padding: 14px;
+      border: 1px solid #273c53;
+      border-radius: 10px;
+      color: #a5b9ce;
+      background: #0c1520;
+      font: 12px/1.65 ui-monospace, SFMono-Regular, Consolas, monospace;
+    }
+
+    .lvgl-note strong { color: var(--blue); }
+
+    .footnote {
+      margin: 18px 2px 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    @media (max-width: 860px) {
+      .page { width: min(100% - 24px, 700px); padding-top: 22px; }
+      .intro { display: block; }
+      .badge { display: inline-block; margin-top: 15px; }
+      .layout { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="intro">
+      <div>
+        <p class="eyebrow">SuperMini AI-Hook / layout prototype</p>
+        <h1>160 × 80 · LVGL screen study</h1>
+        <p>先把信息层级定下来：顶部是来源与未读数，中间是通知，底部是三个快捷键。长标题和正文用高帧率 marquee 演示。</p>
+      </div>
+      <span class="badge">DESIGN ONLY · firmware unchanged</span>
+    </header>
+
+    <section class="layout">
+      <article class="card preview-card">
+        <div class="card-title">
+          <h2>屏幕效果图</h2>
+          <span id="fps">requestAnimationFrame · 60 fps</span>
+        </div>
+
+        <div class="lcd" id="lcd" data-type="confirm">
+          <div class="lcd-header">
+            <div class="header-left">
+              <span class="led"></span>
+              <span class="client-name" id="client">DESKTOP</span>
+              <span class="unread" id="unread">●2</span>
+            </div>
+            <div class="header-right">
+              <span id="session-short">CC</span>
+              <span class="wifi"><span class="wifi-bars">▂▄▆</span> WiFi</span>
+            </div>
+          </div>
+
+          <div class="lcd-main">
+            <div class="type-line" id="type-line">
+              <span class="type-icon" id="type-icon">!</span>
+              <span id="type-label">CONFIRM</span>
+            </div>
+            <div class="marquee title-marquee">
+              <span class="track" id="title-track"></span>
+            </div>
+            <div class="marquee body-marquee">
+              <span class="track" id="body-track"></span>
+            </div>
+            <div class="source">
+              <span class="source-text" id="source"></span>
+              <span class="mode">LIVE</span>
+            </div>
+          </div>
+
+          <div class="lcd-footer">
+            <div class="key-row" id="keys"></div>
+            <span class="wifi">● online</span>
+          </div>
+        </div>
+
+        <p class="footnote">这不是最终视觉稿，重点观察：信息是否拥挤、滚动是否自然、三个按键是否值得占用底栏。</p>
+      </article>
+
+      <aside class="card side-card">
+        <div class="card-title">
+          <h2>交互预览</h2>
+          <span id="state">playing</span>
+        </div>
+
+        <div class="controls">
+          <button class="active" data-scenario="confirm">⚠ Confirm · 等待确认</button>
+          <button data-scenario="done">✓ Done · 任务完成</button>
+          <button data-scenario="error">× Error · 任务失败</button>
+          <div class="control-row">
+            <label for="speed">滚动速度</label>
+            <input id="speed" type="range" min="20" max="180" value="78">
+            <output id="speed-value">78 px/s</output>
+          </div>
+          <div class="control-row">
+            <span>滚动状态</span>
+            <button id="toggle" type="button">暂停</button>
+          </div>
+        </div>
+
+        <dl class="spec">
+          <div><dt>面板</dt><dd>160 × 80 px</dd></div>
+          <div><dt>标题</dt><dd>single-line marquee</dd></div>
+          <div><dt>正文</dt><dd>single-line marquee</dd></div>
+          <div><dt>底栏</dt><dd>3 action keys + WiFi</dd></div>
+          <div><dt>字体策略</dt><dd>ASCII first / LVGL font later</dd></div>
+        </dl>
+
+        <div class="lvgl-note">
+          <strong>LVGL 对应结构</strong><br>
+          screen<br>
+          ├─ header_row<br>
+          ├─ notification_panel<br>
+          │  ├─ type_badge<br>
+          │  ├─ title_label · SCROLL_CIRCULAR<br>
+          │  └─ body_label · SCROLL_CIRCULAR<br>
+          └─ action_bar
+        </div>
+      </aside>
+    </section>
+  </main>
+
+  <script>
+    const scenarios = {
+      confirm: {
+        type: 'CONFIRM', icon: '!', color: '#ffd166', client: 'DESKTOP', unread: '●2', session: 'CC',
+        title: '需要确认：继续执行 git push 到远端仓库',
+        body: '构建已成功，等待你的选择 · supermini-aihook.bin',
+        source: '[DESKTOP / supermini-aihook]',
+        keys: ['YES', 'NO', 'LATER']
+      },
+      done: {
+        type: 'DONE', icon: '✓', color: '#47e6ae', client: 'DESKTOP', unread: '●1', session: 'CC',
+        title: '任务完成：supermini-aihook.bin 已生成',
+        body: '编译通过 · 4 MB flash · 可进行下一步测试',
+        source: '[DESKTOP / build]',
+        keys: ['OPEN', 'COPY', 'OK']
+      },
+      error: {
+        type: 'ERROR', icon: '×', color: '#ff6b7a', client: 'LAPTOP', unread: '●3', session: 'CODEX',
+        title: '任务失败：无法连接到 ESP32-C3',
+        body: '设备没有响应，请检查 USB 串口和供电状态',
+        source: '[LAPTOP / flash]',
+        keys: ['RETRY', 'LOG', 'DISMISS']
+      }
+    };
+
+    const lcd = document.querySelector('#lcd');
+    const titleTrack = document.querySelector('#title-track');
+    const bodyTrack = document.querySelector('#body-track');
+    const typeLine = document.querySelector('#type-line');
+    const typeIcon = document.querySelector('#type-icon');
+    const typeLabel = document.querySelector('#type-label');
+    const keys = document.querySelector('#keys');
+    const speed = document.querySelector('#speed');
+    const speedValue = document.querySelector('#speed-value');
+    const toggle = document.querySelector('#toggle');
+    const state = document.querySelector('#state');
+    const lanes = [
+      { track: titleTrack, viewport: titleTrack.parentElement, phase: 0, gap: 44 },
+      { track: bodyTrack, viewport: bodyTrack.parentElement, phase: 0, gap: 34 }
+    ];
+    let playing = true;
+    let last = performance.now();
+
+    function setScenario(name) {
+      const data = scenarios[name];
+      lcd.dataset.type = name;
+      document.querySelector('#client').textContent = data.client;
+      document.querySelector('#unread').textContent = data.unread;
+      document.querySelector('#session-short').textContent = data.session;
+      typeIcon.textContent = data.icon;
+      lcd.style.setProperty('--status-color', data.color);
+      typeLabel.textContent = data.type;
+      titleTrack.textContent = data.title;
+      bodyTrack.textContent = data.body;
+      document.querySelector('#source').textContent = data.source;
+      keys.innerHTML = data.keys.map((key, index) => `<span class="key"><b>${index + 1}</b>${key}</span>`).join('');
+      lanes.forEach(lane => lane.phase = 0);
+      document.querySelectorAll('[data-scenario]').forEach(button => {
+        button.classList.toggle('active', button.dataset.scenario === name);
+      });
+    }
+
+    function updateSpeed() {
+      speedValue.textContent = `${speed.value} px/s`;
+    }
+
+    function tick(now) {
+      const dt = Math.min((now - last) / 1000, .1);
+      last = now;
+      if (playing) {
+        lanes.forEach(lane => {
+          const overflow = lane.track.scrollWidth - lane.viewport.clientWidth;
+          if (overflow > 0) {
+            lane.phase += Number(speed.value) * dt;
+            const loop = overflow + lane.gap;
+            if (lane.phase > loop) lane.phase = 0;
+            lane.track.style.transform = `translate3d(${-lane.phase}px, 0, 0)`;
+          } else {
+            lane.track.style.transform = 'translate3d(0, 0, 0)';
+          }
+        });
+      }
+      requestAnimationFrame(tick);
+    }
+
+    document.querySelectorAll('[data-scenario]').forEach(button => {
+      button.addEventListener('click', () => setScenario(button.dataset.scenario));
+    });
+
+    speed.addEventListener('input', updateSpeed);
+    toggle.addEventListener('click', () => {
+      playing = !playing;
+      toggle.textContent = playing ? '暂停' : '播放';
+      state.textContent = playing ? 'playing' : 'paused';
+    });
+
+    setScenario('confirm');
+    updateSpeed();
+    requestAnimationFrame(tick);
+  </script>
+</body>
+</html>

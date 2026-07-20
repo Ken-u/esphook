@@ -1,39 +1,35 @@
 # esphook
 
-主机侧 Agent 通知桥接工具。它把 Claude Code、Codex、Kimi Code、Cursor Agent 的生命周期事件转换成统一的 `done`、`error`、`confirm` 通知，再通过 `esphook daemon` 转发到提醒设备。
+esphook 是一套“主机 Agent Hook + ESP32-C3 提醒屏”项目：把 Claude Code、Codex、Kimi Code、Cursor Agent 的事件转换成 `done`、`error`、`confirm`，在 0.96 寸 ST7735 屏上用颜色和大字提醒。
 
-## 功能
+仓库现在包含主机 daemon、四种 Hook、ESP-IDF 固件、中文字体资源、屏幕预览和 CI 构建配置。
 
-- 统一 CLI：`notify`、`dismiss`、`status`
-- 主机 daemon 管理网页和 HTTP API
-- ESP 位于下游网络时，支持 ESP 主动连接 daemon 的反向 device link
-- 每台设备使用独立 HMAC 密钥认证
-- 每个请求携带 `client_id` 和 `session_id`，可同时区分多个 Agent 和多个会话
-- 自动安装四种 Agent 的用户级 Hook
-- Hook fail-open：daemon 或设备离线不会阻塞 Agent 工作
+## 五分钟启动
 
-## 快速开始
-
-```bash
-git clone git@github.com:Ken-u/esphook.git
-cd esphook
-
-# 启动主机 daemon
-./bin/esphook daemon
-
-# 安装 Claude Code、Codex、Kimi Code、Cursor Agent Hook
-./scripts/install-hooks.sh --tools all
-```
-
-需要从其他设备访问管理网页时：
+先在编译机或开发机启动 daemon。若管理网页要被局域网内其他设备访问，绑定地址不能使用 `127.0.0.1`：
 
 ```bash
 ./bin/esphook daemon --host 0.0.0.0
 ```
 
-管理网页默认在 `http://127.0.0.1:8787/`，device link 默认监听 `18765`。
+默认管理网页为 `http://127.0.0.1:8787/`，ESP 反向 device link 监听 TCP `18765`。然后安装 Agent Hook：
 
-## Agent Hook
+```bash
+./scripts/install-hooks.sh --tools all
+```
+
+首次给板子配网并配对（主机 daemon 要先启动）：
+
+```bash
+./bin/esphook provision '<Wi-Fi SSID>' '<Wi-Fi password>' \
+  --server-host '<主机在板子网络中可达的 IP>'
+```
+
+如果板子已经配好 Wi-Fi，只需要写入 daemon 地址和认证密钥，用 `pair`。命令会通过 USB CDC 写入配置，设备随后主动连接主机；主机不需要反向访问设备所在网段。`provision`/`pair` 需要 Python `pyserial`。
+
+管理网页可查看设备、设置 client/session 别名、手动发送提醒。完整连接和认证协议见 [docs/connection-design.md](docs/connection-design.md)。
+
+## 主机侧 Agent Hook
 
 安装器支持单独选择工具：
 
@@ -41,16 +37,15 @@ cd esphook
 ./scripts/install-hooks.sh --tools claude
 ./scripts/install-hooks.sh --tools claude,codex
 ./scripts/install-hooks.sh --tools kimi,cursor
+./scripts/install-hooks.sh --tools all --uninstall
 ```
 
-也可以使用 CLI：
+也可以使用：
 
 ```bash
 ./bin/esphook setup hooks --tools all
 ./bin/esphook setup codex
 ```
-
-Hook 配置位置和事件映射：
 
 | Agent | 配置文件 | 完成 | 错误 | 确认 |
 | --- | --- | --- | --- | --- |
@@ -59,23 +54,13 @@ Hook 配置位置和事件映射：
 | Kimi Code | `~/.kimi-code/config.toml` | `Stop` | `StopFailure` | `PermissionRequest` / `Notification` |
 | Cursor Agent | `~/.cursor/hooks.json` | `stop` | `stop.status=error` | `stop.status=aborted` |
 
-Hook 适配器从 stdin JSON 读取原生会话 ID：Claude Code、Codex、Kimi Code 使用 `session_id`，Cursor Agent 使用 `conversation_id`。随后每次调用 daemon 都显式发送该 ID。
-
-会话 ID 的 CLI 优先级是：
+Hook 从 stdin JSON 读取会话 ID：Claude Code、Codex、Kimi Code 使用 `session_id`，Cursor 使用 `conversation_id`。CLI 的优先级为：
 
 ```text
 --session-id > ESPHOOK_SESSION_ID > CODEX_THREAD_ID > 配置文件 SESSION_ID
 ```
 
-卸载自己安装的 Hook：
-
-```bash
-./scripts/install-hooks.sh --tools all --uninstall
-```
-
-安装器保留已有配置，重复执行不会增加重复项；首次修改已有配置前会创建同目录下的 `.esphook.bak`。Codex 可能需要在 `/hooks` 中审核并信任新 Hook。
-
-详细说明见 [docs/agent-hooks.md](docs/agent-hooks.md)。
+Hook 是 fail-open 的：daemon 或设备离线时不会阻塞 Agent。详细配置与事件映射见 [docs/agent-hooks.md](docs/agent-hooks.md)。
 
 ## CLI
 
@@ -83,52 +68,44 @@ Hook 适配器从 stdin JSON 读取原生会话 ID：Claude Code、Codex、Kimi 
 ./bin/esphook notify done "构建完成" "固件已生成"
 ./bin/esphook notify error "构建失败" "查看日志"
 ./bin/esphook notify confirm "需要确认" "是否继续"
-
 ./bin/esphook notify --session-id <session-id> done "指定会话完成"
 ./bin/esphook dismiss --session-id <session-id>
 ./bin/esphook status
 ```
 
-CLI 会优先调用本机 daemon；daemon 不可用时，如果配置了 ESP 地址，则尝试直连 ESP HTTP 接口。
+CLI 优先调用 daemon；配置了 `DEVICE_IP` 时，daemon 不可用会退回直连 ESP HTTP。默认配置文件为 `~/bin/esphook.conf`，也可用 `ESPHOOK_CONF` 指定：
 
-## 配置
-
-默认读取 `~/bin/esphook.conf`，也可以通过 `ESPHOOK_CONF` 指定配置文件：
-
-```bash
+```ini
 DEVICE_IP=192.168.31.180
 CLIENT_ID=workstation:manual
 SESSION_ID=default
-DAEMON_PORT=18765
-```
-
-daemon 管理网页相关配置：
-
-```bash
 DAEMON_HOST=192.168.1.203
 WEB_BIND=0.0.0.0
 WEB_PORT=8787
 DEVICE_PORT=18765
 ```
 
-管理网页提供 client/session alias。alias 只用于显示和路由层映射，配置文件默认位于 `~/.config/esphook/aliases.json`。
+## 硬件与固件
 
-## 设备连接模式
+目标硬件是 4 MB Flash 的 ESP32-C3 SuperMini，加一块 0.96 寸 160×80 ST7735 SPI 屏、三个按键和一个无源蜂鸣器。接线、电平、初次 USB 烧录和分区说明见 [docs/hardware.md](docs/hardware.md)。
 
-```text
-Agent / CLI / 浏览器
-          │ HTTP
-          ▼
-   esphook daemon
-      │       ▲
-      │       │ ESP 主动 device link
-      ▼       │
-      ESP32-C3
+屏幕布局已经用 LVGL 实现：完成为绿色、错误为红色、确认是黄色；标题/正文占主要面积，过长文字自动滚动；10 分钟没有新事件后关闭显示和背光，按键或新通知唤醒。
+
+OTA 只更新 `ota_0`/`ota_1` 应用分区，不会覆盖 NVS、分区表或固定 `fontdata` 中文字库。网页上传、curl、USB 完整刷写和 reverse device link 的限制见 [docs/ota.md](docs/ota.md)。
+
+## CI 与构建产物
+
+`.github/workflows/ci.yml` 在每次 push、Pull Request 和手动触发时运行主机测试，并用 Espressif 的 ESP-IDF v5.5.4 环境构建 ESP32-C3 固件。Firmware job 会上传应用 `.bin`、bootloader、分区表、`flasher_args.json` 等构建产物；另一个资源 artifact 包含 USB 初次烧录所需的 `main/fontdata.bin` 和分区表。
+
+本地构建：
+
+```bash
+source "$IDF_PATH/export.sh"
+idf.py set-target esp32c3
+idf.py build
 ```
 
-主机可以访问 ESP 时使用直连 HTTP；ESP 位于下游 NAT 时，ESP 主动连接主机的 device link，daemon 自动通过反向连接发送通知。详细协议见 [docs/connection-design.md](docs/connection-design.md)。
-
-## 开发与测试
+主机测试：
 
 ```bash
 python3 -m py_compile host/esphookd.py host/install_hooks.py host/hooks/esphook_notify_hook.py
@@ -136,4 +113,4 @@ python3 host/test_hooks.py
 python3 host/test_device_link.py
 ```
 
-本仓库提交的是主机侧 esphook 和 Agent Hook。ESP 固件、屏幕布局预览和字体资源仍在硬件工程工作树中单独维护。
+屏幕效果预览在 [screen-layout-preview.html](screen-layout-preview.html) 和 [screen-focus-preview.html](screen-focus-preview.html)。

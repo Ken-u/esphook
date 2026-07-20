@@ -1,0 +1,8 @@
+# Name,     Type, SubType, Offset, Size,   Flags
+# 4 MB flash: two OTA app slots plus a fixed, USB-flashed Chinese font image.
+nvs,        data, nvs,     ,      0x6000,
+otadata,    data, ota,     ,      0x2000,
+phy_init,   data, phy,     ,      0x1000,
+ota_0,      app,  ota_0,   ,      1700K,
+ota_1,      app,  ota_1,   ,      1700K,
+fontdata,   data, 0x40,    ,      512K,

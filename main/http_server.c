@@ -10,6 +10,7 @@
 #include "config_store.h"
 #include "net_wifi.h"
 #include "events.h"
+#include "ota_update.h"
 #include "esp_log.h"
 #include <string.h>
 #include <stdio.h>
@@ -17,6 +18,30 @@
 #include <sys/socket.h>
 
 static const char *TAG = "http";
+
+/* 首次旧版固件没有 device secret 时保持兼容；配对后所有写操作都要求
+ * 主机发送同一份 64 hex 字符串。 */
+static bool request_authorized(httpd_req_t *req)
+{
+    char secret[65] = {0};
+    config_get_link_secret(secret, sizeof secret);
+    if (!secret[0]) return true;
+
+    size_t len = httpd_req_get_hdr_value_len(req, "X-Esphook-Token");
+    if (len == 0 || len >= sizeof secret) return false;
+    char token[65] = {0};
+    if (httpd_req_get_hdr_value_str(req, "X-Esphook-Token", token, sizeof token) != ESP_OK) {
+        return false;
+    }
+    return strcmp(token, secret) == 0;
+}
+
+static bool reject_unauthorized(httpd_req_t *req)
+{
+    if (request_authorized(req)) return false;
+    httpd_resp_send_err(req, 401, "{\"ok\":false,\"err\":\"unauthorized\"}");
+    return true;
+}
 
 static const char *WEB_CSS =
 ":root{--bg:#0a0e14;--panel:#141a23;--line:#1f2733;--txt:#c5d0de;--dim:#5c6a7a;"
@@ -41,7 +66,8 @@ static const char *WEB_CSS =
 "code{color:var(--y)}"
 ".row{display:flex;align-items:center;gap:8px;margin-bottom:7px}"
 ".row .id{color:var(--dim);font-size:11px;width:38%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}"
-".row input{flex:1}";
+".row input{flex:1}"
+"input[type=file]{width:100%;margin-bottom:8px;color:var(--dim);font:12px monospace}";
 
 /* urldecode 极简：处理 %xx 和 + */
 static void urldecode(char *s)
@@ -84,6 +110,7 @@ static bool form_field(const char *buf, const char *key, char *out, size_t outle
 
 static esp_err_t h_notify(httpd_req_t *req)
 {
+    if (reject_unauthorized(req)) return ESP_OK;
     char buf[512];
     int len = req->content_len < (int)sizeof buf ? req->content_len : (int)sizeof buf - 1;
     int got = httpd_req_recv(req, buf, len);
@@ -96,15 +123,35 @@ static esp_err_t h_notify(httpd_req_t *req)
     cJSON *s = cJSON_GetObjectItem(j, "session_id");
     cJSON *t = cJSON_GetObjectItem(j, "title");
     cJSON *b = cJSON_GetObjectItem(j, "body");
+    cJSON *ty = cJSON_GetObjectItem(j, "type");
     if (!cJSON_IsString(c) || !cJSON_IsString(s)) {
         cJSON_Delete(j);
         httpd_resp_send_err(req, 400, "{\"ok\":false,\"err\":\"need client_id,session_id\"}");
         return ESP_OK;
     }
+
+    /* type 缺省按 done；非法值拒绝，避免主机端误拼请求后静默变成普通通知。 */
+    beep_kind_t bk = BEEP_NOTIFY;
+    dm_status_t status = DM_STATUS_DONE;
+    if (cJSON_IsString(ty) && ty->valuestring[0]) {
+        if (strcmp(ty->valuestring, "confirm") == 0) {
+            bk = BEEP_CONFIRM;
+            status = DM_STATUS_CONFIRM;
+        } else if (strcmp(ty->valuestring, "error") == 0) {
+            bk = BEEP_ERROR;
+            status = DM_STATUS_ERROR;
+        } else if (strcmp(ty->valuestring, "done") != 0) {
+            cJSON_Delete(j);
+            httpd_resp_send_err(req, 400, "{\"ok\":false,\"err\":\"bad type\"}");
+            return ESP_OK;
+        }
+    }
+
     display_event_t e = {0};
     e.kind = EVT_NOTIFY;
     strncpy(e.client_id, c->valuestring, sizeof e.client_id - 1);
     strncpy(e.session_id, s->valuestring, sizeof e.session_id - 1);
+    e.status = status;
     if (cJSON_IsString(t)) strncpy(e.title, t->valuestring, sizeof e.title - 1);
     if (cJSON_IsString(b)) strncpy(e.body, b->valuestring, sizeof e.body - 1);
 
@@ -129,7 +176,6 @@ static esp_err_t h_notify(httpd_req_t *req)
     config_seen_add("session", e.session_id);
 
     xQueueSend(display_q, &e, 0);
-    beep_kind_t bk = BEEP_NOTIFY;
     xQueueSend(beeper_q, &bk, 0);
 
     httpd_resp_set_type(req, "application/json");
@@ -139,6 +185,7 @@ static esp_err_t h_notify(httpd_req_t *req)
 
 static esp_err_t h_dismiss(httpd_req_t *req)
 {
+    if (reject_unauthorized(req)) return ESP_OK;
     char buf[256];
     int len = req->content_len < (int)sizeof buf ? req->content_len : (int)sizeof buf - 1;
     int got = httpd_req_recv(req, buf, len);
@@ -163,6 +210,7 @@ static esp_err_t h_dismiss(httpd_req_t *req)
 
 static esp_err_t h_config(httpd_req_t *req)
 {
+    if (reject_unauthorized(req)) return ESP_OK;
     char buf[1024];
     int len = req->content_len < (int)sizeof buf ? req->content_len : (int)sizeof buf - 1;
     int got = httpd_req_recv(req, buf, len);
@@ -202,7 +250,7 @@ static esp_err_t h_config(httpd_req_t *req)
                 urldecode(id);
                 urldecode(val);
                 const char *type = (p[0] == 'c') ? "client" : "session";
-                if (val[0]) config_set_display_name(type, id, val);
+                config_set_display_name(type, id, val[0] ? val : NULL);
             }
         }
         p = amp ? amp + 1 : NULL;
@@ -230,6 +278,22 @@ static esp_err_t h_root(httpd_req_t *req)
     httpd_resp_sendstr_chunk(req, WEB_CSS);
     httpd_resp_sendstr_chunk(req, "</style></head><body>"
         "<h1>aihook config</h1>"
+        "<div class='card'><h2>Firmware OTA</h2>"
+        "<label><span>Token</span><input id='ota-token' type=password autocomplete=off "
+        "placeholder='paired device secret (optional)'></label>"
+        "<input id='fw' type=file accept='.bin,application/octet-stream'>"
+        "<button type=button onclick='uploadFirmware()'>UPLOAD / REBOOT</button>"
+        "<div id='ota-status' class='hint'>上传编译生成的 app .bin；设备会自动重启。</div></div>"
+        "<script>function uploadFirmware(){"
+        "var f=document.getElementById('fw').files[0],s=document.getElementById('ota-status');"
+        "if(!f){s.textContent='请选择 .bin 文件';return;}"
+        "s.textContent='uploading '+f.size+' bytes...';"
+        "var h={'Content-Type':'application/octet-stream'},t=document.getElementById('ota-token').value;"
+        "if(t)h['X-Esphook-Token']=t;"
+        "fetch('/ota',{method:'POST',headers:h,body:f})"
+        ".then(function(r){return r.json();}).then(function(x){"
+        "s.textContent=x.ok?'uploaded, rebooting...':('OTA failed: '+x.err);"
+        "}).catch(function(){s.textContent='设备正在重启，请稍后刷新';});}</script>"
         "<form method='post' action='/config'>"
         "<div class='card'><h2>Keymap</h2>"
         "<label><span>K1</span><input type=text name='k0' maxlength='15'></label>"
@@ -294,6 +358,12 @@ static esp_err_t h_health(httpd_req_t *req)
     return ESP_OK;
 }
 
+static esp_err_t h_ota(httpd_req_t *req)
+{
+    if (reject_unauthorized(req)) return ESP_OK;
+    return ota_handle_upload(req);
+}
+
 esp_err_t http_start(void)
 {
     httpd_handle_t s = NULL;
@@ -302,11 +372,13 @@ esp_err_t http_start(void)
     static const httpd_uri_t u_notify = {.uri="/notify",.method=HTTP_POST,.handler=h_notify};
     static const httpd_uri_t u_dismiss= {.uri="/dismiss",.method=HTTP_POST,.handler=h_dismiss};
     static const httpd_uri_t u_config = {.uri="/config",.method=HTTP_POST,.handler=h_config};
+    static const httpd_uri_t u_ota    = {.uri="/ota",.method=HTTP_POST,.handler=h_ota};
     static const httpd_uri_t u_root   = {.uri="/",.method=HTTP_GET,.handler=h_root};
     static const httpd_uri_t u_health = {.uri="/health",.method=HTTP_GET,.handler=h_health};
     httpd_register_uri_handler(s, &u_notify);
     httpd_register_uri_handler(s, &u_dismiss);
     httpd_register_uri_handler(s, &u_config);
+    httpd_register_uri_handler(s, &u_ota);
     httpd_register_uri_handler(s, &u_root);
     httpd_register_uri_handler(s, &u_health);
     ESP_LOGI(TAG, "http server started");

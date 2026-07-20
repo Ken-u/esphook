@@ -49,6 +49,15 @@ void test_display_name_set_get(void)
     TEST_ASSERT_EQUAL_STRING("Desktop", config_get_display_name("client", "espdev:claude", out, sizeof(out)));
 }
 
+void test_display_name_long_session_id(void)
+{
+    const char *session = "0123456789abcdef0123456789abcdef0123456789abcdef";
+    config_set_display_name("session", session, "Long session");
+    char out[32];
+    TEST_ASSERT_EQUAL_STRING("Long session",
+        config_get_display_name("session", session, out, sizeof(out)));
+}
+
 void test_display_name_delete(void)
 {
     config_set_display_name("session", "s1", "NES");

@@ -3,6 +3,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "beeper.h"
+#include "display_model.h"
 
 typedef enum { EVT_NOTIFY, EVT_DISMISS, EVT_NET_STATE } display_evt_kind_t;
 
@@ -12,6 +13,7 @@ typedef struct {
     char session_id[48];
     char title[32];
     char body[128];
+    dm_status_t status; /* EVT_NOTIFY 的颜色/语义状态 */
     int  net_state;   /* 0=disc 1=connecting 2=connected */
     char ip[16];
     char callback[32]; /* host:port，/notify 携带，供按键回传 */

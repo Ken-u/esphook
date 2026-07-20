@@ -13,6 +13,9 @@
 #include "http_server.h"
 #include "input_task.h"
 #include "display_task.h"
+#include "device_link.h"
+#include "font_store.h"
+#include "esp_ota_ops.h"
 
 static const char *TAG = "main";
 
@@ -47,6 +50,7 @@ void app_main(void)
 
     /* 显示 */
     dm_init();
+    ESP_ERROR_CHECK(font_store_init());
     dv_init();
     dv_render_net(0, NULL);
     dv_flush();
@@ -60,9 +64,18 @@ void app_main(void)
     /* 输入任务（按键 + CDC 命令已在 handler） */
     input_start();
 
+    /* 主机反向连接（无配置时任务休眠，不影响旧直连模式）。 */
+    device_link_start();
+
     /* 尝试连 Wi-Fi（有凭证则连，连上后启 http） */
     wifi_set_state_cb(on_wifi_state);
     wifi_start();
+
+    /* OTA 回滚模式下，初始化完成后确认新程序；若启动前崩溃则保留旧槽位。 */
+    esp_err_t ota_state = esp_ota_mark_app_valid_cancel_rollback();
+    if (ota_state != ESP_OK && ota_state != ESP_ERR_OTA_ROLLBACK_INVALID_STATE) {
+        ESP_LOGW(TAG, "could not confirm OTA app: %s", esp_err_to_name(ota_state));
+    }
 
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(1000));

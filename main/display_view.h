@@ -1,5 +1,5 @@
 /* main/display_view.h
- * ST7735 0.96" 80x160 横屏，走 esp_lcd 框架(panel_io + ST7789 驱动复用)。
+ * ST7735 0.96" 横屏，LVGL 控件 + esp_lcd SPI 输出。
  */
 #pragma once
 #include "esp_err.h"
@@ -16,21 +16,16 @@
 #define DV_GRAY    0x8410
 #define DV_CYAN    0x07FF
 
-/* 大字号：2=10x14，3=15x21。 */
-#define DV_SIZE_TITLE 3
-#define DV_SIZE_BODY  3
-#define DV_SIZE_BAR   1
-#define DV_SIZE_NET   1
-
 esp_err_t dv_init(void);
 
-void dv_clear(void);
-void dv_fill_rect(int x, int y, int w, int h, uint16_t color);
-void dv_draw_text(int x, int y, const char *s, uint16_t color, int size);
+/* 触发一次立即重绘；display_task 中的常规动画由 dv_process 驱动。 */
 void dv_flush(void);
+void dv_process(void);
+
+/* 记录一次显示活动；若屏幕已熄灭则同时唤醒背光和面板。 */
+void dv_activity(void);
 
 void dv_render_status_bar(void);
 void dv_render_main(void);
 void dv_render_net(int state, const char *ip);
 void dv_render_idle(void);
-void dv_tick_scroll(void);

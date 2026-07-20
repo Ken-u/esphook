@@ -24,15 +24,25 @@
   - Wayland → `wtype` 或 `ydotool`(+ `ydotoold` 常驻)
 - [ ] `esphook daemon` 实跑验证(socat 监听 + 注入闭环)
 - [ ] daemon 开机自启(systemd user unit / desktop autostart)
-- [ ] **CC hooks 自动接入**:`esphook setup claude` 当前只打印提示,没真正写 `~/.claude/settings.json` 的 hooks 段。需查 CC 当前 hooks 字段格式(Notification/Stop/UserPromptSubmit 的 matcher + command + stdin JSON),做成 setup 自动幂等写入
-- [ ] **Codex hook 体系调研**:Codex 是否有等价 hook。无则 Codex 仅支持手动 `esphook notify`
-- [ ] **session_id 来源**:CC/Codex hook 环境能否稳定拿到会话 ID;无则用"工具+PID+启动时间"兜底
+- [x] **CC hooks 自动接入**:`esphook setup claude` / `scripts/install-hooks.sh` 幂等写入 `~/.claude/settings.json`
+- [x] **Codex hook 体系调研**:使用 `~/.codex/hooks.json` 的 `Stop` / `PermissionRequest` command hooks
+- [x] **session_id 来源**:Hook stdin 使用原生 `session_id`；Cursor 使用 `conversation_id`；直接 Codex CLI 使用 `CODEX_THREAD_ID`
+
+## 暂缓问题
+
+- [ ] **蜂鸣器队列无人消费**:`beeper_q` 目前只有生产者,需要补 beeper task 或明确改为直接调用
+- [ ] **daemon 注入命令错误**:`esphook daemon` 的 socat 路径调用不存在的 `esphook-inject`
+- [ ] **daemon setup**:`setup daemon` 仍只提示，需要另做 systemd user unit / desktop autostart
+- [ ] **HTTP body 可能被截断**:`http_server.c` 的路由只调用一次 `httpd_req_recv`,需循环读满 content length
+- [ ] **队列满时静默丢事件**:`display_q`/`beeper_q` 使用非阻塞发送且忽略返回值,批量通知时可能返回成功但实际丢失
+- [ ] **Unity 单测未接入 release build**:测试源在 `main/CMakeLists.txt` 中被注释,需补独立 test 配置
 
 ## 调参
 
-- [ ] 顶部状态栏滚动节奏(`dv_tick_scroll`):多 client 超屏时的速度/停顿,实机调
+- [ ] 标题/正文滚动节奏(LVGL `SCROLL_CIRCULAR`):实机调速度和停顿
 - [ ] 蜂鸣器音调/时长(`beeper.c`):NOTIFY/KEY/ERROR 三种,实机听感调
-- [ ] 屏布局字号/行距(`display_view.c`):160×80 紧凑,实机看清晰度调
+- [x] **屏幕布局重做**(`display_view.c`):LVGL 大字号状态/标题/正文布局已落地,剩余只做实机微调
+- [x] **中文通知显示**:中文字库编译进字体 C 文件并由 `fontdata` 固定分区加载
 
 ## 已完成
 
