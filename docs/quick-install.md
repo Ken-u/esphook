@@ -21,7 +21,17 @@ curl -fsSL https://raw.githubusercontent.com/Ken-u/esphook/agent/install-agent-h
 
 ## 按键输入回传检查
 
-安装脚本会检测第一个可用的输入注入工具：`ydotool`、`xdotool`、`wtype`。如果都没有安装，脚本会继续完成主机文件、固件和 Hook 安装，但会明确提示：提醒显示正常，板子按键向电脑当前焦点窗口输入文字的功能不可用。
+安装脚本会按操作系统检测输入回传能力：macOS 使用系统自带的 `osascript`，Linux 检测第一个可用的 `ydotool`、`xdotool`、`wtype`。如果不可用，脚本会继续完成主机文件、固件和 Hook 安装，但会明确提示：提醒显示正常，板子按键向电脑当前焦点窗口输入文字的功能不可用。
+
+### macOS
+
+macOS 不需要安装输入工具。首次使用时，请打开“系统设置 → 隐私与安全性 → 辅助功能”，允许实际启动 daemon 的 Terminal、iTerm 或其他终端/应用控制电脑。daemon 使用系统自带的 `osascript` 调用 `System Events` 输入文字；如果没有辅助功能权限，daemon 会提示授权位置，通知显示仍然正常。
+
+可以先在当前焦点窗口测试：
+
+```bash
+osascript -e 'tell application "System Events" to keystroke "esphook-test"'
+```
 
 按桌面环境安装对应工具后，重启 daemon：
 

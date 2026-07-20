@@ -36,6 +36,11 @@ DEFAULT_CONFIG = Path.home() / "bin" / "esphook.conf"
 DEFAULT_REGISTRY = Path.home() / ".config" / "esphook" / "devices.json"
 _inject_warning_lock = threading.Lock()
 _inject_warning_emitted = False
+MACOS_KEYSTROKE_SCRIPT = (
+    "on run argv\n"
+    "    tell application \"System Events\" to keystroke (item 1 of argv)\n"
+    "end run"
+)
 
 
 def log(message: str) -> None:
@@ -300,26 +305,59 @@ def send_json(sock: socket.socket, message: dict[str, Any], lock: threading.Lock
         sock.sendall(packet)
 
 
-def inject_word(word: str) -> None:
+def input_injection_commands(word: str) -> tuple[tuple[str, ...], ...]:
+    if sys.platform == "darwin":
+        return (("osascript", "-e", MACOS_KEYSTROKE_SCRIPT, "--", word),)
+    return (
+        ("ydotool", "type", word),
+        ("xdotool", "type", "--", word),
+        ("wtype", "--", word),
+    )
+
+
+def _inject_warning(message: str) -> None:
     global _inject_warning_emitted
+    with _inject_warning_lock:
+        if not _inject_warning_emitted:
+            log(message)
+            _inject_warning_emitted = True
+
+
+def inject_word(word: str) -> None:
     if not word:
         return
-    for command in (("ydotool", "type", word), ("xdotool", "type", "--", word), ("wtype", "--", word)):
+    for command in input_injection_commands(word):
         if not shutil_which(command[0]):
             continue
         try:
-            subprocess.run(command, check=False, timeout=2)
-            return
+            result = subprocess.run(command, check=False, timeout=2)
+            if result.returncode == 0:
+                return
+            if sys.platform == "darwin":
+                _inject_warning(
+                    "macOS osascript 无法输入；请在 System Settings > Privacy & "
+                    "Security > Accessibility 中允许运行 daemon 的终端或应用"
+                )
+            else:
+                _inject_warning("input injection tool failed; keyboard input is unavailable")
         except (OSError, subprocess.TimeoutExpired):
+            if sys.platform == "darwin":
+                _inject_warning(
+                    "macOS osascript 输入失败；请在 System Settings > Privacy & "
+                    "Security > Accessibility 中允许运行 daemon 的终端或应用"
+                )
+            else:
+                _inject_warning("input injection tool failed; keyboard input is unavailable")
             return
-    with _inject_warning_lock:
-        if not _inject_warning_emitted:
-            log(
-                "no inject tool (ydotool/xdotool/wtype); keyboard input is "
-                "unavailable (X11: install xdotool; Wayland: install wtype or "
-                "ydotool and run ydotoold)"
-            )
-            _inject_warning_emitted = True
+    if sys.platform == "darwin":
+        _inject_warning(
+            "macOS 未找到 osascript；键盘输入不可用（正常 macOS 应自带 osascript）"
+        )
+    else:
+        _inject_warning(
+            "no inject tool (ydotool/xdotool/wtype); keyboard input is unavailable "
+            "(X11: install xdotool; Wayland: install wtype or ydotool and run ydotoold)"
+        )
 
 
 def shutil_which(program: str) -> str | None:

@@ -43,6 +43,19 @@ die() {
 show_input_injection_status() {
   local tool=""
   local session="${XDG_SESSION_TYPE:-unknown}"
+  local system_name="$(uname -s 2>/dev/null || echo unknown)"
+
+  if [[ "$system_name" == "Darwin" ]]; then
+    if command -v osascript >/dev/null 2>&1; then
+      echo "esphook: 按键输入回传：已检测到 macOS 内置 osascript"
+      echo "esphook: 首次使用请在 系统设置 > 隐私与安全性 > 辅助功能 中允许运行 daemon 的终端或应用"
+    else
+      echo "esphook: 警告：macOS 未找到系统自带的 osascript"
+      echo "esphook: 当前只能使用提醒显示，板子按键输入回传不可用"
+    fi
+    return
+  fi
+
   for candidate in ydotool xdotool wtype; do
     if command -v "$candidate" >/dev/null 2>&1; then
       tool="$candidate"

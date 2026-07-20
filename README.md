@@ -37,7 +37,7 @@ esphook 是一套“主机 Agent Hook + ESP32-C3 提醒屏”项目：把 Claude
 curl -fsSL https://raw.githubusercontent.com/Ken-u/esphook/agent/install-agent-hooks/install.sh | bash
 ```
 
-脚本会把主机文件和固件保存到 `~/.local/share/esphook`，在 `~/.local/bin/esphook` 安装命令，并先校验 SHA256。安装时还会检测 `ydotool`、`xdotool`、`wtype`：没有检测到时，通知仍可用，但板子按键向当前窗口输入的功能不可用，脚本会根据 X11/Wayland 提示安装命令。下载完成后，只有你明确输入 `y` 才会修改 Claude Code、Codex、Kimi Code、Cursor Agent 的 Hook 配置；已有配置会保留 `.esphook.bak` 备份。
+脚本会把主机文件和固件保存到 `~/.local/share/esphook`，在 `~/.local/bin/esphook` 安装命令，并先校验 SHA256。安装时会检测输入回传能力：macOS 使用系统自带的 `osascript`，Linux 检测 `ydotool`、`xdotool`、`wtype`；没有检测到时，通知仍可用，但板子按键向当前窗口输入的功能不可用，脚本会提示处理方法。下载完成后，只有你明确输入 `y` 才会修改 Claude Code、Codex、Kimi Code、Cursor Agent 的 Hook 配置；已有配置会保留 `.esphook.bak` 备份。
 
 常用选项：
 
