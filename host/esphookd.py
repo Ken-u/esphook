@@ -34,6 +34,8 @@ DEFAULT_DEVICE_PORT = 18765
 DEFAULT_WEB_PORT = 8787
 DEFAULT_CONFIG = Path.home() / "bin" / "esphook.conf"
 DEFAULT_REGISTRY = Path.home() / ".config" / "esphook" / "devices.json"
+_inject_warning_lock = threading.Lock()
+_inject_warning_emitted = False
 
 
 def log(message: str) -> None:
@@ -299,6 +301,7 @@ def send_json(sock: socket.socket, message: dict[str, Any], lock: threading.Lock
 
 
 def inject_word(word: str) -> None:
+    global _inject_warning_emitted
     if not word:
         return
     for command in (("ydotool", "type", word), ("xdotool", "type", "--", word), ("wtype", "--", word)):
@@ -309,7 +312,14 @@ def inject_word(word: str) -> None:
             return
         except (OSError, subprocess.TimeoutExpired):
             return
-    log(f"no inject tool (ydotool/xdotool/wtype); word={word!r} dropped")
+    with _inject_warning_lock:
+        if not _inject_warning_emitted:
+            log(
+                "no inject tool (ydotool/xdotool/wtype); keyboard input is "
+                "unavailable (X11: install xdotool; Wayland: install wtype or "
+                "ydotool and run ydotoold)"
+            )
+            _inject_warning_emitted = True
 
 
 def shutil_which(program: str) -> str | None:

@@ -40,6 +40,41 @@ die() {
   exit 1
 }
 
+show_input_injection_status() {
+  local tool=""
+  local session="${XDG_SESSION_TYPE:-unknown}"
+  for candidate in ydotool xdotool wtype; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+      tool="$candidate"
+      break
+    fi
+  done
+
+  if [[ -n "$tool" ]]; then
+    echo "esphook: 按键输入回传：已检测到 $tool"
+    if [[ "$tool" == "ydotool" ]] && ! command -v ydotoold >/dev/null 2>&1; then
+      echo "esphook: 注意：ydotool 还需要运行 ydotoold，否则输入回传仍不可用"
+    fi
+    return
+  fi
+
+  echo "esphook: 警告：未检测到 ydotool、xdotool 或 wtype"
+  echo "esphook: 通知显示和 daemon 不受影响，但板子按键输入回传当前不可用"
+  case "$session" in
+    x11)
+      echo "esphook: X11 安装：sudo apt install xdotool"
+      ;;
+    wayland)
+      echo "esphook: Wayland 安装：sudo apt install wtype"
+      echo "esphook: 也可以安装 ydotool，但必须另外运行 ydotoold"
+      ;;
+    *)
+      echo "esphook: X11 可安装 xdotool；Wayland 可安装 wtype"
+      echo "esphook: 安装后请重启 daemon，输入回传才会生效"
+      ;;
+  esac
+}
+
 while (($# > 0)); do
   case "$1" in
     --tools)
@@ -201,6 +236,7 @@ echo "esphook: 主机文件已安装到 $release_dir"
 echo "esphook: OTA 固件：$release_dir/firmware/esphook-firmware.bin"
 echo "esphook: 完整烧录包：$release_dir/firmware/esphook-full-flash.zip"
 echo "esphook: 命令：$launcher"
+show_input_injection_status
 
 if ((NO_HOOKS)); then
   echo "esphook: 已按要求跳过 Hook 安装"

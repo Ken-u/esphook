@@ -19,6 +19,22 @@ curl -fsSL https://raw.githubusercontent.com/Ken-u/esphook/agent/install-agent-h
 
 脚本需要 `curl`、`python3` 和 `tar`。`curl | bash` 场景下确认提示从 `/dev/tty` 读取，因此不会因为脚本来自管道而失效。
 
+## 按键输入回传检查
+
+安装脚本会检测第一个可用的输入注入工具：`ydotool`、`xdotool`、`wtype`。如果都没有安装，脚本会继续完成主机文件、固件和 Hook 安装，但会明确提示：提醒显示正常，板子按键向电脑当前焦点窗口输入文字的功能不可用。
+
+按桌面环境安装对应工具后，重启 daemon：
+
+```bash
+# X11
+sudo apt install xdotool
+
+# Wayland
+sudo apt install wtype
+```
+
+也可以使用 `ydotool`；它还需要 `ydotoold` 常驻运行。安装脚本不会自动使用 `sudo` 安装系统包。daemon 运行时如果仍没有工具，只会提示一次，不会因为每个按键事件反复刷屏。
+
 ## 选项
 
 ```bash
