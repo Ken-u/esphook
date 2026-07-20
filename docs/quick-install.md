@@ -1,0 +1,58 @@
+# esphook 快速安装
+
+## 一键安装
+
+在准备运行 daemon 的主机上执行：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Ken-u/esphook/agent/install-agent-hooks/install.sh | bash
+```
+
+脚本从 `Ken-u/esphook` 的最新正式 Release 获取四个资产：
+
+- `esphook-host.tar.gz`：daemon、CLI、Hook 适配器和文档；
+- `esphook-firmware.bin`：只包含应用分区，可用于网页或 curl OTA；
+- `esphook-full-flash.zip`：包含 bootloader、分区表、OTA data、应用和中文字库；
+- `SHA256SUMS`：安装前自动校验以上三个文件。
+
+主机文件和固件默认安装到 `~/.local/share/esphook`，并在 `~/.local/bin/esphook` 创建命令入口。安装脚本不会默认修改 Agent 配置：下载和校验成功后，它会询问是否安装 Hook，只有输入 `y` 才会继续。修改已有配置前会保留 `.esphook.bak` 备份。
+
+脚本需要 `curl`、`python3` 和 `tar`。`curl | bash` 场景下确认提示从 `/dev/tty` 读取，因此不会因为脚本来自管道而失效。
+
+## 选项
+
+```bash
+# 只下载主机文件和固件
+curl -fsSL https://raw.githubusercontent.com/Ken-u/esphook/agent/install-agent-hooks/install.sh \
+  | bash -s -- --no-hooks
+
+# 只安装某些工具的 Hook
+curl -fsSL https://raw.githubusercontent.com/Ken-u/esphook/agent/install-agent-hooks/install.sh \
+  | bash -s -- --tools claude,codex
+
+# 指定 Release，便于回滚或复现
+curl -fsSL https://raw.githubusercontent.com/Ken-u/esphook/agent/install-agent-hooks/install.sh \
+  | bash -s -- --release v0.0.0-123
+
+# 已经明确同意修改 Hook 的自动化环境
+curl -fsSL https://raw.githubusercontent.com/Ken-u/esphook/agent/install-agent-hooks/install.sh \
+  | bash -s -- --yes
+```
+
+也可以下载 `install.sh` 后执行 `bash install.sh --help` 查看全部参数。`--yes` 是显式授权开关，日常交互安装不需要使用。
+
+## Release 生成规则
+
+CI 在 Pull Request 和非默认分支上只进行测试和固件构建。默认分支每次 push 在主机测试和 ESP32-C3 构建均成功后，自动创建一个编号形式的正式 Release：`v0.0.0-<GitHub Actions run number>`。因此 GitHub 的 `latest` Release 始终能被安装脚本发现。
+
+## 固件使用
+
+将 `esphook-firmware.bin` 上传到设备网页的 `Firmware OTA`，或执行：
+
+```bash
+curl --fail --data-binary @esphook-firmware.bin \
+  -H 'Content-Type: application/octet-stream' \
+  http://<设备 IP>/ota
+```
+
+如果需要更新中文字库、分区表，或设备只能通过 USB 访问，解压 `esphook-full-flash.zip`，按照其中的 `FLASH_LAYOUT.txt` 使用 ESP32-C3 兼容的 `esptool` 完整刷写。完整 OTA 限制和认证方式见 [ota.md](ota.md)，硬件接线见 [hardware.md](hardware.md)。

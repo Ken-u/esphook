@@ -29,6 +29,31 @@ esphook 是一套“主机 Agent Hook + ESP32-C3 提醒屏”项目：把 Claude
 
 管理网页可查看设备、设置 client/session 别名、手动发送提醒。完整连接和认证协议见 [docs/connection-design.md](docs/connection-design.md)。
 
+## 从 GitHub 一键安装
+
+默认分支每次 push 通过 CI 后都会自动生成一个 Release。Release 包含主机文件、可直接用于网页/curl OTA 的应用固件、USB 完整烧录包和 `SHA256SUMS`。在开发机上可以直接运行：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Ken-u/esphook/agent/install-agent-hooks/install.sh | bash
+```
+
+脚本会把主机文件和固件保存到 `~/.local/share/esphook`，在 `~/.local/bin/esphook` 安装命令，并先校验 SHA256。下载完成后，只有你明确输入 `y` 才会修改 Claude Code、Codex、Kimi Code、Cursor Agent 的 Hook 配置；已有配置会保留 `.esphook.bak` 备份。
+
+常用选项：
+
+```bash
+# 只下载文件和固件，不安装 Hook
+curl -fsSL https://raw.githubusercontent.com/Ken-u/esphook/agent/install-agent-hooks/install.sh | bash -s -- --no-hooks
+
+# 只安装指定工具的 Hook
+curl -fsSL https://raw.githubusercontent.com/Ken-u/esphook/agent/install-agent-hooks/install.sh | bash -s -- --tools claude,codex
+
+# 明确授权给自动化环境，跳过确认提示
+curl -fsSL https://raw.githubusercontent.com/Ken-u/esphook/agent/install-agent-hooks/install.sh | bash -s -- --yes
+```
+
+安装脚本需要 `curl`、`python3` 和 `tar`。详细的安装目录、Release 资产和手动烧录方式见 [docs/quick-install.md](docs/quick-install.md)。
+
 ## 主机侧 Agent Hook
 
 安装器支持单独选择工具：
@@ -95,7 +120,7 @@ OTA 只更新 `ota_0`/`ota_1` 应用分区，不会覆盖 NVS、分区表或固�
 
 ## CI 与构建产物
 
-`.github/workflows/ci.yml` 在每次 push、Pull Request 和手动触发时运行主机测试，并用 Espressif 的 ESP-IDF v5.5.4 环境构建 ESP32-C3 固件。Firmware job 会上传应用 `.bin`、bootloader、分区表、`flasher_args.json` 等构建产物；另一个资源 artifact 包含 USB 初次烧录所需的 `main/fontdata.bin` 和分区表。
+`.github/workflows/ci.yml` 在每次 push、Pull Request 和手动触发时运行主机测试，并用 Espressif 的 ESP-IDF v5.5.4 环境构建 ESP32-C3 固件。Firmware job 会上传应用 `.bin`、bootloader、分区表、`flasher_args.json` 等构建产物；另一个资源 artifact 包含 USB 初次烧录所需的 `main/fontdata.bin` 和分区表。默认分支的 push 在构建成功后还会自动发布 `v0.0.0-<run number>` Release，Release 资产可直接被一键安装脚本使用。
 
 本地构建：
 

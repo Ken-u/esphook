@@ -15,7 +15,7 @@ USB 完整刷写：bootloader + partition table + OTA data + app + fontdata
 
 这适用于主机能直接访问设备 IP 的场景：
 
-1. 从 CI 的 firmware artifact 下载应用 `.bin`，或在本地使用 `build/supermini-aihook.bin`。
+1. 从 GitHub 最新 Release 下载 `esphook-firmware.bin`，从 CI 的 firmware artifact 下载应用 `.bin`，或在本地使用 `build/supermini-aihook.bin`。
 2. 浏览器打开 `http://<设备 IP>/`。
 3. 在 `Firmware OTA` 中选择应用 `.bin` 并上传。
 4. 等待设备自动重启，再刷新网页或用 `status`/串口确认。
@@ -45,6 +45,8 @@ curl --fail --data-binary @build/supermini-aihook.bin \
 成功响应为 `{"ok":true,"reboot":true}`，设备随后重启。上传的是应用镜像，不是 `main/fontdata.bin`、`partition-table.bin`，也不是带有多个地址的整机合并镜像。
 
 ## 方式三：USB 完整刷写
+
+GitHub Release 中的 `esphook-full-flash.zip` 已经包含 bootloader、分区表、OTA data、应用和固定中文字库，并附有 `FLASH_LAYOUT.txt`。它适合开发机无法连接设备、需要更新字库或设备无法联网的情况；应用固件仍然可以单独用 `esphook-firmware.bin` 做 OTA。
 
 如果修改了分区表、中文字库或设备无法联网，使用完整刷写：
 
