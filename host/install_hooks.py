@@ -34,6 +34,15 @@ TOOL_ALIASES = {
     "cursor-agent": "cursor",
 }
 
+# An installed GUI application is not enough for a Hook. The corresponding
+# command must be available in PATH because the Agent is what invokes it.
+TOOL_COMMANDS = {
+    "claude": ("claude",),
+    "codex": ("codex",),
+    "kimi": ("kimi", "kimi-code"),
+    "cursor": ("cursor-agent", "cursor"),
+}
+
 
 def command_for(source: str) -> str:
     return shlex.join([
@@ -216,6 +225,14 @@ def canonical_tools(value: str) -> list[str]:
     return result
 
 
+def detect_tool(tool: str) -> str | None:
+    """Return the first executable command for a supported Agent."""
+    for command in TOOL_COMMANDS[tool]:
+        if shutil.which(command):
+            return command
+    return None
+
+
 def install_tool(tool: str, home: Path, dry_run: bool) -> Path:
     command = command_for(tool)
     if tool == "claude":
@@ -267,13 +284,27 @@ def main(argv: list[str] | None = None) -> int:
     try:
         tools = canonical_tools(args.tools)
         home = args.home.expanduser().resolve()
-        for tool in tools:
+        selected_tools = tools
+        if not args.uninstall:
+            selected_tools = []
+            for tool in tools:
+                command = detect_tool(tool)
+                if command:
+                    selected_tools.append(tool)
+                    print(f"esphook: detected {tool} ({command})")
+                else:
+                    candidates = "/".join(TOOL_COMMANDS[tool])
+                    print(f"esphook: skip {tool}: 未找到 {candidates}，不修改对应 Hook")
+
+        for tool in selected_tools:
             path = uninstall_tool(tool, home, args.dry_run) if args.uninstall else install_tool(tool, home, args.dry_run)
             action = "remove" if args.uninstall else "install"
             suffix = " (dry-run)" if args.dry_run else ""
             print(f"esphook: {action} {tool} hooks -> {path}{suffix}")
-        if not args.uninstall:
+        if not args.uninstall and selected_tools:
             print("esphook: 请重启对应 Agent；Codex 可能还需要在 /hooks 中信任新 Hook")
+        elif not args.uninstall:
+            print("esphook: 未检测到请求的 Agent，未修改任何 Hook")
         return 0
     except (OSError, RuntimeError, ValueError) as exc:
         print(f"esphook: hook 安装失败: {exc}", file=sys.stderr)

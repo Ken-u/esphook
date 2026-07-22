@@ -121,6 +121,8 @@ def test_codex_post_tool_use_dismisses_pending_confirmation() -> None:
 def test_install_is_idempotent_and_preserves_custom_hooks() -> None:
     with tempfile.TemporaryDirectory() as directory:
         home = Path(directory)
+        original_which = install_hooks.shutil.which
+        install_hooks.shutil.which = lambda command: f"/fake/{command}"
         claude = home / ".claude" / "settings.json"
         claude.parent.mkdir(parents=True)
         claude.write_text(json.dumps({
@@ -132,8 +134,11 @@ def test_install_is_idempotent_and_preserves_custom_hooks() -> None:
         kimi.parent.mkdir(parents=True)
         kimi.write_text('theme = "custom"\n', encoding="utf-8")
 
-        assert install_hooks.main(["--home", str(home), "--tools", "all"]) == 0
-        assert install_hooks.main(["--home", str(home), "--tools", "all"]) == 0
+        try:
+            assert install_hooks.main(["--home", str(home), "--tools", "all"]) == 0
+            assert install_hooks.main(["--home", str(home), "--tools", "all"]) == 0
+        finally:
+            install_hooks.shutil.which = original_which
 
         claude_data = json.loads(claude.read_text(encoding="utf-8"))
         stop_entries = claude_data["hooks"]["Stop"]
@@ -151,9 +156,27 @@ def test_install_is_idempotent_and_preserves_custom_hooks() -> None:
         assert install_hooks.MANAGED_START not in kimi.read_text(encoding="utf-8")
 
 
+def test_install_skips_agents_missing_from_path() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        home = Path(directory)
+        original_which = install_hooks.shutil.which
+        install_hooks.shutil.which = lambda command: "/fake/codex" if command == "codex" else None
+        try:
+            assert install_hooks.main(["--home", str(home), "--tools", "all"]) == 0
+        finally:
+            install_hooks.shutil.which = original_which
+
+        assert (home / ".codex" / "hooks.json").exists()
+        assert not (home / ".claude" / "settings.json").exists()
+        assert not (home / ".kimi-code" / "config.toml").exists()
+        assert not (home / ".cursor" / "hooks.json").exists()
+
+
 if __name__ == "__main__":
     test_identity_resolution()
     test_classification()
     test_forward_carries_session_and_client()
+    test_codex_post_tool_use_dismisses_pending_confirmation()
     test_install_is_idempotent_and_preserves_custom_hooks()
+    test_install_skips_agents_missing_from_path()
     print("hook tests passed")

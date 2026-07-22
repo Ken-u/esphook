@@ -20,7 +20,7 @@ usage() {
 默认会在下载、校验并安装主机文件后，询问是否写入 Agent Hook。
 
 选项：
-  --tools LIST       要安装的 Hook：all 或 claude,codex,kimi,cursor
+  --tools LIST       要安装的 Hook：all 或 claude,codex,kimi,cursor；未安装的工具会跳过
   --no-hooks         只下载主机文件和固件，不安装 Hook
   --yes              跳过 Hook 确认（仅适合明确的自动化调用）
   --release TAG      下载指定 Release，默认 latest

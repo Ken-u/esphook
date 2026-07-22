@@ -15,7 +15,7 @@ curl -fsSL https://raw.githubusercontent.com/Ken-u/esphook/agent/install-agent-h
 - `esphook-full-flash.zip`：包含 bootloader、分区表、OTA data、应用和中文字库；
 - `SHA256SUMS`：安装前自动校验以上三个文件。
 
-主机文件和固件默认安装到 `~/.local/share/esphook`，并在 `~/.local/bin/esphook` 创建命令入口。安装脚本不会默认修改 Agent 配置：下载和校验成功后，它会询问是否安装 Hook，只有输入 `y` 才会继续。修改已有配置前会保留 `.esphook.bak` 备份。
+主机文件和固件默认安装到 `~/.local/share/esphook`，并在 `~/.local/bin/esphook` 创建命令入口。安装脚本不会默认修改 Agent 配置：下载和校验成功后，它会询问是否安装 Hook，只有输入 `y` 才会继续。继续安装前会按 `PATH` 检测 `claude`、`codex`、`kimi`/`kimi-code`、`cursor-agent`/`cursor`，只为已安装的 Agent 写入配置，其他工具会跳过。修改已有配置前会保留 `.esphook.bak` 备份。
 
 脚本需要 `curl`、`python3` 和 `tar`。`curl | bash` 场景下确认提示从 `/dev/tty` 读取，因此不会因为脚本来自管道而失效。
 

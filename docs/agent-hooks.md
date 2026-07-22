@@ -63,6 +63,17 @@ Codex 当前的 `PermissionRequest` 是“即将询问用户”的事件，并�
 ./scripts/install-hooks.sh --tools all
 ```
 
+安装前会检查 Agent 命令是否存在于当前用户的 `PATH`：
+
+| Agent | 检测命令 |
+| --- | --- |
+| Claude Code | `claude` |
+| Codex | `codex` |
+| Kimi Code | `kimi` / `kimi-code` |
+| Cursor Agent | `cursor-agent` / `cursor` |
+
+`--tools all` 只为检测到的工具写入 Hook；找不到命令的工具会显示 `skip`，不会创建对应配置。显式指定一个未安装的工具时同样只提示并跳过。卸载模式不做这个检测，以便 Agent 已经卸载后仍能清理残留的 esphook Hook。
+
 安装器只修改以下用户级文件：
 
 - `~/.claude/settings.json`
