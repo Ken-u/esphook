@@ -12,7 +12,7 @@
 #include <stddef.h>
 
 void aihook_font_12_set_bitmap(const uint8_t *bitmap);
-void aihook_font_14_set_bitmap(const uint8_t *bitmap);
+void aihook_font_16_set_bitmap(const uint8_t *bitmap);
 
 static const char *TAG = "font_store";
 
@@ -27,8 +27,8 @@ typedef struct {
     uint32_t total_size;
     uint32_t font12_offset;
     uint32_t font12_size;
-    uint32_t font14_offset;
-    uint32_t font14_size;
+    uint32_t font16_offset;
+    uint32_t font16_size;
 } font_data_header_t;
 
 static esp_partition_mmap_handle_t s_map_handle;
@@ -66,9 +66,9 @@ esp_err_t font_store_init(void)
         header->header_size > header->total_size ||
         header->total_size > partition->size ||
         header->font12_offset < header->header_size ||
-        header->font14_offset < header->header_size ||
+        header->font16_offset < header->header_size ||
         !range_is_valid(header->font12_offset, header->font12_size, header->total_size) ||
-        !range_is_valid(header->font14_offset, header->font14_size, header->total_size)) {
+        !range_is_valid(header->font16_offset, header->font16_size, header->total_size)) {
         ESP_LOGE(TAG, "invalid fontdata header in '%s'", FONT_PARTITION_LABEL);
         esp_partition_munmap(s_map_handle);
         s_map_handle = 0;
@@ -77,10 +77,10 @@ esp_err_t font_store_init(void)
 
     const uint8_t *base = (const uint8_t *)mapped;
     aihook_font_12_set_bitmap(base + header->font12_offset);
-    aihook_font_14_set_bitmap(base + header->font14_offset);
+    aihook_font_16_set_bitmap(base + header->font16_offset);
     s_initialized = true;
 
-    ESP_LOGI(TAG, "mapped Chinese fonts: 12px=%u bytes, 14px=%u bytes",
-             (unsigned)header->font12_size, (unsigned)header->font14_size);
+    ESP_LOGI(TAG, "mapped Chinese fonts: 12px=%u bytes, 16px=%u bytes",
+             (unsigned)header->font12_size, (unsigned)header->font16_size);
     return ESP_OK;
 }

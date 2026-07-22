@@ -34,6 +34,10 @@ def test_identity_resolution() -> None:
 def test_classification() -> None:
     assert hook.classify({"hook_event_name": "Stop", "session_id": "a"}, "claude")[0] == "done"
     assert hook.classify({"hook_event_name": "PermissionRequest", "session_id": "b", "tool_name": "Bash"}, "codex")[0] == "confirm"
+    assert hook.classify({"hook_event_name": "PermissionResult", "session_id": "b", "decision": "approved"}, "codex")[0] == "dismiss"
+    assert hook.classify({"hook_event_name": "PermissionResponse", "session_id": "b", "permission_result": "allowed"}, "codex")[0] == "dismiss"
+    assert hook.classify({"hook_event_name": "PermissionResult", "session_id": "b", "decision": "denied"}, "codex")[0] == "error"
+    assert hook.classify({"hook_event_name": "PermissionResult", "session_id": "b", "decision": "pending"}, "codex")[0] == "confirm"
     assert hook.classify({"hook_event_name": "StopFailure", "session_id": "c", "error": "failed"}, "kimi")[0] == "error"
     assert hook.classify({"hook_event_name": "stop", "conversation_id": "d", "status": "aborted"}, "cursor")[0] == "confirm"
     assert hook.classify({"hook_event_name": "Notification", "session_id": "e", "notification_type": "task.completed"}, "kimi")[0] == "done"
@@ -70,6 +74,50 @@ def test_forward_carries_session_and_client() -> None:
     assert command[command.index("--client-id") + 1].endswith(":codex")
 
 
+def test_codex_post_tool_use_dismisses_pending_confirmation() -> None:
+    calls = []
+    original_run = hook.subprocess.run
+    original_client = os.environ.get("ESPHOOK_CLIENT_ID")
+    original_pending = os.environ.get("ESPHOOK_PENDING_FILE")
+    with tempfile.TemporaryDirectory() as directory:
+        try:
+            os.environ["ESPHOOK_CLIENT_ID"] = "test-host:codex"
+            os.environ["ESPHOOK_PENDING_FILE"] = str(Path(directory) / "pending.json")
+
+            def fake_run(command, **kwargs):
+                calls.append((command, kwargs))
+                return None
+
+            hook.subprocess.run = fake_run
+            hook.forward({
+                "hook_event_name": "PermissionRequest",
+                "session_id": "thread-approval",
+                "turn_id": "turn-1",
+                "tool_name": "Bash",
+                "message": "需要执行命令",
+            }, "codex")
+            hook.forward({
+                "hook_event_name": "PostToolUse",
+                "session_id": "thread-approval",
+                "turn_id": "turn-1",
+                "tool_name": "Bash",
+            }, "codex")
+        finally:
+            hook.subprocess.run = original_run
+            if original_client is None:
+                os.environ.pop("ESPHOOK_CLIENT_ID", None)
+            else:
+                os.environ["ESPHOOK_CLIENT_ID"] = original_client
+            if original_pending is None:
+                os.environ.pop("ESPHOOK_PENDING_FILE", None)
+            else:
+                os.environ["ESPHOOK_PENDING_FILE"] = original_pending
+    assert len(calls) == 2
+    assert calls[0][0][calls[0][0].index("notify")] == "notify"
+    assert calls[1][0][calls[1][0].index("dismiss")] == "dismiss"
+    assert "thread-approval" in calls[1][0]
+
+
 def test_install_is_idempotent_and_preserves_custom_hooks() -> None:
     with tempfile.TemporaryDirectory() as directory:
         home = Path(directory)
@@ -94,6 +142,8 @@ def test_install_is_idempotent_and_preserves_custom_hooks() -> None:
         kimi_text = kimi.read_text(encoding="utf-8")
         assert kimi_text.count(install_hooks.MANAGED_START) == 1
         assert 'theme = "custom"' in kimi_text
+        codex_data = json.loads((home / ".codex" / "hooks.json").read_text(encoding="utf-8"))
+        assert all(event in codex_data["hooks"] for event in ("Stop", "PermissionRequest", "PostToolUse"))
 
         assert install_hooks.main(["--home", str(home), "--tools", "all", "--uninstall"]) == 0
         assert "esphook_notify_hook.py" not in claude.read_text(encoding="utf-8")

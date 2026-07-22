@@ -75,7 +75,7 @@ curl -fsSL https://raw.githubusercontent.com/Ken-u/esphook/agent/install-agent-h
 | Agent | 配置文件 | 完成 | 错误 | 确认 |
 | --- | --- | --- | --- | --- |
 | Claude Code | `~/.claude/settings.json` | `Stop` | `StopFailure` | `Notification` |
-| Codex | `~/.codex/hooks.json` | `Stop` | Stop 状态 | `PermissionRequest` |
+| Codex | `~/.codex/hooks.json` | `Stop` | Stop 状态 | `PermissionRequest`；确认后的 `PostToolUse` 自动 dismiss |
 | Kimi Code | `~/.kimi-code/config.toml` | `Stop` | `StopFailure` | `PermissionRequest` / `Notification` |
 | Cursor Agent | `~/.cursor/hooks.json` | `stop` | `stop.status=error` | `stop.status=aborted` |
 

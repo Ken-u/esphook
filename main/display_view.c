@@ -43,8 +43,9 @@ static const char *TAG = "dv";
 /* 20MHz SPI 下，局部 buffer 比整屏 buffer 更适合高频滚动刷新。 */
 #define LVGL_DRAW_BUF_LINES 16
 #define LVGL_TICK_PERIOD_MS 1
-#define LVGL_SCROLL_SPEED 45
-#define LVGL_INFO_SCROLL_SPEED 24
+#define LVGL_SCROLL_SPEED 18
+#define LVGL_INFO_SCROLL_SPEED 18
+#define LVGL_BODY_SCROLL_SPEED 10
 #define DISPLAY_IDLE_TIMEOUT_US (10LL * 60LL * 1000000LL)
 
 /* 网页效果图里的颜色，LVGL 会按 RGB565 输出到面板。 */
@@ -55,7 +56,6 @@ static const char *TAG = "dv";
 #define COLOR_GREEN     0x47E6AE
 #define COLOR_YELLOW    0xFFD166
 #define COLOR_RED       0xFF6B7A
-#define COLOR_CYAN      0x6BB8FF
 
 static esp_lcd_panel_handle_t s_panel;
 static esp_lcd_panel_io_handle_t s_io;
@@ -72,17 +72,11 @@ static lv_obj_t *s_idle_layer;
 static lv_obj_t *s_client;
 static lv_obj_t *s_unread_dot;
 static lv_obj_t *s_unread_count;
-static lv_obj_t *s_session;
 static lv_obj_t *s_wifi;
 static lv_obj_t *s_accent_bar;
-static lv_obj_t *s_type_icon;
-static lv_obj_t *s_type;
 static lv_obj_t *s_title;
 static lv_obj_t *s_body;
-static lv_obj_t *s_meta;
-static lv_obj_t *s_position;
 static lv_obj_t *s_keys;
-static lv_obj_t *s_online;
 
 static lv_obj_t *s_idle_title;
 static lv_obj_t *s_idle_body;
@@ -93,7 +87,7 @@ static lv_obj_t *s_net_body;
 static lv_obj_t *s_net_meta;
 
 LV_FONT_DECLARE(aihook_font_12);
-LV_FONT_DECLARE(aihook_font_14);
+LV_FONT_DECLARE(aihook_font_16);
 
 static lv_color_t color_hex(uint32_t rgb)
 {
@@ -204,20 +198,6 @@ static const char *client_label(const char *client_id, char *out, size_t len)
     return out;
 }
 
-static const char *session_label(const char *session_id, char *out, size_t len)
-{
-    const char *mapped = config_get_display_name("session", session_id, out, len);
-    if (mapped[0] != '\0') return mapped;
-
-    const char *short_id = strchr(session_id, ':');
-    short_id = short_id ? short_id + 1 : session_id;
-    if (len > 0) {
-        strncpy(out, short_id, len - 1);
-        out[len - 1] = '\0';
-    }
-    return out;
-}
-
 static bool lcd_color_trans_done_cb(esp_lcd_panel_io_handle_t panel_io,
                                     esp_lcd_panel_io_event_data_t *edata,
                                     void *user_ctx)
@@ -264,62 +244,38 @@ static void create_alert_ui(void)
 {
     s_alert_layer = make_layer(lv_screen_active());
 
-    /* Header：在线点、client、未读数、session、WiFi，全部比旧版更醒目。 */
+    /* Header 保留静态 client 名称；它不滚动、不闪烁，避免浪费注意力。 */
     make_rect(s_alert_layer, 3, 4, 5, 5, COLOR_GREEN, 3);
-    s_client = make_label(s_alert_layer, &aihook_font_12, 11, -1, 63, 14,
-                          LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
-    set_scroll_speed(s_client, LVGL_INFO_SCROLL_SPEED);
-    s_unread_dot = make_rect(s_alert_layer, 77, 4, 5, 5, COLOR_RED, 3);
-    s_unread_count = make_label(s_alert_layer, &aihook_font_12, 84, -1, 13, 14,
+    s_client = make_label(s_alert_layer, &aihook_font_12, 11, -1, 79, 14,
+                          LV_LABEL_LONG_MODE_CLIP);
+    s_unread_dot = make_rect(s_alert_layer, 96, 4, 5, 5, COLOR_RED, 3);
+    s_unread_count = make_label(s_alert_layer, &aihook_font_12, 103, -1, 16, 14,
                                 LV_LABEL_LONG_MODE_CLIP);
     lv_obj_set_style_text_color(s_unread_count, color_hex(COLOR_RED), LV_PART_MAIN);
-    s_session = make_label(s_alert_layer, &aihook_font_12, 103, -1, 36, 14,
-                           LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
-    set_scroll_speed(s_session, LVGL_INFO_SCROLL_SPEED);
-    lv_obj_set_style_text_align(s_session, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
-    s_wifi = make_label(s_alert_layer, &aihook_font_12, 143, 0, 15, 13,
+    s_wifi = make_label(s_alert_layer, &aihook_font_12, 126, 0, 30, 13,
                         LV_LABEL_LONG_MODE_CLIP);
     lv_obj_set_style_text_align(s_wifi, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_wifi, color_hex(COLOR_GREEN), LV_PART_MAIN);
-    make_rect(s_alert_layer, 0, 13, DV_WIDTH, 1, COLOR_LINE, 0);
+    make_rect(s_alert_layer, 0, 11, DV_WIDTH, 1, COLOR_LINE, 0);
 
-    /* 提醒主体：类型、标题、正文、来源；标题和正文都占据主要高度。 */
-    s_accent_bar = make_rect(s_alert_layer, 0, 15, 2, 51, COLOR_YELLOW, 0);
-    s_type_icon = make_label(s_alert_layer, &aihook_font_12, 5, 14, 13, 12,
-                             LV_LABEL_LONG_MODE_CLIP);
-    lv_obj_set_style_text_align(s_type_icon, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_set_style_border_width(s_type_icon, 1, LV_PART_MAIN);
-    lv_obj_set_style_border_opa(s_type_icon, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_radius(s_type_icon, 2, LV_PART_MAIN);
-    s_type = make_label(s_alert_layer, &aihook_font_12, 21, 14, 134, 12,
-                        LV_LABEL_LONG_MODE_CLIP);
-    s_title = make_label(s_alert_layer, &aihook_font_14, 5, 26, 152, 19,
+    /* 状态只用色带和文字颜色表达，主体两行都给 16px 字体。 */
+    s_accent_bar = make_rect(s_alert_layer, 0, 13, 2, 55, COLOR_YELLOW, 0);
+    s_title = make_label(s_alert_layer, &aihook_font_16, 5, 14, 150, 26,
                          LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
-    s_body = make_label(s_alert_layer, &aihook_font_12, 5, 45, 152, 14,
+    s_body = make_label(s_alert_layer, &aihook_font_16, 5, 41, 150, 26,
                         LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
-    s_meta = make_label(s_alert_layer, &aihook_font_12, 5, 59, 103, 10,
-                        LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
-    set_scroll_speed(s_meta, LVGL_INFO_SCROLL_SPEED);
-    lv_obj_set_style_text_color(s_meta, color_hex(COLOR_MUTED), LV_PART_MAIN);
-    s_position = make_label(s_alert_layer, &aihook_font_12, 111, 59, 45, 10,
-                            LV_LABEL_LONG_MODE_CLIP);
-    lv_obj_set_style_text_align(s_position, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
-    lv_obj_set_style_text_color(s_position, color_hex(COLOR_CYAN), LV_PART_MAIN);
+    set_scroll_speed(s_title, LVGL_SCROLL_SPEED);
+    set_scroll_speed(s_body, LVGL_BODY_SCROLL_SPEED);
 
-    make_rect(s_alert_layer, 0, 69, DV_WIDTH, 1, COLOR_LINE, 0);
-    s_keys = make_label(s_alert_layer, &aihook_font_12, 4, 69, 116, 11,
-                        LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
-    set_scroll_speed(s_keys, LVGL_INFO_SCROLL_SPEED);
-    s_online = make_label(s_alert_layer, &aihook_font_12, 124, 69, 32, 11,
-                          LV_LABEL_LONG_MODE_CLIP);
-    lv_obj_set_style_text_align(s_online, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
-    lv_obj_set_style_text_color(s_online, color_hex(COLOR_GREEN), LV_PART_MAIN);
+    make_rect(s_alert_layer, 0, 68, DV_WIDTH, 1, COLOR_LINE, 0);
+    s_keys = make_label(s_alert_layer, &aihook_font_12, 4, 69, 152, 11,
+                        LV_LABEL_LONG_MODE_CLIP);
 }
 
 static void create_idle_ui(void)
 {
     s_idle_layer = make_layer(lv_screen_active());
-    s_idle_title = make_label(s_idle_layer, &aihook_font_14, 7, 22, 146, 22,
+    s_idle_title = make_label(s_idle_layer, &aihook_font_16, 7, 22, 146, 22,
                               LV_LABEL_LONG_MODE_CLIP);
     lv_obj_set_style_text_align(s_idle_title, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_idle_title, color_hex(COLOR_GREEN), LV_PART_MAIN);
@@ -336,7 +292,7 @@ static void create_idle_ui(void)
 static void create_net_ui(void)
 {
     s_net_layer = make_layer(lv_screen_active());
-    s_net_title = make_label(s_net_layer, &aihook_font_14, 4, 17, 152, 22,
+    s_net_title = make_label(s_net_layer, &aihook_font_16, 4, 17, 152, 22,
                              LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
     lv_obj_set_style_text_align(s_net_title, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     s_net_body = make_label(s_net_layer, &aihook_font_12, 4, 41, 152, 17,
@@ -506,20 +462,14 @@ void dv_render_status_bar(void)
     if (!s_alert_layer) return;
 
     char client[24] = "AI-HOOK";
-    char session[48] = "--";
-    if (dm_current(client, session, sizeof client, sizeof session,
-                   NULL, 0, NULL, 0)) {
+    if (dm_current(client, NULL, sizeof client, 0, NULL, 0, NULL, 0)) {
         char display_client[32];
-        char display_session[32];
-        const char *cn = client_label(client, display_client, sizeof display_client);
-        const char *sn = session_label(session, display_session, sizeof display_session);
-        snprintf(client, sizeof client, "%s", cn);
-        snprintf(session, sizeof session, "%s", sn);
+        const char *label = client_label(client, display_client, sizeof display_client);
+        strncpy(client, label, sizeof client - 1);
+        client[sizeof client - 1] = '\0';
     }
-
-    lv_label_set_text(s_client, client);
-    lv_label_set_text(s_session, session);
-    set_text(s_wifi, "ON");
+    set_text(s_client, client);
+    set_text(s_wifi, "WiFi");
 
     int total_unread = 0;
     const int client_count = dm_client_count();
@@ -546,19 +496,16 @@ static void update_action_bar(void)
     snprintf(key2, sizeof key2, "%s", config_get_key(2));
     snprintf(keys, sizeof keys, "1 %s   2 %s   3 %s", key0, key1, key2);
     set_text(s_keys, keys);
-    set_text(s_online, "ON");
 }
 
 void dv_render_main(void)
 {
     if (!s_alert_layer) return;
 
-    char client[24];
-    char session[48];
     char title[32];
     char body[128];
-    if (!dm_current(client, session, sizeof client, sizeof session,
-                    title, sizeof title, body, sizeof body)) {
+    if (!dm_current(NULL, NULL, 0, 0,
+                   title, sizeof title, body, sizeof body)) {
         dv_render_idle();
         return;
     }
@@ -567,41 +514,13 @@ void dv_render_main(void)
     dm_status_t status = dm_current_status();
     lv_color_t accent = status_color(status);
 
-    /* 左侧色带跟随状态，标题/正文/类型用同一颜色建立一眼可见的语义。 */
+    /* 左侧色带和标题/正文颜色直接表达状态，不再显示 DONE/ERROR/CONFIRM。 */
     lv_obj_set_style_bg_color(s_accent_bar, accent, LV_PART_MAIN);
-    lv_obj_set_style_text_color(s_type_icon, accent, LV_PART_MAIN);
-    lv_obj_set_style_border_color(s_type_icon, accent, LV_PART_MAIN);
-    lv_obj_set_style_text_color(s_type, accent, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_title, accent, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_body, accent, LV_PART_MAIN);
 
-    switch (status) {
-        case DM_STATUS_CONFIRM:
-            set_text(s_type_icon, "!");
-            set_text(s_type, "CONFIRM");
-            break;
-        case DM_STATUS_ERROR:
-            set_text(s_type_icon, "X");
-            set_text(s_type, "ERROR");
-            break;
-        case DM_STATUS_DONE:
-        default:
-            set_text(s_type_icon, "OK");
-            set_text(s_type, "DONE");
-            break;
-    }
-
     set_text(s_title, title[0] ? title : "ALERT");
     set_text(s_body, body[0] ? body : "-");
-
-    char display_client[32];
-    char display_session[32];
-    const char *cn = client_label(client, display_client, sizeof display_client);
-    const char *sn = session_label(session, display_session, sizeof display_session);
-    char source[96];
-    snprintf(source, sizeof source, "[%s / %s]", cn, sn);
-    set_text(s_meta, source);
-    set_text(s_position, "TEXT");
     update_action_bar();
 }
 

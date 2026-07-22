@@ -226,7 +226,7 @@ def install_tool(tool: str, home: Path, dry_run: bool) -> Path:
     elif tool == "codex":
         path = home / ".codex" / "hooks.json"
         update_json(path, lambda data: add_nested_hook(
-            data, ["Stop", "PermissionRequest"], command
+            data, ["Stop", "PermissionRequest", "PostToolUse"], command
         ), dry_run)
     elif tool == "kimi":
         path = home / ".kimi-code" / "config.toml"

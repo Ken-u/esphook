@@ -1,6 +1,6 @@
 idf_component_register(
     SRCS "main.c" "usb_cdc.c" "config_store.c" "display_model.c" "display_view.c"
-         "aihook_font_12.c" "aihook_font_14.c" "ota_update.c"
+         "aihook_font_12.c" "aihook_font_16.c" "ota_update.c"
          "font_store.c"
          "device_link.c"
          "net_wifi.c" "beeper.c" "events.c" "http_server.c"

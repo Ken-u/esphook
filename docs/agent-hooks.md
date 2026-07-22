@@ -47,13 +47,15 @@ daemon 是主机上的共享进程，无法读取发起 HTTP 请求的 Agent 环
 | Claude Code | `StopFailure` | `error` | 本轮失败 |
 | Claude Code | `Notification` | `confirm` / `error` / `done` | 仅转发权限、等待确认、失败或完成类通知 |
 | Codex | `Stop` | `done` 或按状态映射 | 本轮结束 |
-| Codex | `PermissionRequest` | `confirm` | 等待用户审批 |
+| Codex | `PermissionRequest` | `confirm` | 等待用户审批；同一 turn 后续 `PostToolUse` 会自动 dismiss |
 | Kimi Code | `Stop` / `StopFailure` | `done` / `error` | 本轮结束 |
 | Kimi Code | `PermissionRequest` / `Interrupt` | `confirm` | 等待审批或被中断 |
 | Kimi Code | `Notification` | 按通知类型映射 | 仅匹配确认类通知 |
 | Cursor Agent | `stop` | 按 `status` 映射 | `completed`、`error`、`aborted` |
 
 适配器只输出通知，不向 Agent stdout 写内容，并且始终 fail-open。daemon、网络或 ESP 失败时，Hook 在超时后返回成功，不阻塞 Agent。
+
+Codex 当前的 `PermissionRequest` 是“即将询问用户”的事件，并不单独提供一个确认完成事件。因此适配器会按会话和 `turn_id` 记录待确认状态：用户在 Codex 端批准后，工具执行完成触发 `PostToolUse`，适配器才调用 `esphook dismiss`。这样不会把普通工具调用误认为确认完成；如果用户拒绝，通常不会有 `PostToolUse`，确认提示会保留到后续 `Stop`/错误通知覆盖它。未来若 Agent 提供带有 `approved`/`allowed` 的 `PermissionResult` 或 `PermissionResponse`，适配器也会直接将其映射为 `dismiss`。
 
 ## 安装器
 
