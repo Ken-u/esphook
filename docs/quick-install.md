@@ -19,6 +19,34 @@ curl -fsSL https://raw.githubusercontent.com/Ken-u/esphook/agent/install-agent-h
 
 脚本需要 `curl`、`python3` 和 `tar`。`curl | bash` 场景下确认提示从 `/dev/tty` 读取，因此不会因为脚本来自管道而失效。
 
+## 不使用串口完成 LAN 配对
+
+设备已经配置过 Wi-Fi 时，`pair` 默认使用 LAN 广播把 daemon 地址和随机认证密钥写入设备，不需要连接 USB 串口：
+
+```bash
+~/.local/bin/esphook pair \
+  --server '<主机在板子网络中可达的 IP[:18765]>'
+```
+
+如果主机可以直接访问 ESP，使用 `--esp` 强制 HTTP 直连：
+
+```bash
+~/.local/bin/esphook pair \
+  --server '<主机在板子网络中可达的 IP[:18765]>' --esp
+```
+
+直连目标从配置文件的 `DEVICE_IP` 读取，`--esp` 不接参数。`--server` 的端口是 daemon device-link 端口，默认 `18765`；不能填写 `127.0.0.1` 或 `0.0.0.0`。首次配网仍使用 `provision` 和 USB。
+
+如果主机不能主动访问设备，但两者在同一广播域，可以不填设备 IP，让命令使用 UDP `18766` 广播：
+
+```bash
+~/.local/bin/esphook pair \
+  --server '<主机在板子网络中可达的 IP[:18765]>' \
+  --broadcast-address '<局域网广播地址>'
+```
+
+默认广播地址是 `255.255.255.255`；如果网络不转发全局广播，使用网段定向广播地址，例如 `192.168.31.255`。重新配对已有设备时，主机必须保留原设备 Token；丢失注册表时请先恢复出厂并重新配网。
+
 ## 按键输入回传检查
 
 安装脚本会按操作系统检测输入回传能力：macOS 使用系统自带的 `osascript`，Linux 检测第一个可用的 `ydotool`、`xdotool`、`wtype`。如果不可用，脚本会继续完成主机文件、固件和 Hook 安装，但会明确提示：提醒显示正常，板子按键向电脑当前焦点窗口输入文字的功能不可用。

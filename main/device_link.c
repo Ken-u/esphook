@@ -36,6 +36,8 @@ static const char *TAG = "link";
 #define LINK_FRAME_MAX 8192
 #define LINK_RETRY_MS 5000
 #define LINK_HEARTBEAT_US (20LL * 1000000LL)
+#define PAIR_DISCOVERY_PORT 18766
+#define PAIR_FRAME_MAX 512
 
 typedef struct {
     char client_id[24];
@@ -45,7 +47,10 @@ typedef struct {
 
 static QueueHandle_t s_key_q;
 static volatile bool s_connected;
+static volatile bool s_reconnect_requested;
 static bool s_started;
+static char s_last_pair_id[64];
+static char s_last_pair_secret[LINK_SECRET_MAX];
 
 static void copy_string(char *dst, size_t len, const char *src)
 {
@@ -83,6 +88,12 @@ static bool decode_secret(const char *hex, uint8_t *out, size_t out_len)
         out[i] = (uint8_t)((hi << 4) | lo);
     }
     return true;
+}
+
+static bool valid_secret_hex(const char *secret)
+{
+    uint8_t decoded[32];
+    return decode_secret(secret, decoded, sizeof decoded);
 }
 
 static bool make_proof(const char *secret_hex, const char *id,
@@ -359,10 +370,168 @@ static bool handle_message(int fd, cJSON *message)
     return true;
 }
 
+static void send_pair_reply(int fd, const struct sockaddr *peer, socklen_t peer_len,
+                            const char *pair_id, bool ok, const char *error)
+{
+    cJSON *reply = cJSON_CreateObject();
+    if (!reply) return;
+    cJSON_AddStringToObject(reply, "op", "pair_ack");
+    if (pair_id) cJSON_AddStringToObject(reply, "pair_id", pair_id);
+    cJSON_AddBoolToObject(reply, "ok", ok);
+    if (ok) {
+        char id[16] = {0};
+        device_id(id, sizeof id);
+        cJSON_AddStringToObject(reply, "device_id", id);
+        cJSON_AddStringToObject(reply, "ip", wifi_get_ip());
+    } else if (error) {
+        cJSON_AddStringToObject(reply, "err", error);
+    }
+    char *text = cJSON_PrintUnformatted(reply);
+    if (text) {
+        sendto(fd, text, strlen(text), 0, peer, peer_len);
+        free(text);
+    }
+    cJSON_Delete(reply);
+}
+
+static void handle_pair_packet(int fd, const char *data, size_t len,
+                               const struct sockaddr *peer, socklen_t peer_len)
+{
+    cJSON *message = cJSON_ParseWithLength(data, len);
+    if (!message) return;
+    cJSON *op = cJSON_GetObjectItem(message, "op");
+    cJSON *pair_id = cJSON_GetObjectItem(message, "pair_id");
+    if (!cJSON_IsString(op) || strcmp(op->valuestring, "pair_request") != 0 ||
+        !cJSON_IsString(pair_id) || !pair_id->valuestring[0] ||
+        strlen(pair_id->valuestring) >= sizeof s_last_pair_id) {
+        cJSON_Delete(message);
+        return;
+    }
+    cJSON *target_id = cJSON_GetObjectItem(message, "device_id");
+    if (cJSON_IsString(target_id) && target_id->valuestring[0]) {
+        char local_id[16] = {0};
+        device_id(local_id, sizeof local_id);
+        if (strcmp(target_id->valuestring, local_id) != 0) {
+            cJSON_Delete(message);
+            return;
+        }
+    }
+
+    cJSON *host = cJSON_GetObjectItem(message, "daemon_host");
+    cJSON *port = cJSON_GetObjectItem(message, "daemon_port");
+    cJSON *secret = cJSON_GetObjectItem(message, "daemon_secret");
+    cJSON *current = cJSON_GetObjectItem(message, "current_secret");
+    bool valid = cJSON_IsString(host) && host->valuestring[0] &&
+                 strlen(host->valuestring) < LINK_HOST_MAX &&
+                 cJSON_IsNumber(port) && port->valuedouble >= 1 &&
+                 port->valuedouble <= 65535 &&
+                 cJSON_IsString(secret) && valid_secret_hex(secret->valuestring);
+    char existing[LINK_SECRET_MAX] = {0};
+    config_get_link_secret(existing, sizeof existing);
+    bool duplicate = valid && existing[0] &&
+                     strcmp(existing, secret->valuestring) == 0 &&
+                     strcmp(s_last_pair_id, pair_id->valuestring) == 0 &&
+                     strcmp(s_last_pair_secret, secret->valuestring) == 0;
+    if (duplicate) {
+        send_pair_reply(fd, peer, peer_len, pair_id->valuestring, true, NULL);
+        cJSON_Delete(message);
+        return;
+    }
+    if (valid && existing[0] &&
+        (!cJSON_IsString(current) || strcmp(current->valuestring, existing) != 0)) {
+        valid = false;
+    }
+    if (!valid) {
+        send_pair_reply(fd, peer, peer_len, pair_id->valuestring, false,
+                        existing[0] ? "current secret required" : "invalid pair request");
+        cJSON_Delete(message);
+        return;
+    }
+
+    esp_err_t err = config_set_link(host->valuestring, (uint16_t)port->valueint,
+                                    secret->valuestring);
+    if (err != ESP_OK) {
+        send_pair_reply(fd, peer, peer_len, pair_id->valuestring, false,
+                        "could not save pair config");
+        cJSON_Delete(message);
+        return;
+    }
+    device_link_request_reconnect();
+    snprintf(s_last_pair_id, sizeof s_last_pair_id, "%s", pair_id->valuestring);
+    snprintf(s_last_pair_secret, sizeof s_last_pair_secret, "%s", secret->valuestring);
+    send_pair_reply(fd, peer, peer_len, pair_id->valuestring, true, NULL);
+    ESP_LOGI(TAG, "LAN pair accepted from %s", "broadcast");
+    cJSON_Delete(message);
+}
+
+static int open_pair_socket(void)
+{
+    int fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (fd < 0) return -1;
+    int reuse = 1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof reuse);
+    struct sockaddr_in address = {0};
+    address.sin_family = AF_INET;
+    address.sin_port = htons(PAIR_DISCOVERY_PORT);
+    address.sin_addr.s_addr = htonl(INADDR_ANY);
+    if (bind(fd, (struct sockaddr *)&address, sizeof address) < 0) {
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+static void pairing_task(void *arg)
+{
+    (void)arg;
+    int fd = -1;
+    while (1) {
+        if (!wifi_is_connected()) {
+            if (fd >= 0) { close(fd); fd = -1; }
+            vTaskDelay(pdMS_TO_TICKS(3000));
+            continue;
+        }
+        if (fd < 0) {
+            fd = open_pair_socket();
+            if (fd < 0) {
+                ESP_LOGW(TAG, "LAN pair UDP bind failed");
+                vTaskDelay(pdMS_TO_TICKS(3000));
+                continue;
+            }
+            ESP_LOGI(TAG, "LAN pair UDP listening on %u", (unsigned)PAIR_DISCOVERY_PORT);
+        }
+
+        fd_set readfds;
+        FD_ZERO(&readfds);
+        FD_SET(fd, &readfds);
+        struct timeval timeout = {.tv_sec = 1, .tv_usec = 0};
+        int ready = select(fd + 1, &readfds, NULL, NULL, &timeout);
+        if (ready < 0) {
+            close(fd);
+            fd = -1;
+            continue;
+        }
+        if (ready == 0 || !FD_ISSET(fd, &readfds)) continue;
+
+        char data[PAIR_FRAME_MAX];
+        struct sockaddr_storage peer = {0};
+        socklen_t peer_len = sizeof peer;
+        int len = recvfrom(fd, data, sizeof data, 0,
+                           (struct sockaddr *)&peer, &peer_len);
+        if (len > 0) {
+            handle_pair_packet(fd, data, (size_t)len,
+                               (const struct sockaddr *)&peer, peer_len);
+        }
+    }
+}
+
 static void device_link_task(void *arg)
 {
     (void)arg;
     while (1) {
+        /* A LAN pair request may arrive while the old link is being torn down.
+           Clear a stale request before reading the newly saved credentials. */
+        s_reconnect_requested = false;
         char host[LINK_HOST_MAX] = {0};
         char secret[LINK_SECRET_MAX] = {0};
         config_get_link_host(host, sizeof host);
@@ -391,7 +560,7 @@ static void device_link_task(void *arg)
         ESP_LOGI(TAG, "device link connected to %s:%u as %s", host, (unsigned)port, id);
         int64_t last_heartbeat = esp_timer_get_time();
         bool link_ok = true;
-        while (link_ok && wifi_is_connected()) {
+        while (link_ok && wifi_is_connected() && !s_reconnect_requested) {
             key_tx_t tx;
             while (xQueueReceive(s_key_q, &tx, 0) == pdTRUE) {
                 cJSON *key = cJSON_CreateObject();
@@ -428,6 +597,7 @@ static void device_link_task(void *arg)
         }
         s_connected = false;
         close(fd);
+        s_reconnect_requested = false;
         ESP_LOGW(TAG, "device link disconnected; retrying");
         vTaskDelay(pdMS_TO_TICKS(LINK_RETRY_MS));
     }
@@ -443,11 +613,17 @@ void device_link_start(void)
         return;
     }
     xTaskCreate(device_link_task, "device_link", 6144, NULL, 5, NULL);
+    xTaskCreate(pairing_task, "pair_udp", 4096, NULL, 4, NULL);
 }
 
 bool device_link_is_connected(void)
 {
     return s_connected;
+}
+
+void device_link_request_reconnect(void)
+{
+    s_reconnect_requested = true;
 }
 
 bool device_link_send_key(const char *client_id, const char *session_id,

@@ -1,5 +1,5 @@
 /* main/http_server.c
- * 路由：POST /notify, POST /dismiss, POST /config, GET /, GET /health
+ * 路由：POST /notify, POST /dismiss, POST /config, POST /pair, GET /, GET /health
  * /notify 解析 JSON，记 callback（按键回传用），推 EVT_NOTIFY 到 display_q + BEEP_NOTIFY。
  * /dismiss 推 EVT_DISMISS。
  * /config 解析 form-urlencoded（k0/k1/k2 + display 文本）。
@@ -10,8 +10,10 @@
 #include "config_store.h"
 #include "net_wifi.h"
 #include "events.h"
+#include "device_link.h"
 #include "ota_update.h"
 #include "esp_log.h"
+#include "esp_mac.h"
 #include <string.h>
 #include <stdio.h>
 #include <arpa/inet.h>
@@ -40,6 +42,26 @@ static bool reject_unauthorized(httpd_req_t *req)
 {
     if (request_authorized(req)) return false;
     httpd_resp_send_err(req, 401, "{\"ok\":false,\"err\":\"unauthorized\"}");
+    return true;
+}
+
+static void local_device_id(char *out, size_t len)
+{
+    uint8_t mac[6] = {0};
+    esp_read_mac(mac, ESP_MAC_WIFI_STA);
+    snprintf(out, len, "%02x%02x%02x%02x%02x%02x",
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+}
+
+static bool valid_secret(const char *secret)
+{
+    if (!secret || strlen(secret) != 64) return false;
+    for (int i = 0; i < 64; i++) {
+        char c = secret[i];
+        if (!((c >= '0' && c <= '9') ||
+              (c >= 'a' && c <= 'f') ||
+              (c >= 'A' && c <= 'F'))) return false;
+    }
     return true;
 }
 
@@ -351,10 +373,72 @@ static esp_err_t h_root(httpd_req_t *req)
 
 static esp_err_t h_health(httpd_req_t *req)
 {
-    char buf[80];
-    snprintf(buf, sizeof buf, "{\"ok\":true,\"ip\":\"%s\"}", wifi_get_ip());
+    char id[24];
+    char buf[128];
+    local_device_id(id, sizeof id);
+    snprintf(buf, sizeof buf, "{\"ok\":true,\"ip\":\"%s\",\"device_id\":\"%s\"}",
+             wifi_get_ip(), id);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, buf);
+    return ESP_OK;
+}
+
+/* LAN 配对：已配网但没有 daemon 配置的设备可以直接接收新凭据。
+ * 已经配对过的设备仍要求当前 X-Esphook-Token，避免局域网内任意主机
+ * 覆盖 daemon 地址或认证密钥。 */
+static esp_err_t h_pair(httpd_req_t *req)
+{
+    if (reject_unauthorized(req)) return ESP_OK;
+    if (req->content_len <= 0 || req->content_len >= 384) {
+        httpd_resp_send_err(req, 413, "{\"ok\":false,\"err\":\"pair body too large\"}");
+        return ESP_OK;
+    }
+
+    char buf[384];
+    int got = httpd_req_recv(req, buf, sizeof buf - 1);
+    if (got <= 0) {
+        httpd_resp_send_err(req, 400, "{\"ok\":false,\"err\":\"empty pair body\"}");
+        return ESP_OK;
+    }
+    buf[got] = '\0';
+    cJSON *j = cJSON_Parse(buf);
+    if (!j) {
+        httpd_resp_send_err(req, 400, "{\"ok\":false,\"err\":\"bad json\"}");
+        return ESP_OK;
+    }
+
+    cJSON *host = cJSON_GetObjectItem(j, "daemon_host");
+    cJSON *port = cJSON_GetObjectItem(j, "daemon_port");
+    cJSON *secret = cJSON_GetObjectItem(j, "daemon_secret");
+    bool valid = cJSON_IsString(host) && host->valuestring[0] &&
+                 strlen(host->valuestring) < 96 &&
+                 cJSON_IsNumber(port) && port->valuedouble >= 1 &&
+                 port->valuedouble <= 65535 &&
+                 cJSON_IsString(secret) && valid_secret(secret->valuestring);
+    if (!valid) {
+        cJSON_Delete(j);
+        httpd_resp_send_err(req, 400,
+                            "{\"ok\":false,\"err\":\"need daemon_host, valid daemon_port and 64 hex daemon_secret\"}");
+        return ESP_OK;
+    }
+
+    esp_err_t err = config_set_link(host->valuestring, (uint16_t)port->valueint,
+                                    secret->valuestring);
+    char id[24];
+    local_device_id(id, sizeof id);
+    cJSON_Delete(j);
+    if (err != ESP_OK) {
+        httpd_resp_send_err(req, 500, "{\"ok\":false,\"err\":\"could not save pair config\"}");
+        return ESP_OK;
+    }
+    device_link_request_reconnect();
+
+    char response[128];
+    snprintf(response, sizeof response,
+             "{\"ok\":true,\"device_id\":\"%s\",\"ip\":\"%s\"}",
+             id, wifi_get_ip());
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, response);
     return ESP_OK;
 }
 
@@ -373,12 +457,14 @@ esp_err_t http_start(void)
     static const httpd_uri_t u_dismiss= {.uri="/dismiss",.method=HTTP_POST,.handler=h_dismiss};
     static const httpd_uri_t u_config = {.uri="/config",.method=HTTP_POST,.handler=h_config};
     static const httpd_uri_t u_ota    = {.uri="/ota",.method=HTTP_POST,.handler=h_ota};
+    static const httpd_uri_t u_pair   = {.uri="/pair",.method=HTTP_POST,.handler=h_pair};
     static const httpd_uri_t u_root   = {.uri="/",.method=HTTP_GET,.handler=h_root};
     static const httpd_uri_t u_health = {.uri="/health",.method=HTTP_GET,.handler=h_health};
     httpd_register_uri_handler(s, &u_notify);
     httpd_register_uri_handler(s, &u_dismiss);
     httpd_register_uri_handler(s, &u_config);
     httpd_register_uri_handler(s, &u_ota);
+    httpd_register_uri_handler(s, &u_pair);
     httpd_register_uri_handler(s, &u_root);
     httpd_register_uri_handler(s, &u_health);
     ESP_LOGI(TAG, "http server started");

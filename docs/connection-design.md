@@ -1,6 +1,6 @@
 # AI-Hook 连接与管理设计
 
-> 实施状态（2026-07-20）：主机 daemon、管理页、client/session alias、notify/dismiss、设备专属 HMAC 配对、反向 device link、按键回传和四种 Agent Hook 已实现。设备直连 HTTP OTA 已实现；daemon 经 reverse device link 的固件分块传输、离线持久化队列和 TLS/WSS 尚未完成。
+> 实施状态（2026-07-23）：主机 daemon、管理页、client/session alias、notify/dismiss、设备专属 HMAC 配对、反向 device link、LAN 配对、按键回传和四种 Agent Hook 已实现。设备直连 HTTP OTA 已实现；daemon 经 reverse device link 的固件分块传输、离线持久化队列和 TLS/WSS 尚未完成。
 
 ## 目标
 
@@ -60,7 +60,7 @@ ESP 启动 Wi-Fi 后主动连接主机的 device link 端口。NAT 只需要允�
 
 ## Device link 协议
 
-第一版使用长度前缀 TCP，监听主机的 `18765` 端口，避免为 ESP32-C3 引入额外 WebSocket 客户端组件。每条消息为：
+第一版使用长度前缀 TCP，监听主机的 `18765` 端口，避免为 ESP32-C3 引入额外 WebSocket 客户端组件。未配对设备另外监听 UDP `18766` 的 LAN 广播配对请求。TCP 每条消息为：
 
 ```text
 4 字节网络字节序长度 + UTF-8 JSON payload
@@ -83,7 +83,7 @@ ESP 启动 Wi-Fi 后主动连接主机的 device link 端口。NAT 只需要允�
 HMAC-SHA256(device_secret, device_id + ":" + client_nonce + ":" + server_nonce)
 ```
 
-`device_secret` 为每台设备单独生成的随机 32 字节密钥，只在首次 USB 配网时写入 ESP 和主机注册表。MAC 只作为设备 ID，不作为密钥。
+`device_secret` 为每台设备单独生成的随机 32 字节密钥。首次 USB 配网时通过 CDC 写入；如果设备已经有 Wi-Fi，也可以由主机通过 LAN 广播或直连 HTTP `/pair` 接口写入 ESP 和主机注册表。MAC 只作为设备 ID，不作为密钥。
 
 认证后的业务消息示例：
 
@@ -124,21 +124,40 @@ ESP 返回：
 esphook provision <ssid> <password>
 ```
 
-配网程序通过 USB 写入：
+首次配网程序通过 USB 写入：
 
 - Wi-Fi SSID 和密码
 - daemon 主机地址和 device link 端口
 - 设备专属随机密钥
 
-主机保存同一密钥到用户配置目录，权限限制为当前用户。设备重启后自动连接 daemon。恢复出厂会清除 Wi-Fi、daemon 和认证配置，需要重新 USB 配对。
+主机保存同一密钥到用户配置目录，权限限制为当前用户。设备重启后自动连接 daemon。恢复出厂会清除 Wi-Fi、daemon 和认证配置；需要先用 USB 配置 Wi-Fi，再使用下面的 LAN 配对流程。
 
-如果设备已经有可用 Wi-Fi 配置，只更新主机地址、端口和密钥而不覆盖 Wi-Fi：
+如果设备已经有可用 Wi-Fi 配置，只更新主机地址、端口和密钥而不覆盖 Wi-Fi，也不需要串口：
+
+局域网模式：
 
 ```bash
-esphook pair --server-host <调用端主机IP>
+esphook pair --server <daemon主机IP[:18765]>
 ```
 
-直连 HTTP 也使用同一设备密钥；不要因为处于同一局域网就开放未认证的 `/notify`。
+直连模式：
+
+```bash
+esphook pair --server <daemon主机IP[:18765]> --esp
+```
+
+直连模式的 ESP 地址取自 `DEVICE_IP`，`--esp` 只是布尔开关，不接参数。`pair` 的流程是：主机先在本地注册一个 pending secret。带 `--esp` 时从 `DEVICE_IP` 的设备 `/health` 读取设备 ID，再 POST `/pair`；不带 `--esp` 时向 UDP `18766` 广播 `pair_request`。两种模式写入 ESP 的 daemon 地址都来自 `--server`。未配对设备允许不带 Token 的首次写入；已经配对的设备必须带当前旧 Token，防止局域网内其他主机覆盖配置。设备写入成功后主动连接 daemon，daemon 会把 pending secret 绑定到真实设备 ID。
+
+UDP 广播只适用于同一广播域；跨路由网络如果主机可以访问 ESP，使用 `--esp` 直连，否则应先通过 USB `provision` 写入 daemon 地址。
+
+配对广播的主要字段如下：
+
+```json
+{"op":"pair_request","pair_id":"...","daemon_host":"192.168.1.20","daemon_port":18765,"daemon_secret":"64 hex","current_secret":""}
+{"op":"pair_ack","pair_id":"...","ok":true,"device_id":"8856a657dc64"}
+```
+
+直连 HTTP 也使用同一设备密钥；不要因为处于同一局域网就开放未认证的 `/notify`。`--server` 必须填写 ESP 能访问的 daemon 主机地址，不能填 daemon 的监听地址 `0.0.0.0` 或回环地址；端口是 device link 端口，默认 `18765`。
 
 ## 管理网页与客户端 API
 
@@ -191,7 +210,7 @@ ESP 原有 `/ota` 保留为直连救援路径。
 ## 分阶段实施
 
 1. 增加设计文档、主机 daemon 和统一 API。
-2. 增加 device link、设备密钥和 USB 配对命令。
+2. 增加 device link、设备密钥、USB 配网和 LAN 配对命令。
 3. 将通知、dismiss、按键事件迁移到结构化消息和 ACK。
 4. 管理网页迁移到 daemon，ESP 页面保留最小救援功能。
 5. 接入直连/反向自动路由和离线重连。

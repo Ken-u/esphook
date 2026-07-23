@@ -31,6 +31,7 @@ from typing import Any
 
 MAX_FRAME = 8192
 DEFAULT_DEVICE_PORT = 18765
+PAIR_DISCOVERY_PORT = 18766
 DEFAULT_WEB_PORT = 8787
 DEFAULT_CONFIG = Path.home() / "bin" / "esphook.conf"
 DEFAULT_REGISTRY = Path.home() / ".config" / "esphook" / "devices.json"
@@ -192,6 +193,16 @@ class DeviceRegistry:
                 "created": int(time.time()),
             }
             self._save()
+
+    def remove_pending(self, secret: str) -> None:
+        """Remove a pending secret after a pairing request failed."""
+        key = "pending-" + secret[:12]
+        with self.lock:
+            self._load()
+            entry = self.data.setdefault("devices", {}).get(key)
+            if isinstance(entry, dict) and entry.get("secret") == secret:
+                del self.data["devices"][key]
+                self._save()
 
     @staticmethod
     def _proof(secret: str, device_id: str, client_nonce: str, server_nonce: str) -> str:
@@ -859,6 +870,101 @@ def serial_write_lines(port: str, lines: list[str]) -> None:
             time.sleep(0.2)
 
 
+def parse_host_port(value: str, default_port: int) -> tuple[str, int]:
+    """Parse host[:port], including bracketed IPv6 endpoints."""
+    endpoint = value.strip()
+    for scheme in ("http://", "https://"):
+        if endpoint.startswith(scheme):
+            endpoint = endpoint[len(scheme):]
+            break
+    if not endpoint:
+        raise ValueError("server address is empty")
+
+    host = endpoint
+    port = default_port
+    if endpoint.startswith("["):
+        closing = endpoint.find("]")
+        if closing < 0:
+            raise ValueError(f"invalid endpoint: {value}")
+        host = endpoint[1:closing]
+        suffix = endpoint[closing + 1:]
+        if suffix:
+            if not suffix.startswith(":") or not suffix[1:].isdigit():
+                raise ValueError(f"invalid endpoint: {value}")
+            port = int(suffix[1:])
+    elif endpoint.count(":") == 1:
+        maybe_host, maybe_port = endpoint.rsplit(":", 1)
+        if maybe_port.isdigit():
+            host = maybe_host
+            port = int(maybe_port)
+        elif maybe_port:
+            raise ValueError(f"invalid endpoint: {value}")
+    if not host or port < 1 or port > 65535:
+        raise ValueError(f"invalid endpoint: {value}")
+    return host, port
+
+
+def http_base_url(value: str) -> str:
+    endpoint = value.strip()
+    if endpoint.startswith(("http://", "https://")):
+        return endpoint.rstrip("/")
+    if endpoint.count(":") > 1 and not endpoint.startswith("["):
+        endpoint = "[" + endpoint + "]"
+    return "http://" + endpoint.rstrip("/")
+
+
+def pair_over_udp(broadcast_address: str, server_host: str, server_port: int,
+                  secret: str, current_secret: str = "",
+                  pair_port: int = PAIR_DISCOVERY_PORT,
+                  timeout: float = 5.0, device_id: str = "") -> dict[str, Any]:
+    """Pair an unconfigured Wi-Fi board through the LAN broadcast domain."""
+    pair_id = secrets.token_hex(16)
+    request_values: dict[str, Any] = {
+        "op": "pair_request",
+        "pair_id": pair_id,
+        "daemon_host": server_host,
+        "daemon_port": server_port,
+        "daemon_secret": secret,
+        "current_secret": current_secret,
+    }
+    if device_id:
+        request_values["device_id"] = device_id
+    request = json.dumps(request_values, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    if len(request) > 512:
+        raise RuntimeError("pair request is too large")
+
+    last_error = ""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(("", 0))
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            sock.sendto(request, (broadcast_address, pair_port))
+            attempt_deadline = min(deadline, time.monotonic() + 1.0)
+            while time.monotonic() < attempt_deadline:
+                remaining = attempt_deadline - time.monotonic()
+                ready, _, _ = select.select([sock], [], [], remaining)
+                if not ready:
+                    break
+                raw, _address = sock.recvfrom(1024)
+                try:
+                    response = json.loads(raw.decode("utf-8"))
+                except (UnicodeDecodeError, ValueError):
+                    continue
+                if not isinstance(response, dict) or response.get("pair_id") != pair_id:
+                    continue
+                if not response.get("ok", False):
+                    last_error = str(response.get("err", "device rejected pairing"))
+                    continue
+                return response
+    if last_error:
+        raise RuntimeError(last_error)
+    raise RuntimeError(
+        f"no ESP answered LAN pairing broadcast on {broadcast_address}:{pair_port}"
+    )
+
+
 def cmd_provision(args: list[str], cfg: HostConfig) -> int:
     parser = argparse.ArgumentParser(prog="esphook provision")
     parser.add_argument("ssid")
@@ -886,23 +992,92 @@ def cmd_provision(args: list[str], cfg: HostConfig) -> int:
 
 
 def cmd_pair(args: list[str], cfg: HostConfig) -> int:
-    """Pair an already Wi-Fi-configured board without replacing its SSID/password."""
+    """Pair an already Wi-Fi-configured board over LAN, without serial."""
     parser = argparse.ArgumentParser(prog="esphook pair")
-    parser.add_argument("--server-host", default=cfg.daemon_host or cfg.preferred_host())
-    parser.add_argument("--device-port", type=int, default=cfg.device_port)
-    parser.add_argument("--serial", default="")
+    parser.add_argument("--server", required=True, metavar="IP[:PORT]",
+                        help="daemon device-link address (default port: 18765)")
+    parser.add_argument("--esp", action="store_true",
+                        help="use direct HTTP pairing via the configured DEVICE_IP")
+    parser.add_argument("--device-id", default="",
+                        help="target device id for LAN pairing when multiple boards exist")
+    parser.add_argument("--broadcast-address", default="255.255.255.255",
+                        help="LAN broadcast address (default: 255.255.255.255)")
+    parser.add_argument("--pair-port", type=int, default=PAIR_DISCOVERY_PORT,
+                        help=f"LAN pairing UDP port (default: {PAIR_DISCOVERY_PORT})")
     parsed = parser.parse_args(args)
+
+    try:
+        server_host, server_port = parse_host_port(parsed.server, cfg.device_port)
+    except ValueError as exc:
+        log(str(exc))
+        return 1
+
+    direct = parsed.esp
+    if direct and not cfg.device_ip:
+        log("--esp requires DEVICE_IP in the esphook config")
+        return 1
+    esp_address = cfg.device_ip if direct else ""
+    registry = DeviceRegistry(cfg.registry_path)
+    device_id = parsed.device_id
+    old_secret = ""
+    if direct:
+        base_url = http_base_url(esp_address)
+        try:
+            # /health is intentionally public so an unpaired board can be found
+            # and its MAC-derived id can select the old token during re-pairing.
+            health = http_call(base_url + "/health")
+            device_id = device_id or str(health.get("device_id", ""))
+        except (OSError, urllib.error.URLError, ValueError) as exc:
+            log(f"cannot reach ESP at {esp_address}: {exc}")
+            return 1
+        if device_id:
+            old_secret = registry.secret_for(device_id)
+    if not old_secret:
+        old_secret = registry.secret_for() if not device_id else registry.secret_for(device_id)
+
     secret = secrets.token_hex(32)
     cfg.registry_path.parent.mkdir(parents=True, exist_ok=True)
-    DeviceRegistry(cfg.registry_path).add_pending(secret)
-    port = find_serial(parsed.serial)
-    log(f"pairing {port}; daemon={parsed.server_host}:{parsed.device_port}")
-    serial_write_lines(port, [
-        f"daemon_host:{parsed.server_host}",
-        f"daemon_port:{parsed.device_port}",
-        f"daemon_secret:{secret}",
-    ])
-    log("device-link credentials sent without changing Wi-Fi settings")
+    registry.add_pending(secret)
+    result: dict[str, Any] | None = None
+    try:
+        if direct:
+            try:
+                result = http_call(
+                    base_url + "/pair",
+                    {
+                        "daemon_host": server_host,
+                        "daemon_port": server_port,
+                        "daemon_secret": secret,
+                    },
+                    old_secret,
+                )
+            except (OSError, urllib.error.URLError, ValueError) as exc:
+                registry.remove_pending(secret)
+                log(f"HTTP pairing failed for {esp_address}: {exc}")
+                return 1
+        if result is None:
+            result = pair_over_udp(
+                parsed.broadcast_address,
+                server_host,
+                server_port,
+                secret,
+                old_secret,
+                parsed.pair_port,
+                device_id=device_id,
+            )
+    except (OSError, urllib.error.URLError, ValueError, RuntimeError) as exc:
+        registry.remove_pending(secret)
+        log(f"LAN pairing failed: {exc}")
+        return 1
+    if not result.get("ok", False):
+        registry.remove_pending(secret)
+        log(f"LAN pairing rejected: {result.get('err', 'unknown error')}")
+        return 1
+
+    device_id = device_id or str(result.get("device_id", ""))
+    log(f"paired {esp_address if direct else parsed.broadcast_address} "
+        f"({device_id or 'unknown'}); daemon={server_host}:{server_port}")
+    log("device-link credentials sent over LAN without changing Wi-Fi settings")
     return 0
 
 

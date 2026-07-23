@@ -12,20 +12,43 @@ esphook 是一套“主机 Agent Hook + ESP32-C3 提醒屏”项目：把 Claude
 ./bin/esphook daemon --host 0.0.0.0
 ```
 
-默认管理网页为 `http://127.0.0.1:8787/`，ESP 反向 device link 监听 TCP `18765`。然后安装 Agent Hook：
+默认管理网页为 `http://127.0.0.1:8787/`，ESP 反向 device link 监听 TCP `18765`，未配对设备还监听 LAN 配对 UDP `18766`。然后安装 Agent Hook：
 
 ```bash
 ./scripts/install-hooks.sh --tools all
 ```
 
-首次给板子配网并配对（主机 daemon 要先启动）：
+首次给板子配网并配对（需要 USB，只用于写入 Wi-Fi）：
 
 ```bash
 ./bin/esphook provision '<Wi-Fi SSID>' '<Wi-Fi password>' \
   --server-host '<主机在板子网络中可达的 IP>'
 ```
 
-如果板子已经配好 Wi-Fi，只需要写入 daemon 地址和认证密钥，用 `pair`。命令会通过 USB CDC 写入配置，设备随后主动连接主机；主机不需要反向访问设备所在网段。`provision`/`pair` 需要 Python `pyserial`。
+如果板子已经配好 Wi-Fi，可以直接在局域网内配对，不再依赖串口：
+
+```bash
+./bin/esphook pair --server '<daemon 主机 IP[:18765]>'
+```
+
+默认不带 `--esp` 时使用局域网 UDP 广播配对；它会把 daemon 地址和认证密钥写入设备，不修改 Wi-Fi，设备随后主动连接 daemon。只有首次配网 `provision` 需要 Python `pyserial`。
+
+如果主机可以直接访问 ESP，显式加 `--esp` 使用 HTTP 直连：
+
+```bash
+./bin/esphook pair --server '<daemon 主机 IP[:18765]>' --esp
+```
+
+直连目标使用配置文件中的 `DEVICE_IP`；`--esp` 本身不接参数。
+
+如果主机无法主动访问 ESP，但两者处于同一广播域，可以省略设备 IP，使用 UDP 广播配对：
+
+```bash
+./bin/esphook pair --server '<主机在板子网络中可达的 IP[:18765]>' \
+  --broadcast-address '<局域网广播地址>'
+```
+
+默认广播地址为 `255.255.255.255`，部分路由器需要改成实际的定向广播地址（例如 `192.168.31.255`）。
 
 管理网页可查看设备、设置 client/session 别名、手动发送提醒。完整连接和认证协议见 [docs/connection-design.md](docs/connection-design.md)。
 

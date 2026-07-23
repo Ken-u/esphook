@@ -64,7 +64,7 @@ connect
 status
 ```
 
-更推荐使用主机端的 `./bin/esphook provision ...`，它会生成密钥、登记 daemon 并通过 USB 一次写入上述配置。板子重启后会主动连接 daemon。
+更推荐使用主机端的 `./bin/esphook provision ...`，它会生成密钥、登记 daemon 并通过 USB 一次写入上述配置。板子重启后会主动连接 daemon。设备已经配好 Wi-Fi 时，可使用 `./bin/esphook pair --server <主机IP[:18765]>` 通过 LAN 广播配对；如果主机能直接访问配置中的 `DEVICE_IP`，则加 `--esp` 改用 HTTP 直连。USB 仍用于首次写入 Wi-Fi、恢复出厂后的重新配网和完整烧录。
 
 ## 显示方向与省电
 
