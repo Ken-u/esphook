@@ -137,6 +137,10 @@ DEVICE_PORT=18765
 
 ## 硬件与固件
 
+### RK3588 远程硬件复位
+
+在原 C3 上增加一个由 GPIO20 高电平驱动的外部开关，即可并联控制 RK3588 的 RESET 按键：`esphook reset-board`，或在 daemon 管理页点击“重置开发板”。每次脉冲约 200 ms，松开后冷却 3 秒，通过已有认证反向连接执行并等待设备回执。GPIO 不能直接跨接按键；接线、升级、指定设备和失败语义见 [docs/board-reset.md](docs/board-reset.md)。
+
 目标硬件是 4 MB Flash 的 ESP32-C3 SuperMini，加一块 0.96 寸 160×80 ST7735 SPI 屏、三个按键和一个无源蜂鸣器。接线、电平、初次 USB 烧录和分区说明见 [docs/hardware.md](docs/hardware.md)。
 
 屏幕布局已经用 LVGL 实现：完成为绿色、错误为红色、确认是黄色；标题/正文占主要面积，过长文字自动滚动；10 分钟没有新事件后关闭显示和背光，按键或新通知唤醒。
@@ -164,3 +168,4 @@ python3 host/test_device_link.py
 ```
 
 屏幕效果预览在 [screen-layout-preview.html](screen-layout-preview.html) 和 [screen-focus-preview.html](screen-focus-preview.html)。
+

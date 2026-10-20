@@ -25,6 +25,10 @@ jobs:
         run: python3 host/test_hooks.py
       - name: Run device-link tests
         run: python3 host/test_device_link.py
+      - name: Run hardware reset tests
+        run: |
+          python3 host/test_reset_board.py
+          python3 host/test_board_reset_gpio.py
       - name: Check hook installer
         run: ./scripts/install-hooks.sh --tools all --dry-run --home "$RUNNER_TEMP/esphook-hook-dry-run"
       - name: Check one-click installer and release packager
@@ -104,3 +108,4 @@ jobs:
             dist/esphook-firmware.bin \
             dist/esphook-full-flash.zip \
             dist/SHA256SUMS
+

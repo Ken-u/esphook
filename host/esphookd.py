@@ -439,6 +439,7 @@ class DaemonCore:
         self.registry = DeviceRegistry(cfg.registry_path)
         self.connections: dict[str, DeviceConnection] = {}
         self.lock = threading.RLock()
+        self.reset_pending: dict[tuple[DeviceConnection, str], tuple[threading.Event, dict[str, Any]]] = {}
         self.aliases = self._load_aliases()
         self.known_clients: set[str] = set(self.aliases["clients"])
         self.known_sessions: set[str] = set(self.aliases["sessions"])
@@ -558,6 +559,11 @@ class DaemonCore:
             log(f"key from {connection.device_id}: {word!r}")
             inject_word(word)
         elif op == "ack":
+            with self.lock:
+                pending = self.reset_pending.get((connection, str(message.get("request_id", ""))))
+                if pending:
+                    pending[1].update(message)
+                    pending[0].set()
             log(f"device {connection.device_id} ack request={message.get('request_id', '')} ok={message.get('ok')}")
         elif op == "state":
             # Kept for the management page; no persistent state is required yet.
@@ -626,6 +632,31 @@ class DaemonCore:
         if session_alias:
             message["session_id"] = session_alias
         return message
+
+    def reset_board(self, payload: dict[str, Any], timeout: float = 1.5) -> dict[str, Any]:
+        """Send exactly once over an authenticated link and await release ACK."""
+        target = self._device_target(payload)
+        connection = self._choose_connection(target)
+        if not connection:
+            raise RuntimeError("reset requires one online device; use --device-id if multiple devices are online")
+        request_id = uuid.uuid4().hex
+        event = threading.Event()
+        reply: dict[str, Any] = {}
+        key = (connection, request_id)
+        with self.lock:
+            self.reset_pending[key] = (event, reply)
+        try:
+            if not connection.send({"op": "reset_board", "request_id": request_id}):
+                raise RuntimeError("reset send failed; outcome unknown; no automatic retry")
+            if not event.wait(timeout):
+                raise RuntimeError("reset ACK timed out; outcome unknown (or firmware too old); no automatic retry")
+            if reply.get("ok") is not True:
+                raise RuntimeError(str(reply.get("error", "device rejected reset")))
+            return {"ok": True, "transport": "reverse", "device_id": connection.device_id,
+                    "request_id": request_id, "pulse_ms": 200, "state": "released"}
+        finally:
+            with self.lock:
+                self.reset_pending.pop(key, None)
 
     def route(self, op: str, payload: dict[str, Any]) -> dict[str, Any]:
         target = self._device_target(payload)
@@ -745,6 +776,10 @@ class WebHandler(http.server.BaseHTTPRequestHandler):
                 result = self.core.route("notify", value)
             elif self.path in ("/api/dismiss", "/dismiss"):
                 result = self.core.route("dismiss", value)
+            elif self.path == "/api/reset-board":
+                if self.headers.get_content_type() != "application/json":
+                    raise ValueError("reset requires Content-Type: application/json")
+                result = self.core.reset_board(value)
             elif self.path == "/api/alias":
                 result = self.core.set_alias(
                     str(value.get("kind", "")),
@@ -788,7 +823,9 @@ button{background:var(--green);color:#06120f;border:0;border-radius:4px;padding:
 <label><span>title</span><input id="title"></label>
 <label><span>body</span><textarea id="body"></textarea></label>
 <button onclick="send('/api/notify')">发送提醒</button><button class="red" onclick="dismiss()">关闭当前</button><pre id="result"></pre></div>
+<div class="card"><strong>RK3588 硬件复位</strong><p>对上方 device_id 对应设备连接的开发板按下 RESET 约 200 ms。</p><button class="red" id="reset-board" onclick="resetBoard()">重置开发板</button><pre id="reset-result"></pre></div>
 <script>
+async function resetBoard(){if(!confirm('确认重置该设备连接的开发板？运行中的工作会中断。'))return;let b=document.getElementById('reset-board');b.disabled=true;try{let r=await fetch('/api/reset-board',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({device_id:v('device')})});let x=await r.json();document.getElementById('reset-result').textContent=x.ok?'复位脉冲已结束，按键已松开（不代表系统启动完成）':x.error;}catch(e){document.getElementById('reset-result').textContent='结果未知，请检查开发板状态后再操作：'+e;}finally{setTimeout(()=>{b.disabled=false},3000)}}
 async function refresh(){let r=await fetch('/api/status');let x=await r.json();document.getElementById('devices').textContent=JSON.stringify(x,null,2);let a=await fetch('/api/aliases');document.getElementById('aliases').textContent=JSON.stringify(await a.json(),null,2);let d=(x.reverse_online||[])[0];if(d&&!document.getElementById('device').value)document.getElementById('device').value=d;}
 async function saveAlias(){let x={kind:v('alias-kind'),id:v('alias-id'),alias:v('alias-name')};let r=await fetch('/api/alias',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(x)});document.getElementById('result').textContent=JSON.stringify(await r.json(),null,2);refresh();}
 async function send(path){let x={device_id:v('device'),client_id:v('client'),session_id:v('session'),title:v('title'),body:v('body'),status:v('status')};let r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(x)});document.getElementById('result').textContent=JSON.stringify(await r.json(),null,2);refresh();}
@@ -1081,13 +1118,14 @@ def cmd_pair(args: list[str], cfg: HostConfig) -> int:
     return 0
 
 
-def http_call(url: str, payload: dict[str, Any] | None = None, token: str = "") -> dict[str, Any]:
+def http_call(url: str, payload: dict[str, Any] | None = None, token: str = "",
+              token_header: str = "X-Esphook-Token") -> dict[str, Any]:
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else None
     headers = {"Accept": "application/json"}
     if body is not None:
         headers["Content-Type"] = "application/json"
     if token:
-        headers["X-Esphook-Token"] = token
+        headers[token_header] = token
     method = "POST" if body is not None else "GET"
     request = urllib.request.Request(url, data=body, headers=headers, method=method)
     with urllib.request.urlopen(request, timeout=2.0) as response:
@@ -1097,7 +1135,8 @@ def http_call(url: str, payload: dict[str, Any] | None = None, token: str = "") 
 
 
 def daemon_call(cfg: HostConfig, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    return http_call(cfg.daemon_url.rstrip("/") + path, payload, cfg.admin_token)
+    return http_call(cfg.daemon_url.rstrip("/") + path, payload, cfg.admin_token,
+                     token_header="X-Esphook-Admin")
 
 
 def direct_call(cfg: HostConfig, path: str, payload: dict[str, Any], registry: DeviceRegistry) -> dict[str, Any]:
@@ -1188,6 +1227,22 @@ def cmd_dismiss(args: list[str], cfg: HostConfig) -> int:
     return 0
 
 
+def cmd_reset_board(args: list[str], cfg: HostConfig) -> int:
+    parser = argparse.ArgumentParser(prog="esphook reset-board",
+                                     description="Pulse the external board RESET switch (GPIO20, 200 ms)")
+    parser.add_argument("--device-id", default=cfg.device_id)
+    parsed = parser.parse_args(args)
+    try:
+        result = daemon_call(cfg, "/api/reset-board", {"device_id": parsed.device_id})
+        print(json.dumps(result, ensure_ascii=False))
+        return 0 if result.get("ok") is True else 1
+    except urllib.error.HTTPError as exc:
+        log(f"reset failed: HTTP {exc.code}: {exc.read(8192).decode('utf-8', 'replace')}")
+    except (OSError, urllib.error.URLError, ValueError, RuntimeError) as exc:
+        log(f"reset not confirmed: {exc}; outcome unknown; no automatic retry")
+    return 1
+
+
 def cmd_setup(args: list[str]) -> int:
     tool = args[0] if args else ""
     installer = Path(__file__).with_name("install_hooks.py")
@@ -1223,13 +1278,16 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_notify(argv, cfg)
     if command == "dismiss":
         return cmd_dismiss(argv, cfg)
+    if command == "reset-board":
+        return cmd_reset_board(argv, cfg)
     if command == "setup":
         return cmd_setup(argv)
     if command == "test":
         return cmd_notify(["done", "test", "esphook test notification"], cfg)
-    log("usage: esphook provision|pair|status|notify|dismiss|setup|daemon [--host HOST]|test")
+    log("usage: esphook provision|pair|status|notify|dismiss|reset-board|setup|daemon [--host HOST]|test")
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

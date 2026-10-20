@@ -15,6 +15,7 @@
 #include "display_task.h"
 #include "device_link.h"
 #include "font_store.h"
+#include "board_reset.h"
 #include "esp_ota_ops.h"
 
 static const char *TAG = "main";
@@ -38,6 +39,7 @@ static void on_wifi_state(int state, const char *ip)
 
 void app_main(void)
 {
+    ESP_ERROR_CHECK(board_reset_init());
     ESP_LOGI(TAG, "supermini-aihook starting");
     ESP_ERROR_CHECK(config_store_init());
 
@@ -81,3 +83,4 @@ void app_main(void)
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
+

@@ -6,6 +6,7 @@
  * device link 只负责传输和认证，显示状态仍由 display_task 统一处理。
  */
 #include "device_link.h"
+#include "board_reset.h"
 #include "config_store.h"
 #include "net_wifi.h"
 #include "events.h"
@@ -359,6 +360,15 @@ static bool handle_message(int fd, cJSON *message)
     } else if (strcmp(op->valuestring, "dismiss") == 0) {
         bool ok = queue_display_dismiss(message);
         send_ack(fd, message, ok, ok ? NULL : "dismiss rejected");
+    } else if (strcmp(op->valuestring, "reset_board") == 0) {
+        cJSON *id = cJSON_GetObjectItem(message, "request_id");
+        if (!cJSON_IsString(id) || !id->valuestring[0]) {
+            send_ack(fd, message, false, "request_id required");
+        } else {
+            esp_err_t err = board_reset_press();
+            send_ack(fd, message, err == ESP_OK,
+                     err == ESP_ERR_INVALID_STATE ? "reset busy or cooling down" : esp_err_to_name(err));
+        }
     } else if (strcmp(op->valuestring, "ping") == 0) {
         cJSON *pong = cJSON_CreateObject();
         if (pong) {
@@ -636,3 +646,4 @@ bool device_link_send_key(const char *client_id, const char *session_id,
     copy_string(tx.word, sizeof tx.word, word);
     return xQueueSend(s_key_q, &tx, 0) == pdTRUE;
 }
+

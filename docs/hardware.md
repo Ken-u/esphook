@@ -41,6 +41,8 @@ K3 一端 ─ GPIO11      K3 另一端 ─ GND
 
 ## 初次 USB 烧录
 
+可选的 RK3588 RESET 开关输出使用 GPIO20（空闲低、触发高），不占用上表的屏幕、按键或蜂鸣器引脚。必须通过外部开关器件接 RESET，接线详见 [board-reset.md](board-reset.md)。
+
 初次烧录或分区/字库变化时，在项目根目录执行：
 
 ```bash
@@ -71,3 +73,4 @@ status
 当前 ST7735 初始化使用横屏、上下方向已校正的 `swap_xy + mirror_y` 配置。若你的屏幕排线或 ST7735 变体方向不同，优先调整 `main/st7735_params.h` 和 `main/display_view.c` 的面板参数，不要先改 UI 坐标。
 
 无新提醒 10 分钟后，固件关闭 ST7735 输出和 `BLK` 背光；按任一按键或收到新事件会唤醒。屏幕和 ESP 共用 3.3 V/GND，USB 仍可用于日志、配网和重新烧录。
+

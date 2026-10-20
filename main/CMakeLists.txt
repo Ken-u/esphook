@@ -2,7 +2,7 @@ idf_component_register(
     SRCS "main.c" "usb_cdc.c" "config_store.c" "display_model.c" "display_view.c"
          "aihook_font_12.c" "aihook_font_16.c" "ota_update.c"
          "font_store.c"
-         "device_link.c"
+         "device_link.c" "board_reset.c"
          "net_wifi.c" "beeper.c" "events.c" "http_server.c"
          "input_task.c" "display_task.c"
     INCLUDE_DIRS "."
@@ -17,3 +17,4 @@ esptool_py_flash_to_partition(flash "fontdata" ${PROJECT_DIR}/main/fontdata.bin)
 # unity 测试：编译进二进制时取消注释下行并打开 CONFIG_UNITY_ENABLE_IDF_TEST_RUNNER
 # idf_component_register(APPEND SRCS "test/test_config_store.c" "test/test_display_model.c"
 #                        REQUIRES unity)
+
