@@ -8,6 +8,7 @@
 #include "input_task.h"
 #include "sdkconfig.h"
 #include "robot_runtime.h"
+#include "robot_ui.h"
 #include "usb_cdc.h"
 #include "config_store.h"
 #include "net_wifi.h"
@@ -129,7 +130,7 @@ void input_start(void) { /* Buttonless robot: never claim GPIO10 as input. */ }
 
 void input_cdc_handler(const char *line)
 {
-    if (robot_command(line)) return;
+    if (robot_ui_command(line) || robot_command(line)) return;
     if (strncmp(line, "ssid:", 5) == 0) {
         config_set_wifi(line + 5, NULL);
         cdc_write("OK ssid set");

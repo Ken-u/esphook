@@ -8,6 +8,9 @@ typedef struct {
     float angle_deg, target_deg;
     int x_mm, y_mm;
     uint32_t frames, rejected;
+    ld2450_frame_t raw;
+    uint32_t radar_age_ms;
+    bool radar_online;
     robot_config_t config;
 } robot_status_t;
 

@@ -24,7 +24,7 @@
 static const char *TAG = "robot";
 static QueueHandle_t s_commands, s_uart_events;
 static portMUX_TYPE s_status_lock = portMUX_INITIALIZER_UNLOCKED;
-static robot_status_t s_status = {.state = ROBOT_FAULT};
+static robot_status_t s_status = {.state = ROBOT_FAULT, .radar_age_ms = UINT32_MAX};
 typedef struct { char line[80]; } command_t;
 
 static uint64_t now_ms(void) { return (uint64_t)esp_timer_get_time() / 1000; }
@@ -101,6 +101,7 @@ static void robot_task(void *arg)
     robot_follow_t follow;
     robot_follow_init(&follow, &config, now_ms());
     ld2450_parser_t parser = {0};
+    ld2450_frame_t raw = {0};
     bool armed = false, following = false, hardware_fault = false;
     float angle = 0, manual_goal = 0;
     uint64_t last_step = now_ms(), last_byte = 0;
@@ -121,8 +122,10 @@ static void robot_task(void *arg)
                     left -= n;
                     for (int i = 0; i < n; ++i) {
                         ld2450_frame_t frame;
-                        if (ld2450_feed(&parser, bytes[i], &frame))
+                        if (ld2450_feed(&parser, bytes[i], &frame)) {
+                            raw = frame;
                             robot_follow_frame(&follow, &frame, stamp);
+                        }
                     }
                 }
             } else if (event.type == UART_FIFO_OVF || event.type == UART_BUFFER_FULL ||
@@ -228,6 +231,10 @@ static void robot_task(void *arg)
             .angle_deg = angle, .target_deg = follow.goal_deg,
             .x_mm = (int)follow.x_mm, .y_mm = (int)follow.y_mm,
             .frames = parser.frames, .rejected = parser.rejected, .config = follow.config,
+            .raw = raw,
+            .radar_age_ms = !follow.have_frame || now - follow.frame_ms > UINT32_MAX
+                            ? UINT32_MAX : (uint32_t)(now - follow.frame_ms),
+            .radar_online = follow.have_frame && now - follow.frame_ms <= 800,
         };
         portENTER_CRITICAL(&s_status_lock);
         s_status = status;
@@ -288,6 +295,7 @@ bool robot_command(const char *line)
 {
     if (strncmp(line, "robot", 5) || (line[5] && line[5] != ' ')) return false;
     if (!strcmp(line, "robot") || !strcmp(line, "robot help")) {
+        cdc_write("display: robot radar | robot face | ui <JSON> | ui status");
         cdc_write("robot: status | arm | disarm | follow | center | angle:<deg>");
         cdc_write("disarmed settings: center_us:<1400..1600> | limit:<5..45> | reverse:<0|1> | speed:<5..90> | save");
         return true;

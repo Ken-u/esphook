@@ -6,6 +6,7 @@
 #include "display_task.h"
 #include "sdkconfig.h"
 #include "robot_runtime.h"
+#include "robot_ui.h"
 #include "events.h"
 #include "display_model.h"
 #include "display_view.h"
@@ -20,7 +21,9 @@ static void render_all(void)
 #ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
     robot_status_t robot;
     robot_get_status(&robot);
-    dv_render_robot(robot.state, robot.target_deg, robot.armed);
+    robot_ui_t view;
+    robot_ui_get(&view);
+    dv_render_robot(&robot, &view);
 #else
     /* state=2 也传给 view，让待机页能显示最新 IP；连接页本身不再覆盖提醒。 */
     dv_render_net(s_net_state, s_ip);

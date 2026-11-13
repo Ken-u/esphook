@@ -90,10 +90,15 @@ robot follow
 - 黑底紫色像素眼睛、金色嘴、粉色脸颊，带眨眼和视线偏移。跟随时笑眼，雷达故障时黄色叉眼。底部紫/金小标识对应关闭/开启输出。表情显示不依赖 Wi-Fi，机器人模式保持屏幕亮起。
 - Wi-Fi 配网和 HTTP OTA 沿用原入口。本版不把 Hook 提醒覆盖到表情上，也不回传实体按键。
 
+## 自定义表情、文字与雷达页
+
+USB 输入 `robot radar` 显示原始目标的扇形扫描页，`robot face` 返回自动表情。自定义显示使用版本化 JSON，USB 和 HTTP 共用；字段、位图样例和原始遥测见 [robot-display-protocol.md](robot-display-protocol.md)。切换显示不改变舵机状态。
+
 ## 验证与边界
 
 ```bash
 ./scripts/test-robot.sh
+./scripts/test-robot-ui.sh  # 主机需 libcjson-dev
 python3 host/test_hooks.py
 python3 host/test_device_link.py
 ```

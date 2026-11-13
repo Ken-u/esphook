@@ -6,6 +6,7 @@ idf_component_register(
          "net_wifi.c" "beeper.c" "events.c" "http_server.c"
          "input_task.c" "display_task.c"
          "ld2450.c" "robot_follow.c" "robot_runtime.c"
+         "robot_ui_protocol.c" "robot_ui.c" "radar_view.c"
     INCLUDE_DIRS "."
     REQUIRES nvs_flash esp_driver_usb_serial_jtag esp_driver_spi esp_driver_gpio
              esp_driver_ledc esp_driver_uart esp_wifi esp_netif esp_event esp_http_server esp_http_client

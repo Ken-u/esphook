@@ -7,6 +7,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include <stdbool.h>
+#include "robot_ui_protocol.h"
 #include "freertos/task.h"
 #include <string.h>
 #include <stdarg.h>
@@ -14,7 +15,7 @@
 
 static const char *TAG = "cdc";
 static cdc_rx_line_cb_t s_rx_cb = NULL;
-static char s_linebuf[128];
+static char s_linebuf[ROBOT_UI_JSON_MAX + 5];
 static size_t s_linepos = 0;
 static bool s_line_overflow;
 static SemaphoreHandle_t s_tx_lock;
@@ -27,9 +28,10 @@ static void rx_task(void *arg)
         if (n <= 0) continue;
         for (int i = 0; i < n; i++) {
             char c = (char)buf[i];
+            if (c == '\0') { s_line_overflow = true; continue; }
             if (c == '\n' || c == '\r') {
                 if (s_line_overflow) {
-                    cdc_write("ERR command too long");
+                    cdc_write("ERR command too long or invalid byte");
                 } else if (s_linepos > 0) {
                     s_linebuf[s_linepos] = '\0';
                     if (s_rx_cb) s_rx_cb(s_linebuf);
@@ -56,7 +58,7 @@ esp_err_t cdc_init(cdc_rx_line_cb_t cb)
         ESP_LOGE(TAG, "usb_serial_jtag_driver_install: %s", esp_err_to_name(err));
         return err;
     }
-    xTaskCreate(rx_task, "cdc_rx", 3072, NULL, 5, NULL);
+    xTaskCreate(rx_task, "cdc_rx", 4096, NULL, 5, NULL);
     ESP_LOGI(TAG, "USB Serial/JTAG CDC ready");
     return ESP_OK;
 }

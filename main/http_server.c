@@ -5,6 +5,10 @@
  * /config 解析 form-urlencoded（k0/k1/k2 + display 文本）。
  */
 #include "http_server.h"
+#include "sdkconfig.h"
+#include "robot_ui.h"
+#include "robot_runtime.h"
+#include <stdlib.h>
 #include "esp_http_server.h"
 #include "cJSON.h"
 #include "config_store.h"
@@ -448,10 +452,74 @@ static esp_err_t h_ota(httpd_req_t *req)
     return ota_handle_upload(req);
 }
 
+#ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
+static esp_err_t h_robot_display(httpd_req_t *req)
+{
+    if (reject_unauthorized(req)) return ESP_OK;
+    httpd_resp_set_type(req, "application/json");
+    if (req->content_len <= 0 || req->content_len > ROBOT_UI_JSON_MAX) {
+        httpd_resp_send_err(req, 400, "{\"ok\":false,\"error\":\"body must be 1..1024 bytes\"}");
+        return ESP_OK;
+    }
+    size_t len = req->content_len;
+    char *body = malloc(len + 1);
+    if (!body) { httpd_resp_send_err(req, 503, "{\"ok\":false}"); return ESP_OK; }
+    size_t used = 0;
+    while (used < len) {
+        int n = httpd_req_recv(req, body + used, len - used);
+        if (n <= 0) {
+            free(body);
+            httpd_resp_send_err(req, n == HTTPD_SOCK_ERR_TIMEOUT ? 408 : 400,
+                                "{\"ok\":false,\"error\":\"incomplete body\"}");
+            return ESP_OK;
+        }
+        used += n;
+    }
+    body[len] = '\0';
+    char error[96], response[160];
+    esp_err_t err = robot_ui_submit(body, len, error, sizeof error);
+    free(body);
+    if (err == ESP_OK) httpd_resp_sendstr(req, "{\"ok\":true,\"v\":1}");
+    else {
+        snprintf(response, sizeof response, "{\"ok\":false,\"v\":1,\"error\":\"%s\"}", error);
+        httpd_resp_send_err(req, 400, response);
+    }
+    return ESP_OK;
+}
+static esp_err_t h_robot_radar(httpd_req_t *req)
+{
+    robot_status_t status;
+    robot_ui_t view;
+    robot_get_status(&status);
+    robot_ui_get(&view);
+    /* Fixed schema and integer fields keep telemetry bounded and portable. */
+    char response[768];
+    int n = snprintf(response, sizeof response,
+        "{\"v\":1,\"mode\":\"%s\",\"online\":%s,\"age_ms\":%lu,"
+        "\"frames\":%lu,\"rejected\":%lu,\"range_mm\":%u,\"targets\":[",
+        robot_ui_mode_name(view.mode), status.radar_online ? "true" : "false",
+        (unsigned long)status.radar_age_ms, (unsigned long)status.frames,
+        (unsigned long)status.rejected, view.range_mm);
+    for (unsigned i = 0; i < LD2450_TARGETS; ++i) {
+        const ld2450_target_t *t = &status.raw.targets[i];
+        n += snprintf(response + n, sizeof response - n,
+            "%s{\"slot\":%u,\"valid\":%s,\"x_mm\":%d,\"y_mm\":%d,"
+            "\"speed_cms\":%d,\"resolution_mm\":%u}",
+            i ? "," : "", i + 1, status.radar_online && t->valid ? "true" : "false",
+            t->x_mm, t->y_mm, t->speed_cms, t->resolution_mm);
+    }
+    snprintf(response + n, sizeof response - n, "]}");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    return httpd_resp_sendstr(req, response);
+}
+#endif
+
 esp_err_t http_start(void)
 {
     httpd_handle_t s = NULL;
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
+    cfg.max_uri_handlers = 10;
     if (httpd_start(&s, &cfg) != ESP_OK) return ESP_FAIL;
     static const httpd_uri_t u_notify = {.uri="/notify",.method=HTTP_POST,.handler=h_notify};
     static const httpd_uri_t u_dismiss= {.uri="/dismiss",.method=HTTP_POST,.handler=h_dismiss};
@@ -460,13 +528,19 @@ esp_err_t http_start(void)
     static const httpd_uri_t u_pair   = {.uri="/pair",.method=HTTP_POST,.handler=h_pair};
     static const httpd_uri_t u_root   = {.uri="/",.method=HTTP_GET,.handler=h_root};
     static const httpd_uri_t u_health = {.uri="/health",.method=HTTP_GET,.handler=h_health};
-    httpd_register_uri_handler(s, &u_notify);
-    httpd_register_uri_handler(s, &u_dismiss);
-    httpd_register_uri_handler(s, &u_config);
-    httpd_register_uri_handler(s, &u_ota);
-    httpd_register_uri_handler(s, &u_pair);
-    httpd_register_uri_handler(s, &u_root);
-    httpd_register_uri_handler(s, &u_health);
+#ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
+    static const httpd_uri_t u_display = {.uri="/api/v1/display",.method=HTTP_POST,.handler=h_robot_display};
+    static const httpd_uri_t u_radar = {.uri="/api/v1/radar",.method=HTTP_GET,.handler=h_robot_radar};
+#endif
+    const httpd_uri_t *routes[] = {&u_notify, &u_dismiss, &u_config, &u_ota, &u_pair, &u_root, &u_health,
+#ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
+        &u_display, &u_radar,
+#endif
+    };
+    for (unsigned i = 0; i < sizeof routes / sizeof routes[0]; ++i) {
+        esp_err_t err = httpd_register_uri_handler(s, routes[i]);
+        if (err != ESP_OK) { httpd_stop(s); return err; }
+    }
     ESP_LOGI(TAG, "http server started");
     return ESP_OK;
 }

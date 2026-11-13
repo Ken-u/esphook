@@ -9,6 +9,7 @@
 #include "display_view.h"
 #include "sdkconfig.h"
 #include "robot_follow.h"
+#include "radar_view.h"
 #include <math.h>
 #include "display_model.h"
 #include "config_store.h"
@@ -69,6 +70,8 @@ static int64_t s_last_activity_us;
 static bool s_screen_awake;
 
 static lv_obj_t *s_robot_layer;
+static lv_obj_t *s_radar_layer;
+static lv_obj_t *s_text_layer;
 static lv_obj_t *s_alert_layer;
 static lv_obj_t *s_net_layer;
 static lv_obj_t *s_idle_layer;
@@ -182,11 +185,14 @@ static void show_layer(lv_obj_t *layer)
     set_hidden(s_net_layer, layer != s_net_layer);
     set_hidden(s_idle_layer, layer != s_idle_layer);
     if (s_robot_layer) set_hidden(s_robot_layer, layer != s_robot_layer);
+    if (s_radar_layer) set_hidden(s_radar_layer, layer != s_radar_layer);
+    if (s_text_layer) set_hidden(s_text_layer, layer != s_text_layer);
 }
 
 static void set_text(lv_obj_t *obj, const char *text)
 {
-    lv_label_set_text(obj, text ? text : "");
+    const char *next = text ? text : "";
+    if (strcmp(lv_label_get_text(obj), next)) lv_label_set_text(obj, next);
 }
 
 static const char *client_label(const char *client_id, char *out, size_t len)
@@ -563,10 +569,13 @@ void dv_render_net(int state, const char *ip)
     }
 }
 
-void dv_render_robot(int state, float bearing, bool armed)
+static void render_face(const robot_status_t *status, const robot_ui_t *view)
 {
 #ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
-    static lv_obj_t *eyes[2][35], *mouth[20], *indicator;
+    int state = status->state;
+    float bearing = status->target_deg;
+    bool armed = status->armed;
+    static lv_obj_t *eyes[2][35], *mouth[20], *indicator, *caption;
     if (!s_robot_layer) {
         s_robot_layer = make_layer(lv_screen_active());
         lv_obj_set_style_bg_color(s_robot_layer, lv_color_hex(0x020006), LV_PART_MAIN);
@@ -581,6 +590,8 @@ void dv_render_robot(int state, float bearing, bool armed)
                 make_rect(s_robot_layer, 29 + side * 92 + i * 4, 48 - i % 2 * 2,
                           2, 5, 0xFF68BB, 0);
         indicator = make_rect(s_robot_layer, 77, 74, 6, 2, 0x76539B, 0);
+        caption = make_label(s_robot_layer, &aihook_font_12, 7, 67, 146, 13, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
+        lv_obj_set_style_text_align(caption, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     }
     static const char open[]  = "01110100011000110001100010111000000";
     static const char happy[] = "00000001000101010001100010000000000";
@@ -589,25 +600,123 @@ void dv_render_robot(int state, float bearing, bool armed)
     static const char smile[] = "11111111110111000100";
     static const char flat[]  = "00000000001111100000";
     uint64_t ms = (uint64_t)esp_timer_get_time() / 1000;
-    bool blinking = ms % 4300 > 4140;
-    const char *pattern = state == ROBOT_FAULT ? fault : blinking ? blink :
+    bool blinking = view->blink && ms % 4300 > 4140;
+    static const char sleepy[] = "00000000001111100000000000000000000";
+    static const char sad[] = "00000000001000101010001000000000000";
+    const char *pattern = state == ROBOT_FAULT ? fault :
                           state == ROBOT_TRACKING ? happy : open;
+    switch (view->expression) {
+        case FACE_NEUTRAL: pattern = open; break;
+        case FACE_HAPPY: pattern = happy; break;
+        case FACE_SLEEPY: pattern = sleepy; break;
+        case FACE_SAD: pattern = sad; break;
+        default: break;
+    }
     int gaze = (int)lroundf(fmaxf(-4, fminf(4, bearing / 10)));
-    uint32_t eye_rgb = state == ROBOT_FAULT ? 0xFDB927 : 0xC178FF;
+    uint32_t eye_rgb = view->expression == FACE_AUTO && state == ROBOT_FAULT
+                       ? 0xFDB927 : view->eye_color;
     for (int e = 0; e < 2; ++e) {
         for (int i = 0; i < 35; ++i) {
             lv_obj_t *pixel = eyes[e][i];
             lv_obj_set_pos(pixel, 43 + e * 54 + i % 5 * 4 + gaze, 17 + i / 5 * 4);
             lv_obj_set_style_bg_color(pixel, color_hex(eye_rgb), LV_PART_MAIN);
-            set_hidden(pixel, pattern[i] != '1');
+            const char *eye_pattern = view->expression == FACE_CUSTOM ? (e ? view->right : view->left) : pattern;
+            if (blinking && !(view->expression == FACE_AUTO && state == ROBOT_FAULT)) eye_pattern = blink;
+            set_hidden(pixel, eye_pattern[i] != '1');
         }
     }
-    const char *m = state == ROBOT_TRACKING ? smile : flat;
-    for (int i = 0; i < 20; ++i) set_hidden(mouth[i], m[i] != '1');
+    const char *m = view->expression == FACE_CUSTOM ? view->mouth :
+                    view->expression == FACE_HAPPY || (view->expression == FACE_AUTO && state == ROBOT_TRACKING) ? smile : flat;
+    for (int i = 0; i < 20; ++i) {
+        set_hidden(mouth[i], m[i] != '1');
+        lv_obj_set_style_bg_color(mouth[i], color_hex(view->mouth_color), LV_PART_MAIN);
+    }
+    set_text(caption, view->text);
+    lv_obj_set_style_text_color(caption, color_hex(view->text_color), LV_PART_MAIN);
+    set_hidden(caption, !view->text[0]);
+    set_hidden(indicator, view->text[0] != '\0');
     lv_obj_set_style_bg_color(indicator, color_hex(armed ? 0xFDB927 : 0x76539B), LV_PART_MAIN);
     show_layer(s_robot_layer);
     dv_activity();
 #else
-    (void)state; (void)bearing; (void)armed;
+    (void)status; (void)view;
 #endif
+}
+
+
+static void render_radar(const robot_status_t *status, const robot_ui_t *view)
+{
+#ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
+    static uint16_t pixels[RADAR_VIEW_WIDTH * RADAR_VIEW_HEIGHT];
+    static lv_image_dsc_t image;
+    static lv_obj_t *plot, *heading, *labels[3];
+    if (!s_radar_layer) {
+        s_radar_layer = make_layer(lv_screen_active());
+        heading = make_label(s_radar_layer, LV_FONT_DEFAULT, 2, 1, 158, 12, LV_LABEL_LONG_MODE_CLIP);
+        for (unsigned i = 0; i < 3; ++i) {
+            labels[i] = make_label(s_radar_layer, LV_FONT_DEFAULT, 110, 17 + i * 21, 50, 20, LV_LABEL_LONG_MODE_CLIP);
+            lv_obj_set_style_text_color(labels[i], lv_color_make(
+                (radar_target_color(i) >> 11) * 255 / 31,
+                ((radar_target_color(i) >> 5) & 63) * 255 / 63,
+                (radar_target_color(i) & 31) * 255 / 31), LV_PART_MAIN);
+        }
+        image.header.magic = LV_IMAGE_HEADER_MAGIC;
+        image.header.cf = LV_COLOR_FORMAT_RGB565;
+        image.header.w = RADAR_VIEW_WIDTH;
+        image.header.h = RADAR_VIEW_HEIGHT;
+        image.header.stride = RADAR_VIEW_WIDTH * 2;
+        image.data_size = sizeof pixels;
+        image.data = (const uint8_t *)pixels;
+        plot = lv_image_create(s_radar_layer);
+        lv_obj_set_pos(plot, 0, 16);
+        lv_image_set_src(plot, &image);
+    }
+    unsigned count = 0;
+    for (unsigned i = 0; i < 3; ++i) {
+        char value[32];
+        const ld2450_target_t *t = &status->raw.targets[i];
+        if (status->radar_online && t->valid) {
+            ++count;
+            snprintf(value, sizeof value, "%u%+.1f\nY%4.1f", i + 1,
+                     t->x_mm / 1000.0, t->y_mm / 1000.0);
+        } else snprintf(value, sizeof value, "%u --\nY --", i + 1);
+        set_text(labels[i], value);
+    }
+    char title[40];
+    if (status->radar_online) snprintf(title, sizeof title, "R%u %.1fm   X/Y m", count, view->range_mm / 1000.0);
+    if (!status->radar_online) snprintf(title, sizeof title, "NO DATA %.1fm", view->range_mm / 1000.0);
+    set_text(heading, title);
+    radar_view_draw(pixels, &status->raw, status->radar_online, view->range_mm,
+                    (unsigned)((uint64_t)esp_timer_get_time() / 1000));
+    lv_image_cache_drop(&image);
+    lv_obj_invalidate(plot);
+    show_layer(s_radar_layer);
+    dv_activity();
+#else
+    (void)status; (void)view;
+#endif
+}
+
+static void render_text(const robot_ui_t *view)
+{
+#ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
+    static lv_obj_t *message;
+    if (!s_text_layer) {
+        s_text_layer = make_layer(lv_screen_active());
+        message = make_label(s_text_layer, &aihook_font_16, 5, 6, 150, 68, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
+        lv_obj_set_style_text_align(message, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    }
+    set_text(message, view->text);
+    lv_obj_set_style_text_color(message, color_hex(view->text_color), LV_PART_MAIN);
+    show_layer(s_text_layer);
+    dv_activity();
+#else
+    (void)view;
+#endif
+}
+void dv_render_robot(const robot_status_t *status, const robot_ui_t *view)
+{
+    if (view->mode == UI_RADAR) render_radar(status, view);
+    else if (view->mode == UI_TEXT) render_text(view);
+    else render_face(status, view);
 }
