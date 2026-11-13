@@ -3,6 +3,7 @@
  * 行缓冲：遇 \n 触发回调。日志带 [I]/[E]/[W] 前缀。
  */
 #include "usb_cdc.h"
+#include "sdkconfig.h"
 #include "driver/usb_serial_jtag.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -53,6 +54,10 @@ esp_err_t cdc_init(cdc_rx_line_cb_t cb)
     if (!s_tx_lock) return ESP_ERR_NO_MEM;
     s_rx_cb = cb;
     usb_serial_jtag_driver_config_t cfg = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
+#ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
+    /* A complete 1024-byte JSON frame must fit while other tasks render. */
+    cfg.rx_buffer_size = 2048;
+#endif
     esp_err_t err = usb_serial_jtag_driver_install(&cfg);
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
         ESP_LOGE(TAG, "usb_serial_jtag_driver_install: %s", esp_err_to_name(err));
