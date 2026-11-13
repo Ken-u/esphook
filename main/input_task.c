@@ -6,6 +6,8 @@
  * dismiss 不直接改 model，只发 EVT_DISMISS（display_task 统一改 model，避免竞态）。
  */
 #include "input_task.h"
+#include "sdkconfig.h"
+#include "robot_runtime.h"
 #include "usb_cdc.h"
 #include "config_store.h"
 #include "net_wifi.h"
@@ -24,6 +26,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#ifndef CONFIG_DESKTOP_FOLLOW_ROBOT
 static const char *TAG = "input";
 static const int KEY_GPIOS[3] = {6, 10, 11};
 
@@ -119,8 +122,14 @@ void input_start(void)
     xTaskCreate(input_task_fn, "input", 4096, NULL, 5, NULL);
 }
 
+
+#else
+void input_start(void) { /* Buttonless robot: never claim GPIO10 as input. */ }
+#endif
+
 void input_cdc_handler(const char *line)
 {
+    if (robot_command(line)) return;
     if (strncmp(line, "ssid:", 5) == 0) {
         config_set_wifi(line + 5, NULL);
         cdc_write("OK ssid set");
@@ -169,6 +178,7 @@ void input_cdc_handler(const char *line)
         vTaskDelay(pdMS_TO_TICKS(200));
         esp_restart();
     } else if (strcmp(line, "help") == 0) {
+        cdc_write("robot help: tracking / servo calibration");
         cdc_write("cmds: ssid:<s> pass:<p> daemon_host:<h> daemon_port:<p> daemon_secret:<64hex> connect status id reset");
     } else if (line[0] != '\0') {
         cdc_write("ERR unknown command (try: help)");

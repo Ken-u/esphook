@@ -1,0 +1,36 @@
+menu "Desktop follow robot"
+config DESKTOP_FOLLOW_ROBOT
+    bool "Enable buttonless LD2450 / NHY009 robot"
+    default y
+    help
+        Use the screen for expressions and GPIO10 for the servo. The old
+        physical button scanner and beeper are not started in this mode.
+config ROBOT_RADAR_RX_GPIO
+    int "ESP UART RX GPIO (connect to LD2450 TX)"
+    depends on DESKTOP_FOLLOW_ROBOT
+    range 0 21
+    default 20
+config ROBOT_RADAR_TX_GPIO
+    int "ESP UART TX GPIO (connect to LD2450 RX)"
+    depends on DESKTOP_FOLLOW_ROBOT
+    range 0 21
+    default 21
+config ROBOT_RADAR_BAUD
+    int "LD2450 UART baud rate"
+    depends on DESKTOP_FOLLOW_ROBOT
+    range 9600 460800
+    default 256000
+config ROBOT_SERVO_GPIO
+    int "NHY009 PWM GPIO"
+    depends on DESKTOP_FOLLOW_ROBOT
+    range 0 21
+    default 10
+config ROBOT_SERVO_HZ
+    int "Servo PWM frequency (verify against your servo specification)"
+    depends on DESKTOP_FOLLOW_ROBOT
+    range 40 100
+    default 50
+    help
+        50 Hz is an initial engineering setting, not a confirmed NHY009
+        specification. PWM stays disabled at boot until 'robot arm'.
+endmenu

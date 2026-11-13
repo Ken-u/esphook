@@ -1,14 +1,14 @@
 # 桌面人体跟随转头机器人
 
-状态：项目准备，尚未接入雷达或舵机驱动。
+状态：首版代码已实现雷达接收、位置关联、跟随状态机、PWM 输出、USB 校准与像素表情。构建和首次上机步骤见 [robot-bringup.md](robot-bringup.md)，硬件实测尚未完成。
 
 ## 分支与复用基础
 
 - 开发分支：`feat/desktop-follow-robot`
 - 起点：创建分支时的默认分支 `agent/install-agent-hooks`。
 - 可复用：ESP-IDF 工程、ST7735 初始化与显示任务、USB Serial/JTAG CDC、配置存储、Wi-Fi、OTA。
-- 本次仅记录项目约束和开发入口，不改变现有固件运行行为。
-- 不依赖主机 daemon 的本地人体跟随作为第一阶段目标；原有 Agent Hook 是否继续作为通知模式，待用户决定。
+- 此分支默认启用机器人模式；在 menuconfig 中关闭 `DESKTOP_FOLLOW_ROBOT` 可构建原 Hook 模式。
+- 机器人模式本地运行，不依赖 Wi-Fi 或主机 daemon；保留 USB 配网与 HTTP OTA，暂不启动 device link。
 
 ## 用户已确定的硬件与约束
 
@@ -35,7 +35,7 @@
 | 雷达串口 | 尚未分配 | GPIO20 接雷达 TX、GPIO21 接雷达 RX 仅作候选，需核对实物引出与日志配置 |
 | 舵机信号 | 预留 GPIO10（候选） | 无实体按键冲突；须先停用旧代码对 GPIO10 的输入初始化与扫描，再由舵机驱动接管 |
 
-依据：`docs/hardware.md`、`main/display_view.c`、`main/input_task.c`、`main/beeper.c`、`main/main.c`。接线表属于准备方案，不能视为最终接线。
+依据：`docs/hardware.md`、`main/display_view.c`、`main/input_task.c`、`main/beeper.c`、`main/main.c`。默认接线及软件保护见 robot-bringup.md；实物引出仍以板上丝印为准。
 
 ## 本轮提供的造型参考
 

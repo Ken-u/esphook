@@ -5,6 +5,8 @@
 #include "usb_cdc.h"
 #include "driver/usb_serial_jtag.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#include <stdbool.h>
 #include "freertos/task.h"
 #include <string.h>
 #include <stdarg.h>
@@ -14,6 +16,8 @@ static const char *TAG = "cdc";
 static cdc_rx_line_cb_t s_rx_cb = NULL;
 static char s_linebuf[128];
 static size_t s_linepos = 0;
+static bool s_line_overflow;
+static SemaphoreHandle_t s_tx_lock;
 
 static void rx_task(void *arg)
 {
@@ -24,13 +28,18 @@ static void rx_task(void *arg)
         for (int i = 0; i < n; i++) {
             char c = (char)buf[i];
             if (c == '\n' || c == '\r') {
-                if (s_linepos > 0) {
+                if (s_line_overflow) {
+                    cdc_write("ERR command too long");
+                } else if (s_linepos > 0) {
                     s_linebuf[s_linepos] = '\0';
                     if (s_rx_cb) s_rx_cb(s_linebuf);
-                    s_linepos = 0;
                 }
+                s_linepos = 0;
+                s_line_overflow = false;
             } else if (s_linepos < sizeof(s_linebuf) - 1) {
                 s_linebuf[s_linepos++] = c;
+            } else {
+                s_line_overflow = true;
             }
         }
     }
@@ -38,6 +47,8 @@ static void rx_task(void *arg)
 
 esp_err_t cdc_init(cdc_rx_line_cb_t cb)
 {
+    s_tx_lock = xSemaphoreCreateMutex();
+    if (!s_tx_lock) return ESP_ERR_NO_MEM;
     s_rx_cb = cb;
     usb_serial_jtag_driver_config_t cfg = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
     esp_err_t err = usb_serial_jtag_driver_install(&cfg);
@@ -52,12 +63,15 @@ esp_err_t cdc_init(cdc_rx_line_cb_t cb)
 
 esp_err_t cdc_write(const char *str)
 {
+    if (!s_tx_lock || xSemaphoreTake(s_tx_lock, pdMS_TO_TICKS(200)) != pdTRUE)
+        return ESP_ERR_TIMEOUT;
     size_t len = strlen(str);
     usb_serial_jtag_write_bytes(str, len, pdMS_TO_TICKS(100));
     if (len == 0 || str[len - 1] != '\n') {
         usb_serial_jtag_write_bytes("\n", 1, pdMS_TO_TICKS(100));
     }
     usb_serial_jtag_wait_tx_done(pdMS_TO_TICKS(100));
+    xSemaphoreGive(s_tx_lock);
     return ESP_OK;
 }
 

@@ -1,5 +1,9 @@
 # esphook
 
+> 当前 `feat/desktop-follow-robot` 分支增加无按键桌面跟随机器人固件：ESP32-C3 SuperMini + ST7735 + LD2450 + NHY009。
+> 构建、接线及首次 USB 校准见 [机器人调试指南](docs/robot-bringup.md)。上电 PWM 默认关闭，通过 USB 校准后使用 `robot arm` / `robot follow` 开启。
+> 下方保留原 Agent Hook 项目说明；机器人模式不启动主机 device link，Wi-Fi 仅用于可选配置和 OTA。
+
 esphook 是一套“主机 Agent Hook + ESP32-C3 提醒屏”项目：把 Claude Code、Codex、Kimi Code、Cursor Agent 的事件转换成 `done`、`error`、`confirm`，在 0.96 寸 ST7735 屏上用颜色和大字提醒。
 
 仓库现在包含主机 daemon、四种 Hook、ESP-IDF 固件、中文字体资源、屏幕预览和 CI 构建配置。

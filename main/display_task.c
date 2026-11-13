@@ -4,6 +4,8 @@
  * LVGL 在此任务中独占运行；标签滚动由 LVGL 动画以细粒度 tick 驱动。
  */
 #include "display_task.h"
+#include "sdkconfig.h"
+#include "robot_runtime.h"
 #include "events.h"
 #include "display_model.h"
 #include "display_view.h"
@@ -15,17 +17,26 @@ static int s_net_state = 0;        /* 0=disc 1=connecting 2=connected */
 static char s_ip[16] = "";
 static void render_all(void)
 {
+#ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
+    robot_status_t robot;
+    robot_get_status(&robot);
+    dv_render_robot(robot.state, robot.target_deg, robot.armed);
+#else
     /* state=2 也传给 view，让待机页能显示最新 IP；连接页本身不再覆盖提醒。 */
     dv_render_net(s_net_state, s_ip);
     if (s_net_state == 2) {
         dv_render_status_bar();
         dv_render_main();
     }
+#endif
 }
 
 static void display_task_fn(void *arg)
 {
     display_event_t e;
+#ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
+    TickType_t face_tick = 0;
+#endif
     render_all();
     while (1) {
         if (xQueueReceive(display_q, &e, pdMS_TO_TICKS(5))) {
@@ -48,6 +59,12 @@ static void display_task_fn(void *arg)
             render_all();
         }
         /* LVGL timer 同时负责重绘、标签滚动和动画，目标调用频率约 200Hz。 */
+#ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
+        if (xTaskGetTickCount() - face_tick >= pdMS_TO_TICKS(80)) {
+            face_tick = xTaskGetTickCount();
+            render_all();
+        }
+#endif
         dv_process();
     }
 }

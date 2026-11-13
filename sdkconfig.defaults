@@ -105,3 +105,10 @@ CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 
 # 关闭 unity（节省 flash；逻辑已测过）
 CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+
+# GPIO20/21 are used by the robot UART1. Keep application console logs on USB;
+# ROM boot messages may still appear on GPIO21 before firmware starts.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+# CONFIG_ESP_CONSOLE_UART_DEFAULT is not set
+# CONFIG_ESP_CONSOLE_UART_CUSTOM is not set
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y

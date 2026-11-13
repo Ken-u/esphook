@@ -25,6 +25,8 @@ jobs:
         run: python3 host/test_hooks.py
       - name: Run device-link tests
         run: python3 host/test_device_link.py
+      - name: Test robot parser and follow controller
+        run: ./scripts/test-robot.sh
       - name: Check hook installer
         run: ./scripts/install-hooks.sh --tools all --dry-run --home "$RUNNER_TEMP/esphook-hook-dry-run"
       - name: Check one-click installer and release packager
@@ -71,6 +73,22 @@ jobs:
             main/fontdata.bin
             partitions_aihook.csv
             dependencies.lock
+
+  firmware-legacy:
+    name: ESP32-C3 legacy hook firmware
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container: espressif/idf:v5.5.4
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+      - name: Build with robot disabled
+        shell: bash
+        run: |
+          . /opt/esp/idf/export.sh
+          printf '# CONFIG_DESKTOP_FOLLOW_ROBOT is not set\n' > sdkconfig.legacy.defaults
+          idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.legacy.defaults" set-target esp32c3
+          idf.py build
 
   release:
     name: GitHub Release

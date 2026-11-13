@@ -7,6 +7,9 @@
  * 滚动不会再被原来的 10fps 手工刷新限制，提醒态也能把主要面积留给内容。
  */
 #include "display_view.h"
+#include "sdkconfig.h"
+#include "robot_follow.h"
+#include <math.h>
 #include "display_model.h"
 #include "config_store.h"
 #include "esp_lcd_panel_io.h"
@@ -65,6 +68,7 @@ static char s_ip[16];
 static int64_t s_last_activity_us;
 static bool s_screen_awake;
 
+static lv_obj_t *s_robot_layer;
 static lv_obj_t *s_alert_layer;
 static lv_obj_t *s_net_layer;
 static lv_obj_t *s_idle_layer;
@@ -177,6 +181,7 @@ static void show_layer(lv_obj_t *layer)
     set_hidden(s_alert_layer, layer != s_alert_layer);
     set_hidden(s_net_layer, layer != s_net_layer);
     set_hidden(s_idle_layer, layer != s_idle_layer);
+    if (s_robot_layer) set_hidden(s_robot_layer, layer != s_robot_layer);
 }
 
 static void set_text(lv_obj_t *obj, const char *text)
@@ -556,4 +561,53 @@ void dv_render_net(int state, const char *ip)
         set_text(s_net_meta, "USB: status");
         lv_obj_set_style_text_color(s_net_title, color_hex(COLOR_YELLOW), LV_PART_MAIN);
     }
+}
+
+void dv_render_robot(int state, float bearing, bool armed)
+{
+#ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
+    static lv_obj_t *eyes[2][35], *mouth[20], *indicator;
+    if (!s_robot_layer) {
+        s_robot_layer = make_layer(lv_screen_active());
+        lv_obj_set_style_bg_color(s_robot_layer, lv_color_hex(0x020006), LV_PART_MAIN);
+        for (int eye = 0; eye < 2; ++eye)
+            for (int i = 0; i < 35; ++i)
+                eyes[eye][i] = make_rect(s_robot_layer, 0, 0, 4, 4, 0xC178FF, 0);
+        for (int i = 0; i < 20; ++i)
+            mouth[i] = make_rect(s_robot_layer, 70 + i % 5 * 4, 50 + i / 5 * 4,
+                                 4, 4, 0xFDB927, 0);
+        for (int side = 0; side < 2; ++side)
+            for (int i = 0; i < 3; ++i)
+                make_rect(s_robot_layer, 29 + side * 92 + i * 4, 48 - i % 2 * 2,
+                          2, 5, 0xFF68BB, 0);
+        indicator = make_rect(s_robot_layer, 77, 74, 6, 2, 0x76539B, 0);
+    }
+    static const char open[]  = "01110100011000110001100010111000000";
+    static const char happy[] = "00000001000101010001100010000000000";
+    static const char blink[] = "00000000000000011111000000000000000";
+    static const char fault[] = "10001010100010001010100010000000000";
+    static const char smile[] = "11111111110111000100";
+    static const char flat[]  = "00000000001111100000";
+    uint64_t ms = (uint64_t)esp_timer_get_time() / 1000;
+    bool blinking = ms % 4300 > 4140;
+    const char *pattern = state == ROBOT_FAULT ? fault : blinking ? blink :
+                          state == ROBOT_TRACKING ? happy : open;
+    int gaze = (int)lroundf(fmaxf(-4, fminf(4, bearing / 10)));
+    uint32_t eye_rgb = state == ROBOT_FAULT ? 0xFDB927 : 0xC178FF;
+    for (int e = 0; e < 2; ++e) {
+        for (int i = 0; i < 35; ++i) {
+            lv_obj_t *pixel = eyes[e][i];
+            lv_obj_set_pos(pixel, 43 + e * 54 + i % 5 * 4 + gaze, 17 + i / 5 * 4);
+            lv_obj_set_style_bg_color(pixel, color_hex(eye_rgb), LV_PART_MAIN);
+            set_hidden(pixel, pattern[i] != '1');
+        }
+    }
+    const char *m = state == ROBOT_TRACKING ? smile : flat;
+    for (int i = 0; i < 20; ++i) set_hidden(mouth[i], m[i] != '1');
+    lv_obj_set_style_bg_color(indicator, color_hex(armed ? 0xFDB927 : 0x76539B), LV_PART_MAIN);
+    show_layer(s_robot_layer);
+    dv_activity();
+#else
+    (void)state; (void)bearing; (void)armed;
+#endif
 }

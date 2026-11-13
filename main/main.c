@@ -1,5 +1,8 @@
 /* main/main.c */
 #include "esp_log.h"
+#include "sdkconfig.h"
+#include "robot_runtime.h"
+#include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -51,12 +54,14 @@ void app_main(void)
     /* 显示 */
     dm_init();
     ESP_ERROR_CHECK(font_store_init());
-    dv_init();
+    ESP_ERROR_CHECK(dv_init());
     dv_render_net(0, NULL);
     dv_flush();
 
     /* 蜂鸣器 */
+#ifndef CONFIG_DESKTOP_FOLLOW_ROBOT
     beeper_init();
+#endif
 
     /* 显示任务（消费 display_q，统一改 model） */
     display_task_start();
@@ -65,7 +70,15 @@ void app_main(void)
     input_start();
 
     /* 主机反向连接（无配置时任务休眠，不影响旧直连模式）。 */
+#ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
+    esp_err_t robot_err = robot_start();
+    if (robot_err != ESP_OK) {
+        ESP_LOGE(TAG, "robot init failed: %s", esp_err_to_name(robot_err));
+        cdc_write("ERR robot initialization failed; check pin configuration");
+    }
+#else
     device_link_start();
+#endif
 
     /* 尝试连 Wi-Fi（有凭证则连，连上后启 http） */
     wifi_set_state_cb(on_wifi_state);

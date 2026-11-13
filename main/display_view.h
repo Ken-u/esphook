@@ -3,6 +3,7 @@
  */
 #pragma once
 #include "esp_err.h"
+#include <stdbool.h>
 
 #define DV_WIDTH  160
 #define DV_HEIGHT 80
@@ -29,3 +30,6 @@ void dv_render_status_bar(void);
 void dv_render_main(void);
 void dv_render_net(int state, const char *ip);
 void dv_render_idle(void);
+
+/* Called only by the display task; no LVGL access from radar/CDC tasks. */
+void dv_render_robot(int state, float bearing_deg, bool armed);
