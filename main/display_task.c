@@ -7,6 +7,8 @@
 #include "sdkconfig.h"
 #include "robot_runtime.h"
 #include "robot_ui.h"
+#include "basketball_runtime.h"
+#include "esp_timer.h"
 #include "events.h"
 #include "display_model.h"
 #include "display_view.h"
@@ -19,6 +21,12 @@ static char s_ip[16] = "";
 static void render_all(void)
 {
 #ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
+    basketball_view_t game;
+    basketball_get_view(&game);
+    if (game.phase != BASKETBALL_OFF) {
+        dv_render_basketball(&game);
+        return;
+    }
     robot_status_t robot;
     robot_get_status(&robot);
     robot_ui_t view;
@@ -39,6 +47,8 @@ static void display_task_fn(void *arg)
     display_event_t e;
 #ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
     TickType_t face_tick = 0;
+    basketball_phase_t last_game_phase = BASKETBALL_OFF;
+    basketball_runtime_tick((uint64_t)esp_timer_get_time() / 1000);
 #endif
     render_all();
     while (1) {
@@ -63,7 +73,12 @@ static void display_task_fn(void *arg)
         }
         /* LVGL timer 同时负责重绘、标签滚动和动画，目标调用频率约 200Hz。 */
 #ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
-        if (xTaskGetTickCount() - face_tick >= pdMS_TO_TICKS(80)) {
+        basketball_runtime_tick((uint64_t)esp_timer_get_time() / 1000);
+        basketball_view_t game;
+        basketball_get_view(&game);
+        TickType_t interval = pdMS_TO_TICKS(game.phase == BASKETBALL_OFF ? 80 : 33);
+        if (game.phase != last_game_phase || xTaskGetTickCount() - face_tick >= interval) {
+            last_game_phase = game.phase;
             face_tick = xTaskGetTickCount();
             render_all();
         }

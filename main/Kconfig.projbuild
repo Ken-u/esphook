@@ -1,10 +1,11 @@
 menu "Desktop follow robot"
 config DESKTOP_FOLLOW_ROBOT
-    bool "Enable buttonless LD2450 / NHY009 robot"
+    bool "Enable LD2450 / NHY009 desktop robot"
     default y
     help
-        Use the screen for expressions and GPIO10 for the servo. The old
-        physical button scanner and beeper are not started in this mode.
+        Use the screen for expressions and GPIO10 for the servo. GPIO6 is
+        reserved for the basketball button. The old three-button scanner and
+        beeper are not started in this mode.
 config ROBOT_RADAR_RX_GPIO
     int "ESP UART RX GPIO (connect to LD2450 TX)"
     depends on DESKTOP_FOLLOW_ROBOT

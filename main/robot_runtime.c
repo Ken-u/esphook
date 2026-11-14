@@ -242,12 +242,12 @@ static void robot_task(void *arg)
     }
 }
 
-/* Reserve screen pins, native USB, flash, strapping pins, and UART0 TX (ROM
+/* Reserve GPIO6 for the game button, screen pins, native USB, flash, strapping pins, and UART0 TX (ROM
  * boot log on GPIO21). GPIO21 is allowed ONLY as radar TX: radar RX tolerates
  * stray boot bytes, whereas a servo must never receive ROM log pulses. */
 static bool available_gpio(int pin)
 {
-    return pin == 6 || pin == 7 || pin == 10 || pin == 20 || pin == 21;
+    return pin == 7 || pin == 10 || pin == 20 || pin == 21;
 }
 esp_err_t robot_start(void)
 {
@@ -295,6 +295,7 @@ bool robot_command(const char *line)
 {
     if (strncmp(line, "robot", 5) || (line[5] && line[5] != ' ')) return false;
     if (!strcmp(line, "robot") || !strcmp(line, "robot help")) {
+        cdc_write("game: triple-click GPIO6 | robot game start/stop/status");
         cdc_write("display: robot radar | robot face | ui <JSON> | ui status");
         cdc_write("robot: status | arm | disarm | follow | center | angle:<deg>");
         cdc_write("disarmed settings: center_us:<1400..1600> | limit:<5..45> | reverse:<0|1> | speed:<5..90> | save");

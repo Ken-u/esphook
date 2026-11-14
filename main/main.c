@@ -2,6 +2,7 @@
 #include "esp_log.h"
 #include "sdkconfig.h"
 #include "robot_runtime.h"
+#include "basketball_runtime.h"
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -64,6 +65,9 @@ void app_main(void)
 #endif
 
     /* 显示任务（消费 display_q，统一改 model） */
+#ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
+    ESP_ERROR_CHECK(basketball_runtime_init());
+#endif
     display_task_start();
 
     /* 输入任务（按键 + CDC 命令已在 handler） */

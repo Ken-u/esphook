@@ -27,6 +27,8 @@ jobs:
         run: python3 host/test_device_link.py
       - name: Test robot parser and follow controller
         run: ./scripts/test-robot.sh
+      - name: Test GPIO6 basketball game
+        run: ./scripts/test-basketball.sh
       - name: Install UI protocol test dependency
         run: sudo apt-get update && sudo apt-get install -y libcjson-dev
       - name: Test display protocol and radar view

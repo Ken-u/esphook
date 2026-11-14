@@ -1,5 +1,5 @@
 /* main/input_task.c
- * ① 按键扫描（K1=6/K2=10/K3=11，消抖）：查词表→POST /keyevent 回传→dismiss+beep
+ * ① 机器人：GPIO6 游戏键；原 Hook：K1=6/K2=10/K3=11 扫描与回传
  * ② CDC 配网命令：ssid:/pass:/connect/status/reset
  *
  * 按键回传：用 esp_http_client 向 last_callback() 发 POST /keyevent {word}。
@@ -9,6 +9,8 @@
 #include "sdkconfig.h"
 #include "robot_runtime.h"
 #include "robot_ui.h"
+#include "basketball_runtime.h"
+#include "esp_timer.h"
 #include "usb_cdc.h"
 #include "config_store.h"
 #include "net_wifi.h"
@@ -125,11 +127,34 @@ void input_start(void)
 
 
 #else
-void input_start(void) { /* Buttonless robot: never claim GPIO10 as input. */ }
+static void robot_button_task(void *arg)
+{
+    (void)arg;
+    basketball_button_t button = {0};
+    while (1) {
+        uint64_t now = (uint64_t)esp_timer_get_time() / 1000;
+        if (basketball_button_sample(&button, gpio_get_level(BASKETBALL_BUTTON_GPIO) == 0, now))
+            basketball_post_press(now);
+        vTaskDelay(pdMS_TO_TICKS(5));
+    }
+}
+void input_start(void)
+{
+    /* Sole physical button: GPIO6 to GND, internal pull-up. Never claim GPIO10. */
+    gpio_config_t config = {
+        .pin_bit_mask = 1ULL << BASKETBALL_BUTTON_GPIO, .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE, .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    ESP_ERROR_CHECK(gpio_config(&config));
+    if (xTaskCreate(robot_button_task, "game_button", 2048, NULL, 5, NULL) != pdPASS)
+        ESP_LOGE("input", "could not start GPIO6 button task");
+}
 #endif
 
 void input_cdc_handler(const char *line)
 {
+    if (basketball_command(line)) return;
     if (robot_ui_command(line) || robot_command(line)) return;
     if (strncmp(line, "ssid:", 5) == 0) {
         config_set_wifi(line + 5, NULL);
@@ -179,6 +204,7 @@ void input_cdc_handler(const char *line)
         vTaskDelay(pdMS_TO_TICKS(200));
         esp_restart();
     } else if (strcmp(line, "help") == 0) {
+        cdc_write("game: triple-click GPIO6 | robot game start/stop/status");
         cdc_write("robot help: tracking / servo calibration");
         cdc_write("cmds: ssid:<s> pass:<p> daemon_host:<h> daemon_port:<p> daemon_secret:<64hex> connect status id reset");
     } else if (line[0] != '\0') {

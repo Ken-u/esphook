@@ -73,6 +73,7 @@ static bool s_screen_awake;
 static lv_obj_t *s_robot_layer;
 static lv_obj_t *s_radar_layer;
 static lv_obj_t *s_text_layer;
+static lv_obj_t *s_game_layer;
 static lv_obj_t *s_alert_layer;
 static lv_obj_t *s_net_layer;
 static lv_obj_t *s_idle_layer;
@@ -188,6 +189,7 @@ static void show_layer(lv_obj_t *layer)
     if (s_robot_layer) set_hidden(s_robot_layer, layer != s_robot_layer);
     if (s_radar_layer) set_hidden(s_radar_layer, layer != s_radar_layer);
     if (s_text_layer) set_hidden(s_text_layer, layer != s_text_layer);
+    if (s_game_layer) set_hidden(s_game_layer, layer != s_game_layer);
 }
 
 static void set_text(lv_obj_t *obj, const char *text)
@@ -720,4 +722,90 @@ void dv_render_robot(const robot_status_t *status, const robot_ui_t *view)
     if (view->mode == UI_RADAR) render_radar(status, view);
     else if (view->mode == UI_TEXT) render_text(view);
     else render_face(status, view);
+}
+
+
+void dv_render_basketball(const basketball_view_t *game)
+{
+#ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
+    static lv_obj_t *court, *results, *hoop, *rim, *ball;
+    static lv_obj_t *clock_label, *score_label, *shots_label, *hint;
+    static lv_obj_t *result_made, *result_score, *result_accuracy;
+    if (!s_game_layer) {
+        s_game_layer = make_layer(lv_screen_active());
+        court = make_layer(s_game_layer);
+        results = make_layer(s_game_layer);
+        clock_label = make_label(court, &aihook_font_12, 3, 0, 84, 14, LV_LABEL_LONG_MODE_CLIP);
+        score_label = make_label(court, &aihook_font_12, 89, 0, 68, 14, LV_LABEL_LONG_MODE_CLIP);
+        lv_obj_set_style_text_color(score_label, color_hex(0xFDB927), LV_PART_MAIN);
+        /* Central lane is the exact +/-10px hit window, not a random reward. */
+        make_rect(court, 70, 17, 21, 45, 0x102C22, 0);
+        for (int y = 18; y < 61; y += 6) make_rect(court, 80, y, 1, 3, 0x54836E, 0);
+        make_rect(court, 2, 62, 156, 1, 0x59406C, 0);
+        make_rect(court, 69, 61, 2, 3, 0x57A77E, 0);
+        make_rect(court, 90, 61, 2, 3, 0x57A77E, 0);
+        hoop = lv_obj_create(court);
+        style_plain(hoop);
+        lv_obj_set_size(hoop, 32, 32);
+        make_rect(hoop, 2, 0, 28, 14, 0xE4E6F0, 1);
+        make_rect(hoop, 4, 2, 24, 10, 0x38224A, 0);
+        make_rect(hoop, 10, 7, 12, 7, 0xF9A12A, 0);
+        make_rect(hoop, 12, 9, 8, 4, 0x38224A, 0);
+        rim = make_rect(hoop, 1, 15, 30, 3, 0xFF922F, 0);
+        for (int row = 0; row < 4; ++row) {
+            make_rect(hoop, 4 + row, 19 + row * 3, 2, 3, 0xBAC0CC, 0);
+            make_rect(hoop, 26 - row, 19 + row * 3, 2, 3, 0xBAC0CC, 0);
+            make_rect(hoop, 6 + row, 20 + row * 3, 20 - row * 2, 1, 0x8890A4, 0);
+        }
+        ball = make_rect(court, 76, 61, 8, 8, 0xFF922F, 4);
+        make_rect(ball, 3, 0, 1, 8, 0x51321C, 0);
+        make_rect(ball, 0, 3, 8, 1, 0x51321C, 0);
+        shots_label = make_label(court, &aihook_font_12, 3, 67, 80, 13, LV_LABEL_LONG_MODE_CLIP);
+        hint = make_label(court, &aihook_font_12, 83, 67, 75, 13, LV_LABEL_LONG_MODE_CLIP);
+        lv_obj_t *title = make_label(results, &aihook_font_12, 3, 0, 154, 14, LV_LABEL_LONG_MODE_CLIP);
+        set_text(title, "时间到!");
+        lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+        result_made = make_label(results, &aihook_font_16, 3, 17, 154, 20, LV_LABEL_LONG_MODE_CLIP);
+        result_score = make_label(results, &aihook_font_16, 3, 36, 154, 20, LV_LABEL_LONG_MODE_CLIP);
+        lv_obj_set_style_text_color(result_score, color_hex(0xFDB927), LV_PART_MAIN);
+        result_accuracy = make_label(results, &aihook_font_12, 3, 55, 154, 13, LV_LABEL_LONG_MODE_CLIP);
+        lv_obj_t *again = make_label(results, &aihook_font_12, 2, 68, 156, 12, LV_LABEL_LONG_MODE_CLIP);
+        set_text(again, "单击返回 / 三击再玩");
+        lv_obj_set_style_text_align(result_made, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+        lv_obj_set_style_text_align(result_score, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+        lv_obj_set_style_text_align(result_accuracy, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+        lv_obj_set_style_text_align(again, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    }
+    char text[80];
+    bool ended = game->phase == BASKETBALL_RESULT;
+    set_hidden(court, ended);
+    set_hidden(results, !ended);
+    if (ended) {
+        snprintf(text, sizeof text, "投中 %lu 次", (unsigned long)game->made);
+        set_text(result_made, text);
+        snprintf(text, sizeof text, "得分 %lu", (unsigned long)game->score);
+        set_text(result_score, text);
+        unsigned accuracy = game->shots ? (unsigned)(game->made * 100 / game->shots) : 0;
+        snprintf(text, sizeof text, "命中率 %u%%  共 %lu 次", accuracy, (unsigned long)game->shots);
+        set_text(result_accuracy, text);
+    } else {
+        snprintf(text, sizeof text, "剩余 %02u:%02u", game->seconds_left / 60, game->seconds_left % 60);
+        set_text(clock_label, text);
+        snprintf(text, sizeof text, "得分 %lu", (unsigned long)game->score);
+        set_text(score_label, text);
+        snprintf(text, sizeof text, "进 %lu/%lu", (unsigned long)game->made, (unsigned long)game->shots);
+        set_text(shots_label, text);
+        set_text(hint, game->in_flight ? game->last_hit ? "命中! +2" : "没进" : "按键投篮");
+        lv_obj_set_style_text_color(hint, color_hex(game->in_flight
+            ? game->last_hit ? 0x47E6AE : 0xFF6B7A : 0xC178FF), LV_PART_MAIN);
+        lv_obj_set_pos(hoop, (int)lroundf(game->hoop_x) - 16, 18);
+        bool centered = fabsf(game->hoop_x - 80) <= BASKETBALL_HIT_PX;
+        lv_obj_set_style_bg_color(rim, color_hex(centered ? 0x47E6AE : 0xFF922F), LV_PART_MAIN);
+        lv_obj_set_pos(ball, (int)lroundf(game->ball_x) - 4, (int)lroundf(game->ball_y) - 4);
+    }
+    show_layer(s_game_layer);
+    dv_activity();
+#else
+    (void)game;
+#endif
 }

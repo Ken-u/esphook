@@ -1,6 +1,6 @@
 # 桌面跟随机器人首版调试
 
-本分支默认开启 `CONFIG_DESKTOP_FOLLOW_ROBOT`。硬件为 ESP32-C3 SuperMini（4MB）、原 ST7735 160×80 SPI 屏、LD2450 和 NHY009，无实体按键。电脑 USB 经同一个 Type-C 入口给整机供电。
+本分支默认开启 `CONFIG_DESKTOP_FOLLOW_ROBOT`。硬件为 ESP32-C3 SuperMini（4MB）、原 ST7735 160×80 SPI 屏、LD2450 和 NHY009，新增 GPIO6 游戏按键。电脑 USB 经同一个 Type-C 入口给整机供电。
 
 ## 默认接线
 
@@ -14,10 +14,11 @@
 | LD2450 5V / GND | 同一 USB 5V / GND |
 | LD2450 TX | GPIO20（主控 UART1 RX） |
 | LD2450 RX | GPIO21（主控 UART1 TX） |
+| 游戏按键两端 | GPIO6 / GND（内部上拉，按下接地） |
 
 所有模块共地，舵机不从 3V3 稳压输出取电。须核对 SuperMini 5V 排针和 Type-C VBUS 的实际连接。电脑 USB 口能否承受整机峰值电流尚待实测；本方案不引入额外电源。
 
-固件不初始化原 GPIO6/10/11 按键，也不启动蜂鸣器。LEDC timer 1 / channel 1 用于舵机。应用日志改走 USB，避免 UART0 日志混入 GPIO21；ROM 启动日志仍可能在 GPIO21 出现，因此该脚只接雷达 RX，不能改接舵机信号。
+机器人模式只扫描 GPIO6 单按键；GPIO10/11 的旧按键扫描不启动，也不启动蜂鸣器。LEDC timer 1 / channel 1 用于舵机。应用日志改走 USB，避免 UART0 日志混入 GPIO21；ROM 启动日志仍可能在 GPIO21 出现，因此该脚只接雷达 RX，不能改接舵机信号。
 
 ## 构建与刷写
 
@@ -94,10 +95,15 @@ robot follow
 
 USB 输入 `robot radar` 显示原始目标的扇形扫描页，`robot face` 返回自动表情。自定义显示使用版本化 JSON，USB 和 HTTP 共用；字段、位图样例和原始遥测见 [robot-display-protocol.md](robot-display-protocol.md)。切换显示不改变舵机状态。
 
+## GPIO6 投篮游戏
+
+800ms 内三击 GPIO6 按键进入两分钟投篮，篮筐从左到右移动，接近中间按下命中，每球后随机变速；命中每球 2 分，结束后显示成绩。详细交互和 USB 调试命令见 [robot-basketball.md](robot-basketball.md)。
+
 ## 验证与边界
 
 ```bash
 ./scripts/test-robot.sh
+./scripts/test-basketball.sh
 ./scripts/test-robot-ui.sh  # 主机需 libcjson-dev
 python3 host/test_hooks.py
 python3 host/test_device_link.py
