@@ -3,6 +3,7 @@
 #include <stdint.h>
 
 #define BASKETBALL_BUTTON_GPIO 6
+#define BASKETBALL_DEBOUNCE_MS 25U
 #define BASKETBALL_DURATION_MS 120000U
 #define BASKETBALL_TRIPLE_MS 800U
 #define BASKETBALL_SHOT_MS 650U
@@ -40,3 +41,6 @@ bool basketball_shoot(basketball_game_t *game, uint64_t now_ms);
 void basketball_snapshot(const basketball_game_t *game, uint64_t now_ms, basketball_view_t *view);
 /* True once per debounced press. A button held at boot must first be released. */
 bool basketball_button_sample(basketball_button_t *button, bool pressed, uint64_t now_ms);
+
+/* Called on an IRQ notification, even if coalesced edges return to the same level. */
+void basketball_button_edge(basketball_button_t *button, bool pressed, uint64_t now_ms);

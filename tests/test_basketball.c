@@ -30,6 +30,30 @@ static void debounce_tests(void)
     for (unsigned t = 1070; t < 121070; t += 5) repeats += basketball_button_sample(&b, true, t);
     assert(repeats == 0);
 }
+static void interrupt_debounce_tests(void)
+{
+    basketball_button_t b = {0};
+    assert(!basketball_button_sample(&b, false, 0));
+    basketball_button_edge(&b, true, 10);
+    assert(!basketball_button_sample(&b, true, 10));
+    /* A bounce away and back can be coalesced: same sampled level, new edge. */
+    basketball_button_edge(&b, true, 30);
+    assert(!basketball_button_sample(&b, true, 54));
+    assert(basketball_button_sample(&b, true, 55));
+    basketball_button_edge(&b, true, 60);
+    assert(!basketball_button_sample(&b, true, 85)); /* No held-key repeat. */
+    basketball_button_edge(&b, false, 100);
+    assert(!basketball_button_sample(&b, false, 125));
+    basketball_button_edge(&b, true, 130);
+    assert(basketball_button_sample(&b, true, 155));
+    b = (basketball_button_t){0};
+    basketball_button_edge(&b, true, 1000); /* IRQ-mode startup held low. */
+    assert(!basketball_button_sample(&b, true, 1025));
+    basketball_button_edge(&b, false, 1100);
+    assert(!basketball_button_sample(&b, false, 1125));
+    basketball_button_edge(&b, true, 1200);
+    assert(basketball_button_sample(&b, true, 1225));
+}
 static void entry_tests(void)
 {
     basketball_game_t g = {0};
@@ -158,6 +182,6 @@ static void full_game_tests(void)
 }
 int main(void)
 {
-    debounce_tests(); entry_tests(); shot_tests(); timing_tests(); full_game_tests();
+    debounce_tests(); interrupt_debounce_tests(); entry_tests(); shot_tests(); timing_tests(); full_game_tests();
     puts("basketball: debounce, triple-click, judgment, random pace, timer and scoring passed");
 }

@@ -106,9 +106,18 @@ bool basketball_button_sample(basketball_button_t *b, bool pressed, uint64_t now
         return false;
     }
     if (pressed != b->raw_pressed) { b->raw_pressed = pressed; b->changed_ms = now; }
-    if (pressed == b->stable_pressed || now < b->changed_ms || now - b->changed_ms < 25) return false;
+    if (pressed == b->stable_pressed || now < b->changed_ms || now - b->changed_ms < BASKETBALL_DEBOUNCE_MS) return false;
     b->stable_pressed = pressed;
     if (!pressed) b->may_press = true;
     else if (b->may_press) { b->may_press = false; return true; }
     return false;
+}
+
+void basketball_button_edge(basketball_button_t *b, bool pressed, uint64_t now)
+{
+    if (!b->initialized) { (void)basketball_button_sample(b, pressed, now); return; }
+    /* Several interrupt edges may collapse into one task notification. Restart
+     * the quiet window even when the final pin level equals the last sample. */
+    b->raw_pressed = pressed;
+    b->changed_ms = now;
 }
