@@ -105,8 +105,8 @@ USB 输入 `robot radar` 显示原始目标的扇形扫描页，`robot face` 返
 ./scripts/test-robot.sh
 ./scripts/test-basketball.sh
 ./scripts/test-robot-ui.sh  # 主机需 libcjson-dev
-python3 host/test_hooks.py
-python3 host/test_device_link.py
+python3 apps/hook/pc/test_hooks.py
+python3 apps/hook/pc/test_device_link.py
 ```
 
 纯 C 测试覆盖分包、粘包、坏帧重同步、嵌入帧尾、坐标符号、零速目标、槽位变化、目标丢失/断流恢复、范围过滤、脉宽限位和调度限速，并启用 AddressSanitizer/UBSan。CI 同时编译机器人与关闭机器人后的原 Hook 模式。某些受追踪容器无法运行 LeakSanitizer，可用 `ASAN_OPTIONS=detect_leaks=0 ./scripts/test-robot.sh` 保留地址/未定义行为检查。

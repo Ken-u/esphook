@@ -68,6 +68,6 @@ status
 
 ## 显示方向与省电
 
-当前 ST7735 初始化使用横屏、上下方向已校正的 `swap_xy + mirror_y` 配置。若你的屏幕排线或 ST7735 变体方向不同，优先调整 `main/st7735_params.h` 和 `main/display_view.c` 的面板参数，不要先改 UI 坐标。
+当前 ST7735 初始化使用横屏、上下方向已校正的 `swap_xy + mirror_y` 配置。若你的屏幕排线或 ST7735 变体方向不同，优先调整 `framework/ports/esp32/display_port.c` 的面板参数，不要先改应用 UI 坐标。
 
 无新提醒 10 分钟后，固件关闭 ST7735 输出和 `BLK` 背光；按任一按键或收到新事件会唤醒。屏幕和 ESP 共用 3.3 V/GND，USB 仍可用于日志、配网和重新烧录。

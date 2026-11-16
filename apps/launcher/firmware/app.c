@@ -32,7 +32,7 @@ static void render(app_context_t *ctx)
         else { lv_anim_t a; lv_anim_init(&a); lv_anim_set_var(&a,s->ring); lv_anim_set_values(&a,lv_obj_get_x(s->ring),target);
             lv_anim_set_exec_cb(&a,arc_x); lv_anim_set_duration(&a,160); lv_anim_set_path_cb(&a,lv_anim_path_ease_out); lv_anim_start(&a); }
         s->page_index=page; s->previous=selected;
-        char text[20]; snprintf(text,sizeof text,"%u/%u",(unsigned)(page+1),(unsigned)((app_count(ctx)+2)/3)); app_ui_text(s->page,text);
+        char text[32]; snprintf(text,sizeof text,"%u/%u",(unsigned)(page+1),(unsigned)((app_count(ctx)+2)/3)); app_ui_text(s->page,text);
     }
     app_ui_progress(s->ring,app_hold_ms(ctx));
 }

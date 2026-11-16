@@ -8,7 +8,7 @@
 - 起点：创建分支时的默认分支 `agent/install-agent-hooks`。
 - 可复用：ESP-IDF 工程、ST7735 初始化与显示任务、USB Serial/JTAG CDC、配置存储、Wi-Fi、OTA。
 - 此分支默认启用机器人模式；在 menuconfig 中关闭 `DESKTOP_FOLLOW_ROBOT` 可构建原 Hook 模式。
-- 机器人模式本地运行，不依赖 Wi-Fi 或主机 daemon；保留 USB 配网与 HTTP OTA，暂不启动 device link。
+- 表情、投篮、雷达与跟随本地运行；USB 配网、HTTP OTA 和可选 device link 保留。Hook 可接主机 daemon，做 T 使用 PC 配套。
 
 ## 用户已确定的硬件与约束
 
@@ -35,7 +35,7 @@
 | 雷达串口 | 尚未分配 | GPIO20 接雷达 TX、GPIO21 接雷达 RX 仅作候选，需核对实物引出与日志配置 |
 | 舵机信号 | GPIO10 | 由 PWM 驱动接管，原 K2 扫描已关闭；GPIO6 保留为游戏按键 |
 
-依据：`docs/hardware.md`、`main/display_view.c`、`main/input_task.c`、`main/beeper.c`、`main/main.c`。默认接线及软件保护见 robot-bringup.md；实物引出仍以板上丝印为准。
+依据：`docs/hardware.md`、`framework/ports/esp32/display_port.c`、`main/input_task.c`、`main/beeper.c`、`main/main.c`。默认接线及软件保护见 robot-bringup.md；实物引出仍以板上丝印为准。
 
 ## 本轮提供的造型参考
 

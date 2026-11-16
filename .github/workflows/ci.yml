@@ -26,6 +26,7 @@ jobs:
           python3 scripts/check-apps.py
           python3 tests/test_scaffold.py
           python3 tests/test_app_sdk.py
+          cmake -P tests/test_cmake_scan.cmake
       - name: Test PC stock replay, data preparation and USB transport
         run: python3 apps/stock/pc/test_stock_t.py
       - name: Run hook tests

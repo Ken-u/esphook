@@ -1,4 +1,8 @@
-include("${PROJECT_DIR}/cmake/apps.cmake")
+# IDF first includes this file from a script-mode dependency scan. Catalog
+# generation and CONFIGURE_DEPENDS belong to the normal configure phase only.
+if(NOT CMAKE_SCRIPT_MODE_FILE)
+    include("${PROJECT_DIR}/cmake/apps.cmake")
+endif()
 set(framework "${PROJECT_DIR}/framework")
 idf_component_register(
     SRCS "main.c" "usb_cdc.c" "config_store.c"

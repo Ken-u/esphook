@@ -2,6 +2,7 @@
 file(GLOB app_manifests CONFIGURE_DEPENDS "${PROJECT_DIR}/apps/*/manifest.json")
 set(app_ordered "")
 foreach(manifest IN LISTS app_manifests)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${manifest}")
     file(READ "${manifest}" app_json)
     string(JSON order GET "${app_json}" order)
     list(APPEND app_ordered "${order}:${manifest}")

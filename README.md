@@ -174,8 +174,8 @@ idf.py build
 
 ```bash
 python3 -m py_compile host/esphookd.py host/install_hooks.py host/hooks/esphook_notify_hook.py
-python3 host/test_hooks.py
-python3 host/test_device_link.py
+python3 apps/hook/pc/test_hooks.py
+python3 apps/hook/pc/test_device_link.py
 ```
 
 屏幕效果预览在 [screen-layout-preview.html](screen-layout-preview.html) 和 [screen-focus-preview.html](screen-focus-preview.html)。
