@@ -5,6 +5,22 @@ from collections import deque
 from .keys import VirtualKeys
 
 
+def open_serial(port, **settings):
+    """Open the ESP32-C3 USB Serial/JTAG port without resetting the chip.
+
+    The USB bridge treats DTR low while RTS is high as the reset sequence. Operating systems assert
+    both lines when a port opens and pyserial applies DTR before RTS, so clearing DTR first (as
+    `dtr = rts = False` does) passes through exactly that state and reboots the device on every
+    connect: acks then depend on boot progress and RAM-only state such as the active app is lost.
+    Leave DTR asserted and clear RTS only."""
+    import serial
+    link = serial.Serial(port=None, baudrate=115200, **settings)
+    link.rts = False
+    link.port = port
+    link.open()
+    return link
+
+
 class UsbLink(VirtualKeys):
     prefix = "app"
     ack_type = "app_ack"
@@ -20,10 +36,7 @@ class UsbLink(VirtualKeys):
             if len(ports) != 1:
                 raise RuntimeError("请用 --port 指定 ESP32 USB 串口；候选：" + ", ".join(ports))
             port = ports[0]
-        self.serial = serial.Serial(port=None, baudrate=115200, timeout=0.02, write_timeout=2)
-        self.serial.dtr = self.serial.rts = False
-        self.serial.port = port
-        self.serial.open()
+        self.serial = open_serial(port, timeout=0.02, write_timeout=2)
         self.sequence = 0
         self.events = deque(maxlen=256)
         self.pending = bytearray()

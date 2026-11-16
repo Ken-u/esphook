@@ -73,7 +73,8 @@ SDK 过滤普通日志、合并分包，只接受匹配 seq 的 ACK，并在等�
 
 - `scripts/check-apps.py` 按全部 manifest 的标题和标志估算 `list` ACK 的最坏长度，超过 `CDC_TX_BUFFER_BYTES` 即失败；新增应用前先看这条预算。
 - 主机长时间不读串口时设备丢弃整行，不再留下孤立换行；被截断的行以换行收尾，不会与下一帧粘连。`usb_tx_drops` 是开机以来丢弃的行数，请求超时后立即查 `hardware`，若数字增长即确认设备侧 TX 停滞。
-- 打开串口后可能先读到设备残留的旧行（如启动提示）；SDK 忽略非 JSON 行和 seq 不匹配的 ACK。
+- 打开串口**不会**复位设备：USB Serial/JTAG 把「DTR 低 + RTS 高」当作复位序列，而系统打开串口时两条线都置位、pyserial 又先应用 DTR，所以旧的 `dtr = rts = False` 会让芯片在每次连接时重启（ROM 打印 `rst:0x15 USB_UART_CHIP_RESET`）。这曾让 ACK 内容随启动进度变化（`hardware` 刚启动 229 B、启动完成后 259 B，恰好跨过 256 B 的旧 TX 环），RAM 里的当前应用也被清掉。SDK 现在用 `esphook_sdk.link.open_serial()`：保持 DTR、只清 RTS。自写工具请复用它，不要自己 `dtr = rts = False`。
+- 复位后的启动日志、设备残留的旧行都可能在打开串口后先读到；SDK 忽略非 JSON 行和 seq 不匹配的 ACK。
 
 ## USB 输入 SDK
 

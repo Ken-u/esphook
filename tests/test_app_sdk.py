@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import types
 from collections import deque
 from pathlib import Path
 import sys
@@ -28,6 +29,26 @@ class FakeSerial:
         self.rx.extend(json.dumps(dict(v=1,type="app_ack" if prefix==b"app" else "game_ack",seq=self.sent["seq"],ok=True,queued=True,mapping=self.mapping,hardware=self.hardware)).encode()+b'\n')
     def read(self, n):
         raw = bytes(self.rx[:9]); del self.rx[:9]; return raw
+
+class LineStateSerial:
+    """pyserial's open order on a real OS: both lines asserted, then DTR applied before RTS."""
+    def __init__(self, port=None, **settings):
+        self.states, self._dtr, self._rts, self.opened = [], True, True, False
+        self.port = port
+    def _set(self, name, value):
+        setattr(self, name, value)
+        if self.opened:
+            self.states.append((self._dtr, self._rts))
+    dtr = property(lambda s: s._dtr, lambda s, v: s._set("_dtr", v))
+    rts = property(lambda s: s._rts, lambda s, v: s._set("_rts", v))
+    def open(self):
+        self.opened = True
+        self.states.append((True, True))
+        self.states.append((self._dtr, True))
+        self.states.append((self._dtr, self._rts))
+    def close(self):
+        pass
+
 
 class ListAckSerial:
     """Answers `list` with the real catalog's worst-case ack, split into tiny reads between log noise."""
@@ -120,6 +141,28 @@ class SdkTests(unittest.TestCase):
         apps = link.catalog()
         self.assertEqual([a["id"] for a in apps], ["basketball", "demo", "face", "hook", "key_report", "radar", "settings", "stock"])
         self.assertEqual(apps[0]["title"], "投篮")
+
+    def test_opening_the_port_never_resets_the_chip(self):
+        # USB Serial/JTAG resets the chip on DTR low + RTS high. Clearing DTR first (the old
+        # `dtr = rts = False`) passes through that state, rebooting the device on every connect.
+        RESET = (False, True)
+        legacy = LineStateSerial()
+        legacy.dtr = legacy.rts = False
+        legacy.open()
+        self.assertIn(RESET, legacy.states)  # the model does detect the old behaviour
+        opened = []
+        def factory(port=None, **settings):
+            opened.append(LineStateSerial(port, **settings))
+            return opened[-1]
+        fake = types.SimpleNamespace(Serial=factory)
+        from esphook_sdk import link as link_module
+        with patch.dict(sys.modules, {"serial": fake}):
+            sdk = AppLink("/dev/cu.test")
+            self.assertEqual(opened[-1].port, "/dev/cu.test")
+            self.assertNotIn(RESET, opened[-1].states)
+            self.assertEqual(opened[-1].states[-1], (True, False))
+            link_module.open_serial("/dev/cu.test", timeout=0.1)
+            self.assertNotIn(RESET, opened[-1].states)
 
     def test_list_ack_budget_guard(self):
         catalog = [dict(id=f"app_{i:02d}_" + "x" * 10, title="四个汉字", hidden=False, standby=True) for i in range(40)]

@@ -4,13 +4,14 @@ import sys
 import time
 import queue
 import threading
+from pathlib import Path
 from tools.flash import detect_port
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"framework/pc"))
+from esphook_sdk.link import open_serial
 
 def main(argv=None):
     p=argparse.ArgumentParser(description=__doc__);p.add_argument("--port");p.add_argument("--read-only",action="store_true");a=p.parse_args(argv)
-    import serial
-    port=serial.Serial(port=None,baudrate=115200,timeout=0.1)
-    port.dtr=port.rts=False;port.port=a.port or detect_port();port.open()
+    port=open_serial(a.port or detect_port(),timeout=0.1)  # opening must not reset the chip
     lines=queue.Queue(maxsize=16)
     def stdin_reader():
         for line in sys.stdin:lines.put(line)
