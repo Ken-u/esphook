@@ -77,7 +77,8 @@ class StockT:
             return  # Release after startup/reconnect is not a click.
         elapsed = max(0.0, now - self.down_at) if duration is None else max(0.0, duration)
         if not self.consumed and elapsed >= HOLD_SECONDS:
-            self._hold(now)
+            if not self.device_confirm:
+                self._hold(now)
         elif not self.consumed and elapsed < TAP_SECONDS:
             if self.phase == "play":
                 self._sell()

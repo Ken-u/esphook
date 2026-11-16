@@ -25,6 +25,15 @@ class CoreTests(unittest.TestCase):
         g.button(True,1.2,g.cursor);g.confirm(1.7)
         self.assertEqual(g.trades,1)
 
+    def test_release_cannot_replace_device_confirmation(self):
+        g=StockT(day(),device_confirm=True)
+        g.button(True,0.1)
+        g.button(False,0.8,duration=0.7)
+        self.assertEqual(g.trades,0)
+        self.assertIsNone(g.down_at)
+        g.update(1.8)
+        self.assertGreater(g.cursor,g.day.first)
+
     def test_hold_pause_buy_and_resume(self):
         g = StockT(day())
         g.button(True, 0.5, 0)
