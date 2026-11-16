@@ -16,6 +16,16 @@
 
 压缩包不包含整个 Python 解释器和 ESP-IDF。使用 Python **3.10+**；首次实际使用 USB 时会联网安装固定的 esptool 5.1.0 / pyserial 3.5 到包内隔离环境。macOS/Linux 可执行 run.sh，Windows 可执行 run.cmd；已有 uv 时也可由启动脚本准备 Python。`--help`、`doctor`、数据/固件 `--dry-run` 不需要 USB，直接用 Python 不会为这些检查安装依赖。
 
+**推荐先用 uv 创建虚拟环境并安装依赖**，macOS/Linux、Windows 和最小烧录包的完整步骤见 [USB 工具环境](usb-environment.md)（总包根目录的对应文件为 `docs/usb-environment.md`）：
+
+```bash
+uv venv --python 3.11 --seed .esphook-venv
+uv pip install --python .esphook-venv/bin/python -r tools/requirements-flash.txt
+.esphook-venv/bin/python run.py flash --dry-run
+```
+
+按此方式准备后，下文 `python` / `python3` 命令请使用环境内的解释器：macOS/Linux 为 `.esphook-venv/bin/python`，Windows 为 `.\.esphook-venv\Scripts\python.exe`。刷现成固件和运行 PC 配套无需安装 ESP-IDF。
+
 ## 首次 USB 烧录
 
 解压总包，进入 esphook-kit 目录：

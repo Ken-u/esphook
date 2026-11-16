@@ -21,7 +21,8 @@ def copy_source(destination):
         source=ROOT/name;target=destination/name
         if source.is_dir():shutil.copytree(source,target,ignore=shutil.ignore_patterns("__pycache__","*.pyc",".esphook-venv"))
         else:target.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(source,target)
-    shutil.copy2(ROOT/"docs/release-kit.md",destination/"START_HERE.md")
+    start_here=(ROOT/"docs/release-kit.md").read_text().replace("(usb-environment.md)","(docs/usb-environment.md)")
+    (destination/"START_HERE.md").write_text(start_here)
 
 def zip_tree(source,target):
     with zipfile.ZipFile(target,"w",zipfile.ZIP_DEFLATED,compresslevel=9) as archive:
@@ -75,7 +76,9 @@ def package(inputs,dist):
         (flash/"flash.sh").write_text('#!/usr/bin/env bash\nset -euo pipefail\ncd "$(dirname "$0")"\nexec python3 flash.py "$@"\n')
         (flash/"flash.sh").chmod(0o755)
         (flash/"flash.cmd").write_text('@echo off\ncd /d "%~dp0"\npy -3 flash.py %*\n')
+        shutil.copy2(ROOT/"docs/usb-environment.md",flash/"ENVIRONMENT.md")
         (flash/"START_HERE.md").write_text("# USB flashing\n\nPython 3.10+ is required. Run `python flash.py --dry-run` to verify images, then `python flash.py --port COM4` (Windows) or `/dev/cu.usbmodem...` (macOS).\n"
+            "Recommended: follow [ENVIRONMENT.md](ENVIRONMENT.md) to create a uv virtual environment and install the pinned dependencies first.\n"
             "First actual use prepares a small isolated esptool/pyserial environment using pip and Internet. ESP-IDF is not needed.\n"
             "Do not run a serial monitor or PC game on the same port during flashing. Full kit and SDK are separate release assets.\n")
         kit=work/"esphook-kit";shutil.copytree(sdk,kit);shutil.copytree(flash,kit/"firmware")
@@ -92,6 +95,7 @@ def package(inputs,dist):
         "- **esphook-sdk.zip**: minimal development source, app scaffolding, shared interfaces, tests and skills; no bundled ESP-IDF toolchain.\n"
         "- **esphook-host.tar.gz**: compatible PC/install archive. **esphook-firmware.bin**: app-only OTA image.\n"
         "- Python 3.10+; first real USB use installs pinned esptool/pyserial into an isolated environment and needs Internet. Building apps needs ESP-IDF 5.5.4 or its container.\n"
+        "- Recommended setup: use uv to create .esphook-venv and install tools/requirements-flash.txt; see docs/usb-environment.md in the kit/SDK or ENVIRONMENT.md in full-flash. No ESP-IDF is needed for flashing or PC tools.\n"
         "- SDK USB virtual keys share the same gestures and support persistent physical/USB/reply-word mappings. Default auto profile preserves legacy keys and never initializes servo PWM; select robot and reboot explicitly.\n"
         "- Settings report detected radar, unknown screen/servo connections and saved hardware profiles; optional peripherals can be absent.\n"
         "- CI verifies both board builds, app lifecycle/rendering, input and packaging; actual screen frame rate and hardware behavior still need device testing.\n")

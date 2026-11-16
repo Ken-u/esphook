@@ -4,6 +4,7 @@ ESP32-C3 小屏应用与小游戏框架，所有内置应用共用生命周期�
 
 - [应用框架与开发指南](docs/app-framework.md)：`python3 scripts/new-app.py counter --title '计数' --pc` 一步生成应用。
 - [PC SDK 与协议](docs/app-pc-protocol.md)：每个应用的配套位于 `apps/<id>/pc`，共用 USB SDK 位于 `framework/pc`。
+- [安装运行环境（推荐 uv）](docs/usb-environment.md)：独立虚拟环境、固定 USB 依赖及 macOS/Linux/Windows 命令；刷现成固件无需 ESP-IDF。
 - 项目内置 `$esphook-app`、`$esphook-pc`、`$esphook-check`，见 [AGENTS.md](AGENTS.md)。支持项目 skills 的工具可直接使用；其他工具读取对应 SKILL.md 即可。
 - 设置应用可查看固件版本、应用数量、Hook 信息，并选择待机应用（默认表情，保存后重启保留）。
 
