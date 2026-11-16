@@ -1,5 +1,7 @@
 # esphook 硬件与接线
 
+本页保留原屏幕/Hook 板接线。机器人扩展见 [机器人调试](robot-bringup.md)，通用固件下载与硬件配置见 [发布指南](release-kit.md)。默认 auto/screen 保留三按键且不初始化舵机 PWM；robot 配置重启后仅保留 GPIO6，将 GPIO10 交给舵机。通用构建不启用旧蜂鸣器，精简 legacy 构建保留。
+
 ## 硬件组成
 
 - 控制器：ESP32-C3 SuperMini，4 MB Flash，使用板载 USB Serial/JTAG CDC。
@@ -70,4 +72,4 @@ status
 
 当前 ST7735 初始化使用横屏、上下方向已校正的 `swap_xy + mirror_y` 配置。若你的屏幕排线或 ST7735 变体方向不同，优先调整 `framework/ports/esp32/display_port.c` 的面板参数，不要先改应用 UI 坐标。
 
-无新提醒 10 分钟后，固件关闭 ST7735 输出和 `BLK` 背光；按任一按键或收到新事件会唤醒。屏幕和 ESP 共用 3.3 V/GND，USB 仍可用于日志、配网和重新烧录。
+应用框架当前保持待机动画和屏幕活动；菜单 10s 无操作返回所选待机应用。屏幕和 ESP 共用 3.3 V/GND，USB 仍可用于日志、配网和重新烧录。
