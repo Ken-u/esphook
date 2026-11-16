@@ -4,6 +4,12 @@ export UBSAN_OPTIONS="${UBSAN_OPTIONS:-halt_on_error=1}"
 cd "$(dirname "$0")/.."
 app_test_bin="$(mktemp "${TMPDIR:-/tmp}/esphook-app-test.XXXXXX")"
 trap 'rm -f "$app_test_bin"' EXIT
+# Public application/service contracts compile without ESP-IDF or RTOS headers.
+"${CC:-cc}" -std=c11 -Wall -Wextra -Werror -pedantic -fsyntax-only -x c \
+  -I framework/include -I framework/include/esphook - <<'EOF'
+#include "esphook/app.h"
+#include "esphook/app_services.h"
+EOF
 "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -pedantic -g \
   -fsanitize=address,undefined -fno-omit-frame-pointer \
   -I main -I framework/include/esphook -I apps/basketball/firmware -I apps/stock/firmware tests/test_app_input.c framework/core/app_input.c -o "$app_test_bin"

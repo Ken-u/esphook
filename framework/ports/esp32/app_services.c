@@ -1,4 +1,6 @@
 #include "app_services.h"
+#include "robot_runtime.h"
+#include "robot_ui.h"
 #include "app_runtime.h"
 #include "config_store.h"
 #include "device_link.h"

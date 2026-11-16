@@ -1,7 +1,7 @@
 #pragma once
 #include "app.h"
-#include "robot_runtime.h"
-#include "robot_ui.h"
+#include "robot_follow.h"
+#include "robot_ui_protocol.h"
 
 typedef struct {
     bool available, online;

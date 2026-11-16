@@ -29,7 +29,7 @@ def check(root):
                 raise ValueError("descriptor symbol missing")
             if not re.search(r'\.id\s*=\s*"' + app_id + '"', combined):
                 raise ValueError("descriptor id mismatch")
-            if re.search(r'#\s*include\s*[<"](?:driver/|esp_lcd|esp_http_client|usb_cdc\.h|robot_runtime\.h)', combined):
+            if re.search(r'#\s*include\s*[<"](?:driver/|esp_lcd|esp_http_client|usb_cdc\.h|(?:esphook/)?(?:robot_runtime|motion_ports)\.h)', combined):
                 raise ValueError("apps must use framework device/transport APIs")
         except (KeyError, ValueError, TypeError, OSError) as exc:
             errors.append(f"{manifest.relative_to(root)}: {exc}")
