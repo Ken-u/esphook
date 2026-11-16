@@ -7,6 +7,8 @@
 #include "robot_runtime.h"
 #include "robot_ui_protocol.h"
 #include "basketball_game.h"
+#include "remote_game.h"
+#include "app_input.h"
 
 #define DV_WIDTH  160
 #define DV_HEIGHT 80
@@ -38,3 +40,7 @@ void dv_render_idle(void);
 void dv_render_robot(const robot_status_t *status, const robot_ui_t *view);
 
 void dv_render_basketball(const basketball_view_t *game);
+
+void dv_render_stock(const remote_game_view_t *view);
+
+void dv_render_launcher(const app_view_t *view);

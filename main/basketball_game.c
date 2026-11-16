@@ -24,7 +24,6 @@ void basketball_start(basketball_game_t *g, uint64_t now, uint32_t seed)
 void basketball_stop(basketball_game_t *g)
 {
     g->phase = BASKETBALL_OFF;
-    g->clicks = 0;
     g->in_flight = false;
 }
 void basketball_tick(basketball_game_t *g, uint64_t now)
@@ -33,7 +32,6 @@ void basketball_tick(basketball_game_t *g, uint64_t now)
     if (now >= g->started_ms && now - g->started_ms >= BASKETBALL_DURATION_MS) {
         g->phase = BASKETBALL_RESULT;
         g->in_flight = false;
-        g->clicks = 0;
     } else if (g->in_flight && now >= g->round_ms) {
         g->in_flight = false;
     }
@@ -58,25 +56,6 @@ bool basketball_shoot(basketball_game_t *g, uint64_t now)
     g->speed_pps = next_speed(g, g->speed_pps);
     return true;
 }
-void basketball_press(basketball_game_t *g, uint64_t now, uint32_t seed)
-{
-    if (g->phase != BASKETBALL_OFF && now < g->started_ms) return;
-    basketball_tick(g, now);
-    if (g->phase == BASKETBALL_PLAY) {
-        g->clicks = 0;
-        (void)basketball_shoot(g, now);
-        return;
-    }
-    /* Let the final result stay visible despite last-second button presses. */
-    if (g->phase == BASKETBALL_RESULT) {
-        if (now - g->started_ms < BASKETBALL_DURATION_MS + 750) return;
-        g->phase = BASKETBALL_OFF;
-    }
-    if (!g->clicks || now < g->click_first_ms || now - g->click_first_ms > BASKETBALL_TRIPLE_MS) {
-        g->clicks = 1;
-        g->click_first_ms = now;
-    } else if (++g->clicks == 3) basketball_start(g, now, seed);
-}
 void basketball_snapshot(const basketball_game_t *g, uint64_t now, basketball_view_t *out)
 {
     *out = (basketball_view_t){.phase = g->phase, .shots = g->shots, .made = g->made,
@@ -97,27 +76,4 @@ void basketball_snapshot(const basketball_game_t *g, uint64_t now, basketball_vi
             if (!g->last_hit) out->ball_x += (g->shot_x < 80 ? 15 : -15) * p;
         }
     }
-}
-bool basketball_button_sample(basketball_button_t *b, bool pressed, uint64_t now)
-{
-    if (!b->initialized) {
-        *b = (basketball_button_t){.initialized = true, .raw_pressed = pressed,
-            .stable_pressed = pressed, .may_press = !pressed, .changed_ms = now};
-        return false;
-    }
-    if (pressed != b->raw_pressed) { b->raw_pressed = pressed; b->changed_ms = now; }
-    if (pressed == b->stable_pressed || now < b->changed_ms || now - b->changed_ms < BASKETBALL_DEBOUNCE_MS) return false;
-    b->stable_pressed = pressed;
-    if (!pressed) b->may_press = true;
-    else if (b->may_press) { b->may_press = false; return true; }
-    return false;
-}
-
-void basketball_button_edge(basketball_button_t *b, bool pressed, uint64_t now)
-{
-    if (!b->initialized) { (void)basketball_button_sample(b, pressed, now); return; }
-    /* Several interrupt edges may collapse into one task notification. Restart
-     * the quiet window even when the final pin level equals the last sample. */
-    b->raw_pressed = pressed;
-    b->changed_ms = now;
 }

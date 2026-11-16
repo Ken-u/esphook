@@ -22,3 +22,6 @@ robot_ui_t robot_ui_default(void);
 /* Parses a complete replacement frame; failure never changes *out. */
 bool robot_ui_parse(const char *json, size_t len, robot_ui_t *out, char *error, size_t error_len);
 const char *robot_ui_mode_name(robot_ui_mode_t mode);
+
+/* Shared UTF-8 validation for other versioned protocols. */
+bool robot_ui_valid_utf8(const char *text);

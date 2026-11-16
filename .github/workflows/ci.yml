@@ -20,7 +20,9 @@ jobs:
         with:
           python-version: "3.x"
       - name: Compile Python sources
-        run: python3 -m py_compile host/esphookd.py host/install_hooks.py host/hooks/esphook_notify_hook.py
+        run: python3 -m compileall -q host
+      - name: Test PC stock replay, data preparation and USB transport
+        run: python3 host/test_stock_t.py
       - name: Run hook tests
         run: python3 host/test_hooks.py
       - name: Run device-link tests
@@ -33,12 +35,16 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libcjson-dev
       - name: Test display protocol and radar view
         run: ./scripts/test-robot-ui.sh
+      - name: Test launcher, global input, game protocol and navigation
+        run: ./scripts/test-app-games.sh
       - name: Check hook installer
         run: ./scripts/install-hooks.sh --tools all --dry-run --home "$RUNNER_TEMP/esphook-hook-dry-run"
       - name: Check one-click installer and release packager
         run: |
           bash -n install.sh
           bash -n scripts/package-release.sh
+          bash -n scripts/stock-t.sh
+          ./scripts/stock-t.sh --demo --dry-run
           ./install.sh --help
       - name: Check patch whitespace
         run: git diff --check

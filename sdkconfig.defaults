@@ -64,7 +64,7 @@ CONFIG_LV_USE_CLIB_SPRINTF=y
 
 # LVGL 只保留基础对象和 label，关闭未使用控件、示例和 demo，控制固件体积
 # CONFIG_LV_USE_ANIMIMG is not set
-# CONFIG_LV_USE_ARC is not set
+CONFIG_LV_USE_ARC=y
 # CONFIG_LV_USE_ARCLABEL is not set
 # CONFIG_LV_USE_BAR is not set
 # CONFIG_LV_USE_BUTTON is not set

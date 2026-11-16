@@ -90,6 +90,9 @@ tar --exclude='__pycache__' --exclude='*.pyc' -czf "$DIST_DIR/esphook-host.tar.g
   docs/hardware.md \
   docs/ota.md \
   docs/quick-install.md \
+  docs/robot-launcher.md \
+  docs/robot-stock-t.md \
+  docs/robot-basketball.md \
   README.md \
   install.sh
 

@@ -112,4 +112,4 @@ HTTP 原始诊断结构：
 
 ## 与 GPIO6 投篮模式共用屏幕
 
-三击 GPIO6 会临时覆盖为投篮游戏；显示协议仍更新底层配置，游戏退出后再显示。游戏玩法、计分与调试命令见 [robot-basketball.md](robot-basketball.md)。
+待机短按 GPIO6 开启动器，短按切换、按住 500ms 进入投篮 / 做 T / 雷达；任何页面三击回菜单。显示协议仍更新后台配置，菜单 10s 无操作恢复默认自动表情。见 [全局启动器](robot-launcher.md)、[投篮](robot-basketball.md)、[做 T](robot-stock-t.md)。

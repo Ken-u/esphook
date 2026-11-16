@@ -1,3 +1,4 @@
+#include "app_input.h"
 #include "basketball_game.h"
 #include <assert.h>
 #include <math.h>
@@ -5,75 +6,54 @@
 
 static void debounce_tests(void)
 {
-    basketball_button_t b = {0};
-    assert(!basketball_button_sample(&b, false, 0));
-    assert(!basketball_button_sample(&b, true, 10));
-    assert(!basketball_button_sample(&b, false, 15));
-    assert(!basketball_button_sample(&b, true, 18));
-    assert(!basketball_button_sample(&b, true, 42));
-    assert(basketball_button_sample(&b, true, 43));
-    assert(!basketball_button_sample(&b, true, 500));
-    assert(!basketball_button_sample(&b, false, 510));
-    assert(!basketball_button_sample(&b, true, 515));
-    assert(!basketball_button_sample(&b, false, 520));
-    assert(!basketball_button_sample(&b, false, 545));
-    assert(!basketball_button_sample(&b, true, 550));
-    assert(basketball_button_sample(&b, true, 575));
-    b = (basketball_button_t){0};
-    assert(!basketball_button_sample(&b, true, 0)); /* Held at boot. */
-    assert(!basketball_button_sample(&b, true, 1000));
-    assert(!basketball_button_sample(&b, false, 1010));
-    assert(!basketball_button_sample(&b, false, 1035));
-    assert(!basketball_button_sample(&b, true, 1040));
-    assert(basketball_button_sample(&b, true, 1065));
+    app_button_t b = {0};
+    assert(!app_button_sample(&b, false, 0));
+    assert(!app_button_sample(&b, true, 10));
+    assert(!app_button_sample(&b, false, 15));
+    assert(!app_button_sample(&b, true, 18));
+    assert(!app_button_sample(&b, true, 42));
+    assert(app_button_sample(&b, true, 43));
+    assert(!app_button_sample(&b, true, 500));
+    assert(!app_button_sample(&b, false, 510));
+    assert(!app_button_sample(&b, true, 515));
+    assert(!app_button_sample(&b, false, 520));
+    assert(!app_button_sample(&b, false, 545));
+    assert(!app_button_sample(&b, true, 550));
+    assert(app_button_sample(&b, true, 575));
+    b = (app_button_t){0};
+    assert(!app_button_sample(&b, true, 0)); /* Held at boot. */
+    assert(!app_button_sample(&b, true, 1000));
+    assert(!app_button_sample(&b, false, 1010));
+    assert(!app_button_sample(&b, false, 1035));
+    assert(!app_button_sample(&b, true, 1040));
+    assert(app_button_sample(&b, true, 1065));
     unsigned repeats = 0;
-    for (unsigned t = 1070; t < 121070; t += 5) repeats += basketball_button_sample(&b, true, t);
+    for (unsigned t = 1070; t < 121070; t += 5) repeats += app_button_sample(&b, true, t);
     assert(repeats == 0);
 }
 static void interrupt_debounce_tests(void)
 {
-    basketball_button_t b = {0};
-    assert(!basketball_button_sample(&b, false, 0));
-    basketball_button_edge(&b, true, 10);
-    assert(!basketball_button_sample(&b, true, 10));
+    app_button_t b = {0};
+    assert(!app_button_sample(&b, false, 0));
+    app_button_edge(&b, true, 10);
+    assert(!app_button_sample(&b, true, 10));
     /* A bounce away and back can be coalesced: same sampled level, new edge. */
-    basketball_button_edge(&b, true, 30);
-    assert(!basketball_button_sample(&b, true, 54));
-    assert(basketball_button_sample(&b, true, 55));
-    basketball_button_edge(&b, true, 60);
-    assert(!basketball_button_sample(&b, true, 85)); /* No held-key repeat. */
-    basketball_button_edge(&b, false, 100);
-    assert(!basketball_button_sample(&b, false, 125));
-    basketball_button_edge(&b, true, 130);
-    assert(basketball_button_sample(&b, true, 155));
-    b = (basketball_button_t){0};
-    basketball_button_edge(&b, true, 1000); /* IRQ-mode startup held low. */
-    assert(!basketball_button_sample(&b, true, 1025));
-    basketball_button_edge(&b, false, 1100);
-    assert(!basketball_button_sample(&b, false, 1125));
-    basketball_button_edge(&b, true, 1200);
-    assert(basketball_button_sample(&b, true, 1225));
-}
-static void entry_tests(void)
-{
-    basketball_game_t g = {0};
-    basketball_press(&g, 100, 1);
-    basketball_press(&g, 450, 2);
-    assert(g.phase == BASKETBALL_OFF);
-    basketball_press(&g, 900, 3); /* Exactly 800ms total: third click is consumed. */
-    assert(g.phase == BASKETBALL_PLAY && g.started_ms == 900 && g.shots == 0);
-    basketball_press(&g, 1000, 4);
-    basketball_press(&g, 1100, 5);
-    basketball_press(&g, 1200, 6);
-    assert(g.started_ms == 900 && g.shots == 1); /* Rapid clicks shoot, never restart. */
-    basketball_stop(&g);
-    basketball_press(&g, 2000, 1);
-    basketball_press(&g, 2500, 1);
-    basketball_press(&g, 2900, 1); /* Too slow: this becomes click one. */
-    assert(g.phase == BASKETBALL_OFF && g.clicks == 1);
-    basketball_press(&g, 3050, 1);
-    basketball_press(&g, 3200, 1);
-    assert(g.phase == BASKETBALL_PLAY && g.started_ms == 3200 && g.shots == 0);
+    app_button_edge(&b, true, 30);
+    assert(!app_button_sample(&b, true, 54));
+    assert(app_button_sample(&b, true, 55));
+    app_button_edge(&b, true, 60);
+    assert(!app_button_sample(&b, true, 85)); /* No held-key repeat. */
+    app_button_edge(&b, false, 100);
+    assert(!app_button_sample(&b, false, 125));
+    app_button_edge(&b, true, 130);
+    assert(app_button_sample(&b, true, 155));
+    b = (app_button_t){0};
+    app_button_edge(&b, true, 1000); /* IRQ-mode startup held low. */
+    assert(!app_button_sample(&b, true, 1025));
+    app_button_edge(&b, false, 1100);
+    assert(!app_button_sample(&b, false, 1125));
+    app_button_edge(&b, true, 1200);
+    assert(app_button_sample(&b, true, 1225));
 }
 static void shot_tests(void)
 {
@@ -132,15 +112,9 @@ static void timing_tests(void)
     basketball_snapshot(&g, start + 120000, &view);
     assert(view.phase == BASKETBALL_RESULT && view.seconds_left == 0 && view.shots == 1);
     assert(!basketball_shoot(&g, start + 120000));
-    basketball_press(&g, start + 120749, 3);
     assert(g.phase == BASKETBALL_RESULT && g.shots == 1);
-    basketball_press(&g, start + 120750, 3);
-    assert(g.phase == BASKETBALL_OFF);
-    basketball_press(&g, start + 120900, 3);
-    basketball_press(&g, start + 121050, 3);
-    assert(g.phase == BASKETBALL_PLAY && g.shots == 0 && g.made == 0);
     basketball_stop(&g);
-    assert(g.phase == BASKETBALL_OFF && g.clicks == 0);
+    assert(g.phase == BASKETBALL_OFF);
     basketball_start(&g, 0, 0);
     basketball_tick(&g, BASKETBALL_DURATION_MS);
     basketball_snapshot(&g, BASKETBALL_DURATION_MS, &view);
@@ -182,6 +156,6 @@ static void full_game_tests(void)
 }
 int main(void)
 {
-    debounce_tests(); interrupt_debounce_tests(); entry_tests(); shot_tests(); timing_tests(); full_game_tests();
-    puts("basketball: debounce, triple-click, judgment, random pace, timer and scoring passed");
+    debounce_tests(); interrupt_debounce_tests(); shot_tests(); timing_tests(); full_game_tests();
+    puts("basketball: debounce, judgment, random pace, timer and scoring passed");
 }

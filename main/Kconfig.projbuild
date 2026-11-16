@@ -4,7 +4,7 @@ config DESKTOP_FOLLOW_ROBOT
     default y
     help
         Use the screen for expressions and GPIO10 for the servo. GPIO6 is
-        reserved for the basketball button. The old three-button scanner and
+        reserved for the global launcher/game button. The old three-button scanner and
         beeper are not started in this mode.
 config ROBOT_RADAR_RX_GPIO
     int "ESP UART RX GPIO (connect to LD2450 TX)"

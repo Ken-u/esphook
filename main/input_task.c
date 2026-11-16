@@ -9,7 +9,7 @@
 #include "sdkconfig.h"
 #include "robot_runtime.h"
 #include "robot_ui.h"
-#include "basketball_runtime.h"
+#include "game_runtime.h"
 #include "esp_timer.h"
 #include "esp_attr.h"
 #include "usb_cdc.h"
@@ -137,20 +137,23 @@ static void IRAM_ATTR robot_button_isr(void *arg)
 static void robot_button_task(void *arg)
 {
     (void)arg;
-    basketball_button_t button = {0};
+    app_button_t button = {0};
     uint64_t now = (uint64_t)esp_timer_get_time() / 1000;
-    (void)basketball_button_sample(&button, gpio_get_level(BASKETBALL_BUTTON_GPIO) == 0, now);
+    (void)app_button_sample(&button, gpio_get_level(APP_BUTTON_GPIO) == 0, now);
     TickType_t wait = portMAX_DELAY;
     while (1) {
         uint32_t edges = ulTaskNotifyTake(pdTRUE, wait);
         now = (uint64_t)esp_timer_get_time() / 1000;
-        bool pressed = gpio_get_level(BASKETBALL_BUTTON_GPIO) == 0;
-        if (edges) basketball_button_edge(&button, pressed, now);
-        if (basketball_button_sample(&button, pressed, now)) basketball_post_press(now);
+        bool pressed = gpio_get_level(APP_BUTTON_GPIO) == 0;
+        if (edges) app_button_edge(&button, pressed, now);
+        bool was_pressed = button.stable_pressed;
+        bool down = app_button_sample(&button, pressed, now);
+        if (down) game_post_button(true, now);
+        else if (was_pressed && !button.stable_pressed) game_post_button(false, now);
         if (button.raw_pressed != button.stable_pressed) {
             uint64_t elapsed = now >= button.changed_ms ? now - button.changed_ms : 0;
-            unsigned remaining = elapsed < BASKETBALL_DEBOUNCE_MS
-                               ? BASKETBALL_DEBOUNCE_MS - (unsigned)elapsed : 1;
+            unsigned remaining = elapsed < APP_DEBOUNCE_MS
+                               ? APP_DEBOUNCE_MS - (unsigned)elapsed : 1;
             wait = pdMS_TO_TICKS(remaining);
             if (!wait) wait = 1;
         } else {
@@ -162,7 +165,7 @@ void input_start(void)
 {
     /* Sole physical button: GPIO6 to GND, internal pull-up. Never claim GPIO10. */
     gpio_config_t config = {
-        .pin_bit_mask = 1ULL << BASKETBALL_BUTTON_GPIO, .mode = GPIO_MODE_INPUT,
+        .pin_bit_mask = 1ULL << APP_BUTTON_GPIO, .mode = GPIO_MODE_INPUT,
         .pull_up_en = GPIO_PULLUP_ENABLE, .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .intr_type = GPIO_INTR_DISABLE,
     };
@@ -174,9 +177,9 @@ void input_start(void)
         ESP_LOGE("input", "could not start GPIO6 button task");
         return;
     }
-    ESP_ERROR_CHECK(gpio_isr_handler_add(BASKETBALL_BUTTON_GPIO, robot_button_isr, button_task));
-    ESP_ERROR_CHECK(gpio_set_intr_type(BASKETBALL_BUTTON_GPIO, GPIO_INTR_ANYEDGE));
-    ESP_ERROR_CHECK(gpio_intr_enable(BASKETBALL_BUTTON_GPIO));
+    ESP_ERROR_CHECK(gpio_isr_handler_add(APP_BUTTON_GPIO, robot_button_isr, button_task));
+    ESP_ERROR_CHECK(gpio_set_intr_type(APP_BUTTON_GPIO, GPIO_INTR_ANYEDGE));
+    ESP_ERROR_CHECK(gpio_intr_enable(APP_BUTTON_GPIO));
     /* Catch a transition between the task's initial sample and IRQ enable. */
     xTaskNotifyGive(button_task);
 }
@@ -184,7 +187,7 @@ void input_start(void)
 
 void input_cdc_handler(const char *line)
 {
-    if (basketball_command(line)) return;
+    if (game_command(line)) return;
     if (robot_ui_command(line) || robot_command(line)) return;
     if (strncmp(line, "ssid:", 5) == 0) {
         config_set_wifi(line + 5, NULL);
@@ -234,7 +237,7 @@ void input_cdc_handler(const char *line)
         vTaskDelay(pdMS_TO_TICKS(200));
         esp_restart();
     } else if (strcmp(line, "help") == 0) {
-        cdc_write("game: triple-click GPIO6 | robot game start/stop/status");
+        cdc_write("apps: short GPIO6 opens menu, triple-click returns menu | robot menu | robot game start/stop/status");
         cdc_write("robot help: tracking / servo calibration");
         cdc_write("cmds: ssid:<s> pass:<p> daemon_host:<h> daemon_port:<p> daemon_secret:<64hex> connect status id reset");
     } else if (line[0] != '\0') {

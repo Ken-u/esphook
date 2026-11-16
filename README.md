@@ -3,7 +3,9 @@
 > 当前 `feat/desktop-follow-robot` 分支增加桌面跟随机器人固件：ESP32-C3 SuperMini + ST7735 + LD2450 + NHY009。
 > 构建、接线及首次 USB 校准见 [机器人调试指南](docs/robot-bringup.md)。上电 PWM 默认关闭，通过 USB 校准后使用 `robot arm` / `robot follow` 开启。
 > 新增 [表情/文字协议与扇形雷达调试页](docs/robot-display-protocol.md)：USB 输入 `robot radar` 切雷达页，`robot face` 返回；JSON 可客制表情和文字。
-> [GPIO6 投篮游戏](docs/robot-basketball.md)：800ms 内三击入场，限时 2 分钟，篮筐随机变速，每中一球 2 分。
+> [GPIO6 启动器与全局按键](docs/robot-launcher.md)：待机眼睛动画，短按打开菜单；短按切换、按住 500ms 画圆确认；菜单 10s 无操作回待机；任何页面快速三击回菜单。
+> [投篮游戏](docs/robot-basketball.md)：从菜单进入，限时 2 分钟，篮筐随机变速，每中一球 2 分。
+> [做 T 高手](docs/robot-stock-t.md)：PC 随机准备 A 股历史五分钟 K 线和 MA30/MA60，通过 USB 上传 RAM；按住暂停并确认满仓买入，短按满仓卖出，每天结束结算收益。PC 入口：`./scripts/stock-t.sh`。
 > 下方保留原 Agent Hook 项目说明；机器人模式不启动主机 device link，Wi-Fi 仅用于可选配置和 OTA。
 
 esphook 是一套“主机 Agent Hook + ESP32-C3 提醒屏”项目：把 Claude Code、Codex、Kimi Code、Cursor Agent 的事件转换成 `done`、`error`、`confirm`，在 0.96 寸 ST7735 屏上用颜色和大字提醒。

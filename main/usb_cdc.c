@@ -16,7 +16,7 @@
 
 static const char *TAG = "cdc";
 static cdc_rx_line_cb_t s_rx_cb = NULL;
-static char s_linebuf[ROBOT_UI_JSON_MAX + 5];
+static char s_linebuf[ROBOT_UI_JSON_MAX + 8];
 static size_t s_linepos = 0;
 static bool s_line_overflow;
 static SemaphoreHandle_t s_tx_lock;

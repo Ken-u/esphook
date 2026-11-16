@@ -21,7 +21,7 @@ static bool fail(char *error, size_t n, const char *message)
     return false;
 }
 /* Check UTF-8, including overlong sequences, surrogates and U+10FFFF. */
-static bool utf8(const char *text)
+bool robot_ui_valid_utf8(const char *text)
 {
     const unsigned char *p = (const unsigned char *)text;
     while (*p) {
@@ -148,7 +148,7 @@ bool robot_ui_parse(const char *json, size_t len, robot_ui_t *out, char *error, 
     }
     const cJSON *text = cJSON_GetObjectItemCaseSensitive(root, "text");
     if (text) {
-        if (!cJSON_IsString(text) || strlen(text->valuestring) > ROBOT_UI_TEXT_MAX || !utf8(text->valuestring)) {
+        if (!cJSON_IsString(text) || strlen(text->valuestring) > ROBOT_UI_TEXT_MAX || !robot_ui_valid_utf8(text->valuestring)) {
             message = "text must be valid UTF-8, at most 192 bytes"; goto bad;
         }
         strcpy(next.text, text->valuestring);

@@ -97,7 +97,7 @@ USB 输入 `robot radar` 显示原始目标的扇形扫描页，`robot face` 返
 
 ## GPIO6 投篮游戏
 
-800ms 内三击 GPIO6 按键进入两分钟投篮，篮筐从左到右移动，接近中间按下命中，每球后随机变速；命中每球 2 分，结束后显示成绩。详细交互和 USB 调试命令见 [robot-basketball.md](robot-basketball.md)。
+待机短按 GPIO6 开启动器，短按切换投篮 / 做 T / 雷达，按住 500ms 画圆确认。任何页面三击回启动器，菜单无操作 10s 回眼睛表情动画。见 [全局按键](robot-launcher.md)、[两分钟投篮](robot-basketball.md) 和 [PC 做 T 游戏](robot-stock-t.md)。
 
 ## 验证与边界
 

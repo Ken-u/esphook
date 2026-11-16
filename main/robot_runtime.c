@@ -295,7 +295,7 @@ bool robot_command(const char *line)
 {
     if (strncmp(line, "robot", 5) || (line[5] && line[5] != ' ')) return false;
     if (!strcmp(line, "robot") || !strcmp(line, "robot help")) {
-        cdc_write("game: triple-click GPIO6 | robot game start/stop/status");
+        cdc_write("apps: short GPIO6 opens menu, triple-click returns menu | robot menu | robot game start/stop/status");
         cdc_write("display: robot radar | robot face | ui <JSON> | ui status");
         cdc_write("robot: status | arm | disarm | follow | center | angle:<deg>");
         cdc_write("disarmed settings: center_us:<1400..1600> | limit:<5..45> | reverse:<0|1> | speed:<5..90> | save");

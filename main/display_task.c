@@ -7,7 +7,7 @@
 #include "sdkconfig.h"
 #include "robot_runtime.h"
 #include "robot_ui.h"
-#include "basketball_runtime.h"
+#include "game_runtime.h"
 #include "esp_timer.h"
 #include "events.h"
 #include "display_model.h"
@@ -21,16 +21,20 @@ static char s_ip[16] = "";
 static void render_all(void)
 {
 #ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
-    basketball_view_t game;
-    basketball_get_view(&game);
-    if (game.phase != BASKETBALL_OFF) {
-        dv_render_basketball(&game);
-        return;
+    app_view_t app;
+    game_get_app_view(&app);
+    if (app.app == APP_MENU) { dv_render_launcher(&app); return; }
+    if (app.app == APP_STOCK) {
+        static remote_game_view_t remote;
+        game_get_remote_view(&remote); dv_render_stock(&remote); return;
     }
-    robot_status_t robot;
-    robot_get_status(&robot);
-    robot_ui_t view;
-    robot_ui_get(&view);
+    if (app.app == APP_BASKETBALL) {
+        basketball_view_t game; game_get_basketball_view(&game);
+        dv_render_basketball(&game); return;
+    }
+    robot_status_t robot; robot_get_status(&robot);
+    robot_ui_t view; robot_ui_get(&view);
+    if (app.app == APP_RADAR) view.mode = UI_RADAR;
     dv_render_robot(&robot, &view);
 #else
     /* state=2 也传给 view，让待机页能显示最新 IP；连接页本身不再覆盖提醒。 */
@@ -47,8 +51,8 @@ static void display_task_fn(void *arg)
     display_event_t e;
 #ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
     TickType_t face_tick = 0;
-    basketball_phase_t last_game_phase = BASKETBALL_OFF;
-    basketball_runtime_tick((uint64_t)esp_timer_get_time() / 1000);
+    app_kind_t last_app = APP_IDLE;
+    game_runtime_tick((uint64_t)esp_timer_get_time() / 1000);
 #endif
     render_all();
     while (1) {
@@ -73,12 +77,12 @@ static void display_task_fn(void *arg)
         }
         /* LVGL timer 同时负责重绘、标签滚动和动画，目标调用频率约 200Hz。 */
 #ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
-        basketball_runtime_tick((uint64_t)esp_timer_get_time() / 1000);
-        basketball_view_t game;
-        basketball_get_view(&game);
-        TickType_t interval = pdMS_TO_TICKS(game.phase == BASKETBALL_OFF ? 80 : 33);
-        if (game.phase != last_game_phase || xTaskGetTickCount() - face_tick >= interval) {
-            last_game_phase = game.phase;
+        game_runtime_tick((uint64_t)esp_timer_get_time() / 1000);
+        app_view_t app;
+        game_get_app_view(&app);
+        TickType_t interval = pdMS_TO_TICKS(app.app == APP_MENU ? 16 : app.app == APP_BASKETBALL ? 33 : 80);
+        if (app.app != last_app || xTaskGetTickCount() - face_tick >= interval) {
+            last_app = app.app;
             face_tick = xTaskGetTickCount();
             render_all();
         }

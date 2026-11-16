@@ -74,6 +74,12 @@ static lv_obj_t *s_robot_layer;
 static lv_obj_t *s_radar_layer;
 static lv_obj_t *s_text_layer;
 static lv_obj_t *s_game_layer;
+static lv_obj_t *s_stock_layer;
+static lv_obj_t *s_menu_layer;
+#ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
+/* Reused by the mutually exclusive radar and external chart screens. */
+static uint16_t s_plot_pixels[160 * 48];
+#endif
 static lv_obj_t *s_alert_layer;
 static lv_obj_t *s_net_layer;
 static lv_obj_t *s_idle_layer;
@@ -190,6 +196,8 @@ static void show_layer(lv_obj_t *layer)
     if (s_radar_layer) set_hidden(s_radar_layer, layer != s_radar_layer);
     if (s_text_layer) set_hidden(s_text_layer, layer != s_text_layer);
     if (s_game_layer) set_hidden(s_game_layer, layer != s_game_layer);
+    if (s_stock_layer) set_hidden(s_stock_layer, layer != s_stock_layer);
+    if (s_menu_layer) set_hidden(s_menu_layer, layer != s_menu_layer);
 }
 
 static void set_text(lv_obj_t *obj, const char *text)
@@ -616,6 +624,7 @@ static void render_face(const robot_status_t *status, const robot_ui_t *view)
         default: break;
     }
     int gaze = (int)lroundf(fmaxf(-4, fminf(4, bearing / 10)));
+    if (view->expression == FACE_AUTO && state == ROBOT_IDLE) gaze = (int)lroundf(3 * sinf(ms / 2400.0f));
     uint32_t eye_rgb = view->expression == FACE_AUTO && state == ROBOT_FAULT
                        ? 0xFDB927 : view->eye_color;
     for (int e = 0; e < 2; ++e) {
@@ -650,7 +659,7 @@ static void render_face(const robot_status_t *status, const robot_ui_t *view)
 static void render_radar(const robot_status_t *status, const robot_ui_t *view)
 {
 #ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
-    static uint16_t pixels[RADAR_VIEW_WIDTH * RADAR_VIEW_HEIGHT];
+    uint16_t *pixels = s_plot_pixels;
     static lv_image_dsc_t image;
     static lv_obj_t *plot, *heading, *labels[3];
     if (!s_radar_layer) {
@@ -668,7 +677,7 @@ static void render_radar(const robot_status_t *status, const robot_ui_t *view)
         image.header.w = RADAR_VIEW_WIDTH;
         image.header.h = RADAR_VIEW_HEIGHT;
         image.header.stride = RADAR_VIEW_WIDTH * 2;
-        image.data_size = sizeof pixels;
+        image.data_size = RADAR_VIEW_WIDTH * RADAR_VIEW_HEIGHT * sizeof(uint16_t);
         image.data = (const uint8_t *)pixels;
         plot = lv_image_create(s_radar_layer);
         lv_obj_set_pos(plot, 0, 16);
@@ -770,7 +779,7 @@ void dv_render_basketball(const basketball_view_t *game)
         lv_obj_set_style_text_color(result_score, color_hex(0xFDB927), LV_PART_MAIN);
         result_accuracy = make_label(results, &aihook_font_12, 3, 55, 154, 13, LV_LABEL_LONG_MODE_CLIP);
         lv_obj_t *again = make_label(results, &aihook_font_12, 2, 68, 156, 12, LV_LABEL_LONG_MODE_CLIP);
-        set_text(again, "单击返回 / 三击再玩");
+        set_text(again, "短按菜单 / 三击菜单");
         lv_obj_set_style_text_align(result_made, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
         lv_obj_set_style_text_align(result_score, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
         lv_obj_set_style_text_align(result_accuracy, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
@@ -807,5 +816,131 @@ void dv_render_basketball(const basketball_view_t *game)
     dv_activity();
 #else
     (void)game;
+#endif
+}
+
+void dv_render_stock(const remote_game_view_t *v)
+{
+#ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
+    static lv_obj_t *chart, *header, *footer, *panel, *title, *profit, *detail, *hint;
+    static lv_image_dsc_t image;
+    if (!s_stock_layer) {
+        s_stock_layer = make_layer(lv_screen_active());
+        header = make_label(s_stock_layer, &aihook_font_12, 2, 0, 156, 13, LV_LABEL_LONG_MODE_CLIP);
+        image.header.magic = LV_IMAGE_HEADER_MAGIC;
+        image.header.cf = LV_COLOR_FORMAT_RGB565;
+        image.header.w = 160; image.header.h = 48; image.header.stride = 320;
+        image.data_size = 160 * 48 * 2; image.data = (const uint8_t *)s_plot_pixels;
+        chart = lv_image_create(s_stock_layer);
+        lv_obj_set_pos(chart, 0, 15); lv_image_set_src(chart, &image);
+        footer = make_label(s_stock_layer, &aihook_font_12, 2, 66, 156, 14, LV_LABEL_LONG_MODE_CLIP);
+        panel = make_layer(s_stock_layer);
+        title = make_label(panel, &aihook_font_12, 2, 0, 156, 16, LV_LABEL_LONG_MODE_CLIP);
+        profit = make_label(panel, &aihook_font_16, 2, 19, 156, 22, LV_LABEL_LONG_MODE_CLIP);
+        detail = make_label(panel, &aihook_font_12, 2, 43, 156, 16, LV_LABEL_LONG_MODE_CLIP);
+        hint = make_label(panel, &aihook_font_12, 2, 65, 156, 15, LV_LABEL_LONG_MODE_CLIP);
+        lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+        lv_obj_set_style_text_align(profit, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+        lv_obj_set_style_text_align(detail, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+        lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    }
+    char text[120];
+    bool overlay = !v->active || v->offline || v->phase != REMOTE_PLAY;
+    set_hidden(panel, !overlay);
+    if (overlay) {
+        set_text(title, !v->active ? "等待PC连接" : v->offline ? "PC 已断开" : v->phase == REMOTE_LOADING ? "加载下一天..." : "做T结束");
+        snprintf(text, sizeof text, "收益 %+.2f%%", v->pct_bps / 100.0);
+        set_text(profit, v->active ? text : "做T模拟");
+        lv_obj_set_style_text_color(profit, color_hex(v->pct_bps >= 0 ? 0xFF6363 : 0x47E6AE), LV_PART_MAIN);
+        snprintf(text, sizeof text, "%+.2f元  交易%u次", v->pnl_cents / 100.0, v->trades);
+        set_text(detail, v->active ? text : "运行 stock-t.sh");
+        set_text(hint, !v->active || v->offline ? "短按返回菜单" : "长按继续 / 短按退出");
+    } else {
+        int32_t price = v->count ? v->bars[v->count - 1].close : 0;
+        snprintf(text, sizeof text, "%s %s %.2f", v->code, v->clock, price / 100.0);
+        set_text(header, text);
+        snprintf(text, sizeof text, "%s %+.2f%%  30/60", v->holding ? "持仓" : "空仓", v->pct_bps / 100.0);
+        set_text(footer, text);
+        stock_chart_draw(s_plot_pixels, v);
+        lv_image_cache_drop(&image); lv_obj_invalidate(chart);
+    }
+    show_layer(s_stock_layer); dv_activity();
+#else
+    (void)v;
+#endif
+}
+
+#ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
+static void menu_arc_x(void *object, int32_t value) { lv_obj_set_x((lv_obj_t *)object, value); }
+#endif
+void dv_render_launcher(const app_view_t *view)
+{
+#ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
+    static lv_obj_t *ring, *titles[3];
+    static int previous = -1;
+    if (!s_menu_layer) {
+        s_menu_layer = make_layer(lv_screen_active());
+        lv_obj_t *instructions = make_label(s_menu_layer, &aihook_font_12, 4, 0, 152, 16, LV_LABEL_LONG_MODE_CLIP);
+        set_text(instructions, "短按切换  长按进入");
+        lv_obj_set_style_text_align(instructions, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+        const char *names[] = {"投篮", "做T", "雷达"};
+        for (int i = 0; i < 3; ++i) {
+            lv_obj_t *icon = lv_obj_create(s_menu_layer); style_plain(icon);
+            lv_obj_set_size(icon, 28, 28); lv_obj_set_pos(icon, 18 + i * 48, 24);
+            if (i == 0) {
+                lv_obj_t *ball = make_rect(icon, 2, 2, 24, 24, 0xFF922F, 12);
+                make_rect(ball, 11, 0, 2, 24, 0x573122, 0);
+                make_rect(ball, 0, 11, 24, 2, 0x573122, 0);
+                make_rect(ball, 5, 1, 1, 22, 0xA85C28, 0);
+                make_rect(ball, 18, 1, 1, 22, 0xA85C28, 0);
+            } else if (i == 1) {
+                for (int k = 0; k < 4; ++k) {
+                    int top = 16 - k * 4;
+                    uint32_t color = k == 1 ? 0x47E6AE : 0xFF6363;
+                    make_rect(icon, 3 + k * 6, top, 1, 12, color, 0);
+                    make_rect(icon, 1 + k * 6, top + 3, 5, 6, color, 0);
+                }
+            } else {
+                for (int k = 0; k < 3; ++k) {
+                    lv_obj_t *arc = lv_arc_create(icon);
+                    lv_obj_set_size(arc, 28 - k * 8, 28 - k * 8); lv_obj_set_pos(arc, k * 4, k * 4);
+                    lv_obj_remove_style(arc, NULL, LV_PART_KNOB);
+                    lv_arc_set_bg_angles(arc, 180, 360); lv_arc_set_range(arc, 0, 100); lv_arc_set_value(arc, 0);
+                    lv_obj_set_style_arc_color(arc, color_hex(0x47E6AE), LV_PART_MAIN);
+                    lv_obj_set_style_arc_width(arc, 2, LV_PART_MAIN);
+                }
+                make_rect(icon, 13, 0, 2, 14, 0x47E6AE, 0);
+            }
+            titles[i] = make_label(s_menu_layer, &aihook_font_12, 8 + i * 48, 61, 48, 16, LV_LABEL_LONG_MODE_CLIP);
+            set_text(titles[i], names[i]); lv_obj_set_style_text_align(titles[i], LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+        }
+        ring = lv_arc_create(s_menu_layer); lv_obj_set_size(ring, 42, 42); lv_obj_set_pos(ring, 11, 17);
+        lv_obj_remove_style(ring, NULL, LV_PART_KNOB);
+        lv_obj_clear_flag(ring, LV_OBJ_FLAG_CLICKABLE);
+        lv_arc_set_bg_angles(ring, 0, 360); lv_arc_set_rotation(ring, 270);
+        lv_arc_set_range(ring, 0, APP_CONFIRM_MS);
+        lv_obj_set_style_arc_width(ring, 2, LV_PART_MAIN);
+        lv_obj_set_style_arc_color(ring, color_hex(0x513663), LV_PART_MAIN);
+        lv_obj_set_style_arc_width(ring, 3, LV_PART_INDICATOR);
+        lv_obj_set_style_arc_color(ring, color_hex(0xFDB927), LV_PART_INDICATOR);
+    }
+    unsigned selected = view->selected % 3;
+    if (previous != (int)selected) {
+        int target = 11 + selected * 48;
+        lv_anim_delete(ring, NULL);
+        if (previous < 0) lv_obj_set_x(ring, target);
+        else {
+            lv_anim_t anim; lv_anim_init(&anim); lv_anim_set_var(&anim, ring);
+            lv_anim_set_values(&anim, lv_obj_get_x(ring), target); lv_anim_set_exec_cb(&anim, menu_arc_x);
+            lv_anim_set_duration(&anim, 160); lv_anim_set_path_cb(&anim, lv_anim_path_ease_out); lv_anim_start(&anim);
+        }
+        previous = selected;
+    }
+    for (unsigned i = 0; i < 3; ++i)
+        lv_obj_set_style_text_color(titles[i], color_hex(i == selected ? 0xFDB927 : 0x8A8196), LV_PART_MAIN);
+    lv_arc_set_value(ring, view->hold_ms);
+    show_layer(s_menu_layer); dv_activity();
+#else
+    (void)view;
 #endif
 }
