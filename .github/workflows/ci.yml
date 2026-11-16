@@ -20,13 +20,18 @@ jobs:
         with:
           python-version: "3.x"
       - name: Compile Python sources
-        run: python3 -m compileall -q host
+        run: python3 -m compileall -q apps framework/pc host scripts tests
+      - name: Validate app manifests and developer tooling
+        run: |
+          python3 scripts/check-apps.py
+          python3 tests/test_scaffold.py
+          python3 tests/test_app_sdk.py
       - name: Test PC stock replay, data preparation and USB transport
-        run: python3 host/test_stock_t.py
+        run: python3 apps/stock/pc/test_stock_t.py
       - name: Run hook tests
-        run: python3 host/test_hooks.py
+        run: python3 apps/hook/pc/test_hooks.py
       - name: Run device-link tests
-        run: python3 host/test_device_link.py
+        run: python3 apps/hook/pc/test_device_link.py
       - name: Test robot parser and follow controller
         run: ./scripts/test-robot.sh
       - name: Test GPIO6 basketball game
@@ -37,6 +42,18 @@ jobs:
         run: ./scripts/test-robot-ui.sh
       - name: Test launcher, global input, game protocol and navigation
         run: ./scripts/test-app-games.sh
+      - name: Fetch pinned LVGL for application rendering tests
+        run: git clone --depth 1 --branch v9.5.0 https://github.com/lvgl/lvgl.git "$RUNNER_TEMP/lvgl"
+      - name: Test every app with real LVGL and a 64KB UI heap
+        env:
+          LVGL_SOURCE_DIR: ${{ runner.temp }}/lvgl
+          APP_UI_BUILD_DIR: ${{ runner.temp }}/app-ui-build
+        run: ./scripts/test-app-ui.sh
+      - name: Upload UI test frames
+        uses: actions/upload-artifact@v4
+        with:
+          name: esphook-ui-test-frames
+          path: ${{ runner.temp }}/app-ui-build/frames
       - name: Check hook installer
         run: ./scripts/install-hooks.sh --tools all --dry-run --home "$RUNNER_TEMP/esphook-hook-dry-run"
       - name: Check one-click installer and release packager
@@ -45,6 +62,8 @@ jobs:
           bash -n scripts/package-release.sh
           bash -n scripts/stock-t.sh
           ./scripts/stock-t.sh --demo --dry-run
+          python3 apps/demo/pc/main.py --dry-run
+          python3 apps/key_report/pc/main.py --dry-run
           ./install.sh --help
       - name: Check patch whitespace
         run: git diff --check

@@ -1,0 +1,8 @@
+{
+  "id": "radar",
+  "order": "030",
+  "required": false,
+  "sources": [
+    "firmware/app.c"
+  ]
+}

@@ -2,7 +2,7 @@
 #include "esp_log.h"
 #include "sdkconfig.h"
 #include "robot_runtime.h"
-#include "game_runtime.h"
+#include "esphook/app_runtime.h"
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -48,6 +48,8 @@ void app_main(void)
     display_q = xQueueCreate(16, sizeof(display_event_t));
     beeper_q  = xQueueCreate(8, sizeof(beep_kind_t));
 
+    ESP_ERROR_CHECK(app_runtime_init());
+
     /* USB Serial/JTAG CDC（配网 + 日志） */
     ESP_ERROR_CHECK(cdc_init(input_cdc_handler));
     cdc_write("supermini-aihook ready (try: help)");
@@ -56,7 +58,6 @@ void app_main(void)
     dm_init();
     ESP_ERROR_CHECK(font_store_init());
     ESP_ERROR_CHECK(dv_init());
-    dv_render_net(0, NULL);
     dv_flush();
 
     /* 蜂鸣器 */
@@ -65,24 +66,20 @@ void app_main(void)
 #endif
 
     /* 显示任务（消费 display_q，统一改 model） */
-#ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
-    ESP_ERROR_CHECK(game_runtime_init());
-#endif
     display_task_start();
 
     /* 输入任务（按键 + CDC 命令已在 handler） */
     input_start();
 
-    /* 主机反向连接（无配置时任务休眠，不影响旧直连模式）。 */
+    /* Hardware ports are optional; all builds share the same app framework. */
 #ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
     esp_err_t robot_err = robot_start();
     if (robot_err != ESP_OK) {
         ESP_LOGE(TAG, "robot init failed: %s", esp_err_to_name(robot_err));
         cdc_write("ERR robot initialization failed; check pin configuration");
     }
-#else
-    device_link_start();
 #endif
+    device_link_start();
 
     /* 尝试连 Wi-Fi（有凭证则连，连上后启 http） */
     wifi_set_state_cb(on_wifi_state);

@@ -1,0 +1,8 @@
+{
+  "id": "demo",
+  "order": "080",
+  "required": false,
+  "sources": [
+    "firmware/app.c"
+  ]
+}

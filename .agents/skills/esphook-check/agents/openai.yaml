@@ -1,0 +1,4 @@
+interface:
+  display_name: "esphook 应用验证"
+  short_description: "Validate esphook app contracts, rendering and firmware builds"
+  default_prompt: "使用 $esphook-check 验证这个项目中的应用改动。"

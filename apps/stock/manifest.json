@@ -1,0 +1,11 @@
+{
+  "id": "stock",
+  "order": "020",
+  "required": false,
+  "sources": [
+    "firmware/app.c",
+    "firmware/remote_game.c",
+    "firmware/stock_chart.c",
+    "firmware/stock_transport.c"
+  ]
+}

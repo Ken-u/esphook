@@ -275,7 +275,7 @@ else
 fi
 
 if ((install_hooks)); then
-  python3 "$release_dir/host/install_hooks.py" --tools "$TOOLS"
+  python3 "$release_dir/apps/hook/pc/install_hooks.py" --tools "$TOOLS"
 else
   echo "esphook: 已跳过 Hook 安装"
 fi

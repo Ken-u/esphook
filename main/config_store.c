@@ -12,6 +12,26 @@ static const char *NS_DISPLAY = "display";
 static const char *NS_SEEN = "seen";
 static const char *DEFAULT_KEYS[3] = {"ok", "continue", "done"};
 
+esp_err_t config_get_standby(char *out, size_t len)
+{
+    if (!out || !len) return ESP_ERR_INVALID_ARG;
+    out[0] = '\0'; nvs_handle_t h;
+    esp_err_t err = nvs_open("apps", NVS_READONLY, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_get_str(h, "standby", out, &len); nvs_close(h);
+    if (err != ESP_OK) out[0] = '\0';
+    return err;
+}
+esp_err_t config_set_standby(const char *id)
+{
+    if (!id || !id[0] || strlen(id) > 23) return ESP_ERR_INVALID_ARG;
+    nvs_handle_t h; esp_err_t err = nvs_open("apps", NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_set_str(h, "standby", id);
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h); return err;
+}
+
 /* NVS key 名最多 15 个字符，不能直接把 client/session id 拼进 key。
  * 显示名使用固定短 key 的 blob 记录，记录本身保存完整 type/id/name。 */
 #define MAX_DISPLAY_RECORDS 64
@@ -260,8 +280,8 @@ const char *config_get_display_name(const char *type, const char *id, char *out,
 esp_err_t config_factory_reset(void)
 {
     nvs_handle_t h;
-    const char *nss[5] = {NS_WIFI, NS_LINK, NS_KEYMAP, NS_DISPLAY, NS_SEEN};
-    for (int i = 0; i < 5; i++) {
+    const char *nss[] = {NS_WIFI, NS_LINK, NS_KEYMAP, NS_DISPLAY, NS_SEEN, "apps"};
+    for (size_t i = 0; i < sizeof nss / sizeof nss[0]; i++) {
         if (nvs_open(nss[i], NVS_READWRITE, &h) == ESP_OK) {
             nvs_erase_all(h);
             nvs_commit(h);

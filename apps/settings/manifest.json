@@ -1,0 +1,8 @@
+{
+  "id": "settings",
+  "order": "070",
+  "required": true,
+  "sources": [
+    "firmware/app.c"
+  ]
+}

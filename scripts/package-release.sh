@@ -84,6 +84,10 @@ tar --exclude='__pycache__' --exclude='*.pyc' -czf "$DIST_DIR/esphook-host.tar.g
   -C "$PROJECT_DIR" \
   bin \
   host \
+  apps \
+  framework/pc \
+  .agents \
+  AGENTS.md \
   scripts \
   docs/agent-hooks.md \
   docs/connection-design.md \

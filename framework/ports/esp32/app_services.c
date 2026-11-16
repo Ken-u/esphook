@@ -1,0 +1,132 @@
+#include "app_services.h"
+#include "app_runtime.h"
+#include "config_store.h"
+#include "device_link.h"
+#include "display_model.h"
+#include "events.h"
+#include "usb_cdc.h"
+#include "net_wifi.h"
+#include "esp_app_desc.h"
+#include "esp_http_client.h"
+#include "esp_random.h"
+#include "esp_timer.h"
+#include "sdkconfig.h"
+#include "freertos/task.h"
+#include "cJSON.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+typedef struct { char client[24], session[48], word[16], callback[32]; } reply_t;
+static QueueHandle_t s_replies;
+static char s_servo_owner[APP_ID_MAX + 1]; /* UI task only. */
+void app_radar_read(app_radar_t *out)
+{
+    robot_status_t s; robot_get_status(&s); memset(out, 0, sizeof *out);
+#ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
+    out->available = true;
+#endif
+    out->online = s.radar_online; out->age_ms = s.radar_age_ms; out->frames = s.frames;
+    out->rejected = s.rejected; out->frame = s.raw;
+    robot_ui_t v; robot_ui_get(&v); out->range_mm = v.range_mm;
+}
+void app_servo_read(app_servo_t *out)
+{
+    robot_status_t s; robot_get_status(&s); memset(out, 0, sizeof *out);
+#ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
+    out->available = true;
+#endif
+    out->armed = s.armed; out->following = s.following; out->fault = s.hardware_fault;
+    out->angle_deg = s.angle_deg; out->target_deg = s.target_deg; out->tracking = s.state;
+    out->limit_deg = s.config.limit_deg;
+}
+bool app_servo_request(app_context_t *ctx, app_servo_action_t action, int value)
+{
+    if (s_servo_owner[0] && strcmp(s_servo_owner, ctx->app->id)) return false;
+    if (!robot_servo_request(action, value)) return false;
+    snprintf(s_servo_owner, sizeof s_servo_owner, "%s", ctx->app->id); return true;
+}
+void app_services_release(const char *id, void *user)
+{
+    (void)user;
+    if (!strcmp(s_servo_owner, id)) { (void)robot_servo_request(APP_SERVO_DISARM, 0); s_servo_owner[0] = '\0'; }
+}
+void app_display_read(robot_ui_t *out) { robot_ui_get(out); }
+bool app_display_update(const char *json, size_t length, char *error, size_t size)
+{ return robot_ui_submit(json, length, error, size) == ESP_OK; }
+void app_key_word(unsigned key, char *out, size_t size) { if (size) snprintf(out, size, "%s", config_get_key((int)key)); }
+void app_hook_read(app_hook_t *out)
+{
+    memset(out, 0, sizeof *out); out->connected = device_link_is_connected(); out->clients = dm_client_count();
+    out->current = dm_current(out->client, out->session, sizeof out->client, sizeof out->session,
+                              out->title, sizeof out->title, out->body, sizeof out->body);
+    out->status = dm_current_status();
+    for (unsigned i = 0; i < out->clients; ++i) {
+        char client[24]; dm_client_at((int)i, client, sizeof client); out->unread += dm_client_unread(client);
+    }
+}
+bool app_hook_reply(unsigned key)
+{
+    if (!s_replies || key > 2) return false;
+    reply_t r = {0};
+    (void)dm_current(r.client, r.session, sizeof r.client, sizeof r.session, NULL, 0, NULL, 0);
+    app_key_word(key, r.word, sizeof r.word); snprintf(r.callback, sizeof r.callback, "%s", last_callback());
+    return xQueueSend(s_replies, &r, 0) == pdTRUE;
+}
+static void reply_worker(void *user)
+{
+    (void)user; reply_t r;
+    for (;;) {
+        if (xQueueReceive(s_replies, &r, portMAX_DELAY) != pdTRUE) continue;
+        bool sent = device_link_send_key(r.client, r.session, r.word);
+        if (!sent && r.callback[0]) {
+            char url[80]; snprintf(url, sizeof url, "http://%s/keyevent", r.callback);
+            esp_http_client_config_t cfg = {.url = url, .method = HTTP_METHOD_POST, .timeout_ms = 800, .buffer_size = 256};
+            esp_http_client_handle_t client = esp_http_client_init(&cfg);
+            cJSON *j = cJSON_CreateObject(); cJSON_AddStringToObject(j, "word", r.word);
+            char *body = cJSON_PrintUnformatted(j);
+            if (client && body) {
+                esp_http_client_set_header(client, "Content-Type", "application/json");
+                esp_http_client_set_post_field(client, body, strlen(body));
+                sent = esp_http_client_perform(client) == ESP_OK;
+                int status = esp_http_client_get_status_code(client); sent = sent && status >= 200 && status < 300;
+            }
+            if (client) esp_http_client_cleanup(client);
+            free(body); cJSON_Delete(j);
+        }
+        if (sent) {
+            display_event_t e = {.kind = EVT_DISMISS}; strcpy(e.client_id, r.client); strcpy(e.session_id, r.session);
+            (void)xQueueSend(display_q, &e, pdMS_TO_TICKS(100));
+        } else cdc_write("ERR hook reply unavailable; notification retained");
+    }
+}
+esp_err_t app_services_init(void)
+{
+    s_replies = xQueueCreate(8, sizeof(reply_t));
+    if (!s_replies) return ESP_ERR_NO_MEM;
+    return xTaskCreate(reply_worker, "app_replies", 4096, NULL, 4, NULL) == pdPASS ? ESP_OK : ESP_ERR_NO_MEM;
+}
+void app_device_info(app_device_info_t *out)
+{
+    memset(out, 0, sizeof *out); const esp_app_desc_t *d = esp_app_get_description();
+    snprintf(out->version, sizeof out->version, "%s", d->version);
+    snprintf(out->build, sizeof out->build, "%s %s", d->date, d->time);
+    (void)config_get_link_host(out->daemon_host, sizeof out->daemon_host); out->daemon_port = config_get_link_port();
+    snprintf(out->ip, sizeof out->ip, "%s", wifi_get_ip());
+#ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
+    out->robot_hardware = true;
+#endif
+}
+uint32_t app_random(void) { return esp_random(); }
+uint64_t app_clock_ms(void) { return (uint64_t)esp_timer_get_time() / 1000; }
+bool app_transport_write(const char *line) { return cdc_write(line) == ESP_OK; }
+bool app_host_event(const app_context_t *ctx, const char *action, unsigned key, const char *text)
+{
+    cJSON *j = cJSON_CreateObject(); if (!j) return false;
+    cJSON_AddNumberToObject(j, "v", 1); cJSON_AddStringToObject(j, "type", "app_event");
+    cJSON_AddStringToObject(j, "app", ctx->app->id); cJSON_AddStringToObject(j, "action", action);
+    cJSON_AddNumberToObject(j, "ms", (double)ctx->now_ms); cJSON_AddNumberToObject(j, "key", key);
+    if (text) cJSON_AddStringToObject(j, "text", text);
+    char *body = cJSON_PrintUnformatted(j); bool ok = body && cdc_write(body) == ESP_OK;
+    free(body); cJSON_Delete(j); return ok;
+}

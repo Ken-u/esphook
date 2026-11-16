@@ -1,0 +1,8 @@
+{
+  "id": "key_report",
+  "order": "050",
+  "required": false,
+  "sources": [
+    "firmware/app.c"
+  ]
+}

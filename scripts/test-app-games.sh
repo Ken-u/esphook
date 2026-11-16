@@ -6,17 +6,17 @@ app_test_bin="$(mktemp "${TMPDIR:-/tmp}/esphook-app-test.XXXXXX")"
 trap 'rm -f "$app_test_bin"' EXIT
 "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -pedantic -g \
   -fsanitize=address,undefined -fno-omit-frame-pointer \
-  -I main tests/test_app_input.c main/app_input.c -o "$app_test_bin"
+  -I main -I framework/include/esphook -I apps/basketball/firmware -I apps/stock/firmware tests/test_app_input.c framework/core/app_input.c -o "$app_test_bin"
 "$app_test_bin"
 "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -pedantic -g \
   -fsanitize=address,undefined -fno-omit-frame-pointer \
-  -I main -I "${CJSON_INCLUDE_DIR:-/usr/include/cjson}" \
-  tests/test_remote_game.c main/remote_game.c main/stock_chart.c main/robot_ui_protocol.c \
+  -I main -I framework/include/esphook -I apps/basketball/firmware -I apps/stock/firmware -I "${CJSON_INCLUDE_DIR:-/usr/include/cjson}" \
+  tests/test_remote_game.c apps/stock/firmware/remote_game.c apps/stock/firmware/stock_chart.c framework/services/display_protocol.c \
   "${CJSON_LIB:--lcjson}" -lm -o "$app_test_bin"
 "$app_test_bin"
 "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -pedantic -g \
   -fsanitize=address,undefined -fno-omit-frame-pointer \
-  -I tests/ui_stubs -I main -I "${CJSON_INCLUDE_DIR:-/usr/include/cjson}" \
-  tests/test_game_runtime.c main/game_runtime.c main/app_input.c main/basketball_game.c \
-  main/remote_game.c main/robot_ui_protocol.c "${CJSON_LIB:--lcjson}" -lm -o "$app_test_bin"
+  -I framework/include/esphook -I "${CJSON_INCLUDE_DIR:-/usr/include/cjson}" \
+  tests/test_app_framework.c framework/core/app_manager.c framework/core/app_input.c \
+  framework/core/app_protocol.c framework/services/display_protocol.c "${CJSON_LIB:--lcjson}" -lm -o "$app_test_bin"
 "$app_test_bin"

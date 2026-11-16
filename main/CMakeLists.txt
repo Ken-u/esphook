@@ -1,18 +1,25 @@
+include("${PROJECT_DIR}/cmake/apps.cmake")
+set(framework "${PROJECT_DIR}/framework")
 idf_component_register(
-    SRCS "main.c" "usb_cdc.c" "config_store.c" "display_model.c" "display_view.c"
+    SRCS "main.c" "usb_cdc.c" "config_store.c"
          "aihook_font_12.c" "aihook_font_16.c" "ota_update.c"
          "font_store.c"
          "device_link.c"
          "net_wifi.c" "beeper.c" "events.c" "http_server.c"
          "input_task.c" "display_task.c"
-         "ld2450.c" "robot_follow.c" "robot_runtime.c"
-         "robot_ui_protocol.c" "robot_ui.c" "radar_view.c"
-         "basketball_game.c" "game_runtime.c" "remote_game.c" "stock_chart.c" "app_input.c"
-    INCLUDE_DIRS "."
+         "${framework}/core/app_input.c" "${framework}/core/app_manager.c" "${framework}/core/app_protocol.c"
+         "${framework}/ports/esp32/app_runtime.c" "${framework}/ports/esp32/app_services.c"
+         "${framework}/ports/esp32/app_ui.c" "${framework}/ports/esp32/display_port.c"
+         "${framework}/services/hook_model.c" "${framework}/services/motion_service.c"
+         "${framework}/services/robot_follow.c" "${framework}/services/display_service.c"
+         "${framework}/services/display_protocol.c" "${framework}/services/radar_plot.c"
+         "${framework}/drivers/ld2450.c" "${framework}/drivers/radar_ld2450.c" "${framework}/drivers/servo_nhy009.c"
+         ${ESPHOOK_APP_SOURCES}
+    INCLUDE_DIRS "." "${framework}/include" "${framework}/include/esphook" ${ESPHOOK_APP_INCLUDES}
     REQUIRES nvs_flash esp_driver_usb_serial_jtag esp_driver_spi esp_driver_gpio
              esp_driver_ledc esp_driver_uart esp_wifi esp_netif esp_event esp_http_server esp_http_client
              esp_lcd esp_timer lvgl json app_update spi_flash
-             mbedtls lwip esp_hw_support
+             mbedtls lwip esp_hw_support esp_app_format esp_system
 )
 
 # 字库不是 OTA 内容，只有完整 USB flash 才会更新这个固定数据分区。

@@ -1,0 +1,9 @@
+{
+  "id": "basketball",
+  "order": "010",
+  "required": false,
+  "sources": [
+    "firmware/app.c",
+    "firmware/basketball_game.c"
+  ]
+}

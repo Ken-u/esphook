@@ -1,0 +1,35 @@
+"""PC companion for @APP_ID@; the device handles global navigation."""
+import argparse
+import json
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "framework" / "pc"))
+from esphook_sdk import AppLink
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--port")
+    p.add_argument("--dry-run", action="store_true")
+    args = p.parse_args()
+    if args.dry_run:
+        print(json.dumps(dict(op="open", app="@APP_ID@")))
+        return
+    link = AppLink(args.port)
+    try:
+        if not any(app.get("id") == "@APP_ID@" for app in link.catalog()):
+            raise RuntimeError("app @APP_ID@ is not available in this firmware")
+        link.open("@APP_ID@")
+        link.wait_active("@APP_ID@")
+        while True:
+            for event in link.poll():
+                if event.get("app") == "@APP_ID@":
+                    print(json.dumps(event, ensure_ascii=False))
+                    if event.get("action") == "leave":
+                        return
+    except KeyboardInterrupt:
+        link.menu()
+    finally:
+        link.close()
+
+if __name__ == "__main__":
+    main()

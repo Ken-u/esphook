@@ -1,0 +1,8 @@
+{
+  "id": "hook",
+  "order": "040",
+  "required": false,
+  "sources": [
+    "firmware/app.c"
+  ]
+}

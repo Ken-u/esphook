@@ -1,0 +1,20 @@
+#ifndef LV_CONF_H
+#define LV_CONF_H
+#define LV_COLOR_DEPTH 16
+#define LV_MEM_SIZE (64 * 1024U)
+#define LV_USE_OS LV_OS_NONE
+#define LV_USE_LOG 0
+#define LV_USE_ASSERT_MALLOC 1
+#define LV_USE_ASSERT_NULL 1
+#define LV_USE_THEME_DEFAULT 0
+#define LV_USE_THEME_SIMPLE 0
+#define LV_USE_THEME_MONO 0
+#define LV_USE_DRAW_SW 1
+#define LV_DRAW_SW_COMPLEX 1
+#define LV_FONT_MONTSERRAT_14 0
+#define LV_FONT_UNSCII_8 1
+#define LV_FONT_DEFAULT &lv_font_unscii_8
+#define LV_USE_FONT_COMPRESSED 1
+#define LV_BUILD_EXAMPLES 0
+#define LV_BUILD_DEMOS 0
+#endif

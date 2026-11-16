@@ -5,6 +5,8 @@
 #include <stdint.h>
 
 esp_err_t config_store_init(void);
+esp_err_t config_get_standby(char *out, size_t len);
+esp_err_t config_set_standby(const char *id);
 
 esp_err_t config_set_wifi(const char *ssid, const char *pass);
 esp_err_t config_get_wifi_ssid(char *out, size_t len);

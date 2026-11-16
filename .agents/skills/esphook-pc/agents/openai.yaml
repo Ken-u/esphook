@@ -1,0 +1,4 @@
+interface:
+  display_name: "esphook PC 配套开发"
+  short_description: "Build PC companions using the shared esphook USB transport SDK"
+  default_prompt: "使用 $esphook-pc 为这个应用开发 PC 配套程序。"

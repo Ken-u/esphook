@@ -1,0 +1,41 @@
+#include "esphook/app.h"
+#include "esphook/app_ui.h"
+#include "esphook/app_services.h"
+#include <stdio.h>
+#include <limits.h>
+
+typedef struct { lv_obj_t *title, *value, *hint, *ring; unsigned count; } state_t;
+_Static_assert(sizeof(state_t) <= APP_STATE_CAPACITY, "app state exceeds arena");
+
+static void enter(app_context_t *ctx)
+{
+    state_t *s = ctx->state;
+    s->title = app_ui_label(ctx->root, &aihook_font_12, 4, 0, 152, 16, LV_LABEL_LONG_MODE_CLIP);
+    s->value = app_ui_label(ctx->root, &aihook_font_16, 4, 23, 152, 22, LV_LABEL_LONG_MODE_CLIP);
+    s->hint = app_ui_label(ctx->root, &aihook_font_12, 4, 61, 129, 16, LV_LABEL_LONG_MODE_CLIP);
+    s->ring = app_ui_ring(ctx->root, 138, 58, 21);
+    app_ui_center(s->title); app_ui_center(s->value);
+    app_ui_text(s->title, @TITLE_C@);
+    app_ui_text(s->hint, "短按计数 长按清零");
+    (void)app_host_event(ctx, "launch", 0, NULL);
+}
+static void leave(app_context_t *ctx) { (void)app_host_event(ctx, "leave", 0, NULL); }
+static void event(app_context_t *ctx, const app_event_t *e)
+{
+    state_t *s = ctx->state;
+    if (e->kind == APP_EVENT_SHORT) { if (s->count < UINT_MAX) ++s->count; (void)app_host_event(ctx, "tap", e->key, NULL); }
+    if (e->kind == APP_EVENT_CONFIRM) { s->count = 0; (void)app_host_event(ctx, "reset", e->key, NULL); }
+}
+static void render(app_context_t *ctx)
+{
+    state_t *s = ctx->state; char text[32];
+    snprintf(text, sizeof text, "%u", s->count); app_ui_text(s->value, text);
+    app_ui_progress(s->ring, app_hold_ms(ctx));
+}
+static void icon(void *parent, int x, int y, bool selected)
+{ app_ui_rect(parent, x+4, y+4, 20, 20, selected ? APP_COLOR_ACCENT : 0xC178FF, 5); }
+const app_descriptor_t esphook_app_@APP_ID@ = {
+    .api_version = APP_API_VERSION, .id = "@APP_ID@", .title = @TITLE_C@,
+    .refresh_ms = 33, .state_size = sizeof(state_t),
+    .on_enter = enter, .on_leave = leave, .on_event = event, .render = render, .icon = icon
+};

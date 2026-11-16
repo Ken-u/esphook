@@ -452,7 +452,6 @@ static esp_err_t h_ota(httpd_req_t *req)
     return ota_handle_upload(req);
 }
 
-#ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
 static esp_err_t h_robot_display(httpd_req_t *req)
 {
     if (reject_unauthorized(req)) return ESP_OK;
@@ -513,7 +512,6 @@ static esp_err_t h_robot_radar(httpd_req_t *req)
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     return httpd_resp_sendstr(req, response);
 }
-#endif
 
 esp_err_t http_start(void)
 {
@@ -528,14 +526,10 @@ esp_err_t http_start(void)
     static const httpd_uri_t u_pair   = {.uri="/pair",.method=HTTP_POST,.handler=h_pair};
     static const httpd_uri_t u_root   = {.uri="/",.method=HTTP_GET,.handler=h_root};
     static const httpd_uri_t u_health = {.uri="/health",.method=HTTP_GET,.handler=h_health};
-#ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
     static const httpd_uri_t u_display = {.uri="/api/v1/display",.method=HTTP_POST,.handler=h_robot_display};
     static const httpd_uri_t u_radar = {.uri="/api/v1/radar",.method=HTTP_GET,.handler=h_robot_radar};
-#endif
     const httpd_uri_t *routes[] = {&u_notify, &u_dismiss, &u_config, &u_ota, &u_pair, &u_root, &u_health,
-#ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
         &u_display, &u_radar,
-#endif
     };
     for (unsigned i = 0; i < sizeof routes / sizeof routes[0]; ++i) {
         esp_err_t err = httpd_register_uri_handler(s, routes[i]);

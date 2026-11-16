@@ -1,0 +1,4 @@
+interface:
+  display_name: "esphook 应用开发"
+  short_description: "Build native esphook apps with lifecycle, input and device APIs"
+  default_prompt: "使用 $esphook-app 在这个项目中开发一个新的小游戏。"

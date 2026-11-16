@@ -72,7 +72,7 @@ PC 用 Python 标准库访问新浪公开行情接口：缓存 A 股列表一天
 ## 验证
 
 ```bash
-python3 host/test_stock_t.py
+python3 apps/stock/pc/test_stock_t.py
 ./scripts/test-app-games.sh
 ./scripts/stock-t.sh --demo --dry-run
 ```

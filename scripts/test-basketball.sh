@@ -5,5 +5,5 @@ basketball_test_bin="$(mktemp "${TMPDIR:-/tmp}/esphook-basketball-test.XXXXXX")"
 trap 'rm -f "$basketball_test_bin"' EXIT
 "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -pedantic -g \
   -fsanitize=address,undefined -fno-omit-frame-pointer \
-  -I main tests/test_basketball.c main/basketball_game.c main/app_input.c -lm -o "$basketball_test_bin"
+  -I main -I framework/include/esphook -I apps/basketball/firmware -I apps/stock/firmware tests/test_basketball.c apps/basketball/firmware/basketball_game.c framework/core/app_input.c -lm -o "$basketball_test_bin"
 "$basketball_test_bin"

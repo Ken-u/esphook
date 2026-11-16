@@ -1,0 +1,8 @@
+{
+  "id": "launcher",
+  "order": "000",
+  "required": true,
+  "sources": [
+    "firmware/app.c"
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "id": "face",
+  "order": "060",
+  "required": true,
+  "sources": [
+    "firmware/app.c"
+  ]
+}
