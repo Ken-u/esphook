@@ -31,7 +31,7 @@ idf.py build
 | `apps/<id>/firmware` / `pc` | 应用实现与 PC 配套，各自包含需要的模型、协议与测试 |
 | `cmake/apps.cmake` | 按 manifest 自动生成注册表，固件与无屏测试共用 |
 
-`main/` 只保留启动、配置/网络/HTTP/USB 接入、字体资源与任务入口。`display_task` 不知道具体应用 id，也不再调用应用专用渲染函数。`input_task` 只提交消抖后的按下/松手，不执行 Hook 或游戏逻辑。原 `host/*.py` 三个入口仅作为兼容跳转，新代码放 apps 中。
+`main/` 只保留启动、配置/网络/HTTP/USB 接入、字体资源与任务入口。`display_task` 不知道具体应用 id，也不再调用应用专用渲染函数。`input_task` 只提交消抖后的按下/松手，不执行 Hook 或游戏逻辑。原 `host/*.py` 三个入口及已注册的 `host/hooks` adapter 保留兼容跳转，新代码放 apps 中。
 
 ## 应用契约
 

@@ -3,6 +3,27 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import subprocess
+
+
+def test_registered_legacy_entrypoint():
+    """An existing Agent registration must survive the PC directory migration."""
+    root = Path(__file__).resolve().parents[3]
+    with tempfile.TemporaryDirectory() as directory:
+        folder = Path(directory)
+        capture = folder / "args.json"
+        cli = folder / "fake-esphook"
+        cli.write_text("#!/usr/bin/env python3\nimport json, os, sys\nfrom pathlib import Path\nPath(os.environ['TEST_CAPTURE']).write_text(json.dumps(sys.argv[1:]))\n")
+        cli.chmod(0o755)
+        env = dict(os.environ, ESPHOOK_BIN=str(cli), TEST_CAPTURE=str(capture),
+                   ESPHOOK_PENDING_FILE=str(folder / "pending.json"), ESPHOOK_CLIENT_ID="compat:codex")
+        subprocess.run([sys.executable, str(root / "host/hooks/esphook_notify_hook.py"), "--source", "codex"],
+                       input=json.dumps(dict(hook_event_name="Stop", session_id="old-registration")),
+                       text=True, env=env, check=True, capture_output=True)
+        command = json.loads(capture.read_text())
+        assert command[0] == "notify"
+        assert command[command.index("--session-id") + 1] == "old-registration"
+        assert command[command.index("--client-id") + 1] == "compat:codex"
 
 sys.path.insert(0, str(Path(__file__).with_name("hooks")))
 import esphook_notify_hook as hook
@@ -173,6 +194,7 @@ def test_install_skips_agents_missing_from_path() -> None:
 
 
 if __name__ == "__main__":
+    test_registered_legacy_entrypoint()
     test_identity_resolution()
     test_classification()
     test_forward_carries_session_and_client()
