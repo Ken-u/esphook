@@ -132,6 +132,8 @@ python3 tests/test_app_sdk.py
 ./scripts/test-app-games.sh
 ./scripts/test-robot.sh
 ./scripts/test-hardware.sh
+./scripts/test-usb-cdc.sh
+python3 apps/key_report/pc/test_bridge.py
 ./scripts/test-basketball.sh
 ./scripts/test-robot-ui.sh
 python3 apps/stock/pc/test_stock_t.py

@@ -52,6 +52,7 @@ Windows 对应 `.\.esphook-venv\Scripts\python.exe flash.py --port COM4`。
 ## 可选组件和自动准备
 
 - 键盘窗口（`run.py keys`、`stock --keyboard`）额外需要 Python 的 Tkinter/Tk 图形组件；uv 创建的虚拟环境不保证包含它。可用环境内 Python 执行 `-m tkinter` 检查；没有时仍可运行 USB 按键命令和不带 `--keyboard` 的 PC 游戏。
+- 实时键盘转发（`run.py bridge`）默认只用终端，不需要 Tk；全局后端 `--backend pynput` 需要额外安装 pynput，可用 `uv run --with pyserial --with pynput python run.py bridge --backend pynput`，macOS 需允许终端“输入监控”。
 - 已有合适 Python 时，也可直接运行 `python3 run.py ...` / `py -3 run.py ...`，工具会通过 venv/pip 自动补齐 USB 依赖；上面的 uv 路径更明确，可提前一次准备好环境。
 - 下载数据的 PC 应用仍需要网络；离线烧录不需要 ESP-IDF。把解压目录移动到别处或换电脑后，重新创建虚拟环境，不要分发 `.esphook-venv`。
 

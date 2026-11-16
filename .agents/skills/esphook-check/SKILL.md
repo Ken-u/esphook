@@ -16,4 +16,4 @@ description: Validate esphook framework and app changes with manifest checks, li
 
 回归已通过且没有新证据时停止重复测试。交付时说明分支/提交、实际通过的检查、固件体积，以及需要硬件确认的帧率、按键手感和电源/舵机表现。
 
-发布相关变更还要运行 `tests/test_release_package.py`，检查解压后的 doctor、flash --dry-run、SDK 应用生成和 SHA256。硬件/按键改动运行 `scripts/test-hardware.sh`、`scripts/test-app-games.sh`、`tests/test_app_sdk.py`：auto/screen 不初始化 PWM，robot 仍默认 disarm，USB 取消不误发短按/确认。不要把 Actions artifact 当作已发布的 GitHub Release。
+发布相关变更还要运行 `tests/test_release_package.py`，检查解压后的 doctor、flash --dry-run、SDK 应用生成和 SHA256。USB 回复/串口发送改动运行 `scripts/test-usb-cdc.sh`（模拟 IDF TX 环的分片和丢帧上报）和 `scripts/check-apps.py`（`list` ACK 长度预算），必要时用 `hardware` 的 `usb_tx_drops` 在实机确认。硬件/按键改动运行 `scripts/test-hardware.sh`、`scripts/test-app-games.sh`、`tests/test_app_sdk.py`、`apps/key_report/pc/test_bridge.py`：auto/screen 不初始化 PWM，robot 仍默认 disarm，USB 取消不误发短按/确认。不要把 Actions artifact 当作已发布的 GitHub Release。

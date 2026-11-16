@@ -42,6 +42,7 @@ class PackageTests(unittest.TestCase):
         command=json.loads(self.run_python(kit,"run.py","flash","--port","COM_TEST","--dry-run"))
         self.assertIn("esp32c3",command);self.assertIn("0x379000",command);self.assertNotIn("--erase-all",command)
         self.run_python(kit,"run.py","input","tap","--dry-run")
+        self.assertEqual(json.loads(self.run_python(kit,"run.py","bridge","--dry-run"))["bindings"]["space"],0)
         self.run_python(kit,"run.py","stock","--demo","--dry-run")
         self.run_python(sdk,"scripts/new-app.py","counter","--title","计数","--pc")
         self.run_python(sdk,"scripts/check-apps.py")

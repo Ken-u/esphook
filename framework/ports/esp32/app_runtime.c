@@ -163,6 +163,8 @@ static void ack(const app_request_t *request, bool ok, bool queued)
         cJSON_AddStringToObject(hardware,"radar",names[info.radar]);
         cJSON_AddStringToObject(hardware,"servo",names[info.servo]);
         cJSON_AddNumberToObject(hardware,"radar_frames",info.radar_frames);
+        /* Lines the host failed to drain since boot: a non-zero value that grows after a request timed out confirms a TX stall. */
+        cJSON_AddNumberToObject(hardware,"usb_tx_drops",cdc_tx_drops());
         if(request->reboot) cJSON_AddBoolToObject(j,"rebooting",true);
     }
     if (ok && (request->op == APP_OP_STATUS || request->op == APP_OP_LIST)) {

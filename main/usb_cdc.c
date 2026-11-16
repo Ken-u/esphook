@@ -3,6 +3,7 @@
  * 行缓冲：遇 \n 触发回调。日志带 [I]/[E]/[W] 前缀。
  */
 #include "usb_cdc.h"
+#include "usb_cdc_tx.h"
 #include "sdkconfig.h"
 #include "driver/usb_serial_jtag.h"
 #include "freertos/FreeRTOS.h"
@@ -14,12 +15,19 @@
 #include <stdarg.h>
 #include <stdio.h>
 
+/* Each chunk needs this much free TX ring; a chunk that cannot be queued within
+ * CDC_TX_WAIT_MS means the host stopped reading, so the frame is dropped. */
+#define CDC_TX_CHUNK 256
+#define CDC_TX_WAIT_MS 100
+
 static const char *TAG = "cdc";
 static cdc_rx_line_cb_t s_rx_cb = NULL;
 static char s_linebuf[ROBOT_UI_JSON_MAX + 8];
 static size_t s_linepos = 0;
 static bool s_line_overflow;
 static SemaphoreHandle_t s_tx_lock;
+static portMUX_TYPE s_stats_lock = portMUX_INITIALIZER_UNLOCKED;
+static uint32_t s_tx_drops;
 
 static void rx_task(void *arg)
 {
@@ -54,6 +62,8 @@ esp_err_t cdc_init(cdc_rx_line_cb_t cb)
     if (!s_tx_lock) return ESP_ERR_NO_MEM;
     s_rx_cb = cb;
     usb_serial_jtag_driver_config_t cfg = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
+    /* Every build answers `app` requests, so the TX ring is not robot-only. */
+    cfg.tx_buffer_size = CDC_TX_BUFFER_BYTES;
 #ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
     /* A complete 1024-byte JSON frame must fit while other tasks render. */
     cfg.rx_buffer_size = 2048;
@@ -68,18 +78,46 @@ esp_err_t cdc_init(cdc_rx_line_cb_t cb)
     return ESP_OK;
 }
 
+static int tx_sink(void *ctx, const char *data, size_t len)
+{
+    (void)ctx;
+    /* usb_serial_jtag_write_bytes() returns 0, not an error code, when the TX
+     * ring cannot take the bytes within the timeout. */
+    int n = usb_serial_jtag_write_bytes(data, len, pdMS_TO_TICKS(CDC_TX_WAIT_MS));
+    return n > 0 ? n : 0;
+}
+
+static void note_drop(size_t len)
+{
+    portENTER_CRITICAL(&s_stats_lock);
+    uint32_t drops = ++s_tx_drops;
+    portEXIT_CRITICAL(&s_stats_lock);
+    /* Log on powers of two only; with no host attached every line is dropped. */
+    if ((drops & (drops - 1)) == 0)
+        ESP_LOGW(TAG, "USB TX dropped a %u-byte line (%u dropped since boot); host is not reading", (unsigned)len, (unsigned)drops);
+}
+
+uint32_t cdc_tx_drops(void)
+{
+    portENTER_CRITICAL(&s_stats_lock);
+    uint32_t drops = s_tx_drops;
+    portEXIT_CRITICAL(&s_stats_lock);
+    return drops;
+}
+
 esp_err_t cdc_write(const char *str)
 {
-    if (!s_tx_lock || xSemaphoreTake(s_tx_lock, pdMS_TO_TICKS(200)) != pdTRUE)
+    if (!str) return ESP_ERR_INVALID_ARG;
+    if (!s_tx_lock) return ESP_ERR_INVALID_STATE;
+    if (xSemaphoreTake(s_tx_lock, pdMS_TO_TICKS(200)) != pdTRUE) {
+        note_drop(strlen(str));
         return ESP_ERR_TIMEOUT;
-    size_t len = strlen(str);
-    usb_serial_jtag_write_bytes(str, len, pdMS_TO_TICKS(100));
-    if (len == 0 || str[len - 1] != '\n') {
-        usb_serial_jtag_write_bytes("\n", 1, pdMS_TO_TICKS(100));
     }
-    usb_serial_jtag_wait_tx_done(pdMS_TO_TICKS(100));
+    bool sent = cdc_tx_frame(str, CDC_TX_CHUNK, tx_sink, NULL);
+    if (sent) (void)usb_serial_jtag_wait_tx_done(pdMS_TO_TICKS(100));
+    else note_drop(strlen(str));
     xSemaphoreGive(s_tx_lock);
-    return ESP_OK;
+    return sent ? ESP_OK : ESP_ERR_TIMEOUT;
 }
 
 void cdc_log(esp_log_level_t level, const char *fmt, ...)

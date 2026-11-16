@@ -46,6 +46,10 @@ jobs:
         run: ./scripts/test-robot-ui.sh
       - name: Test launcher, global input, game protocol and navigation
         run: ./scripts/test-app-games.sh
+      - name: Test USB TX framing and ack-loss reporting
+        run: ./scripts/test-usb-cdc.sh
+      - name: Test real-time keyboard bridge
+        run: python3 apps/key_report/pc/test_bridge.py
       - name: Fetch pinned LVGL for application rendering tests
         run: git clone --depth 1 --branch v9.5.0 https://github.com/lvgl/lvgl.git "$RUNNER_TEMP/lvgl"
       - name: Test every app with real LVGL and a 64KB UI heap
@@ -68,6 +72,7 @@ jobs:
           ./scripts/stock-t.sh --demo --dry-run
           python3 apps/demo/pc/main.py --dry-run
           python3 apps/key_report/pc/main.py --dry-run
+          python3 apps/key_report/pc/bridge.py --dry-run
           ./install.sh --help
       - name: Check patch whitespace
         run: git diff --check

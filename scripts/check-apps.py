@@ -5,8 +5,32 @@ import json
 from pathlib import Path
 import re
 
-def check(root):
+def descriptor_text(combined, app_id):
+    """The `esphook_app_<id> = {...};` initializer, without unrelated structs in the same sources."""
+    start = re.search(r"\bconst\s+app_descriptor_t\s+esphook_app_" + app_id + r"\s*=", combined)
+    end = combined.find("};", start.end())
+    return combined[start.end():end if end >= 0 else None]
+
+def list_ack_frame(root, catalog):
+    """Worst-case `app list` ack as app_runtime.c builds it with cJSON_PrintUnformatted."""
+    header = (root / "framework/include/esphook/app.h").read_text()
+    api = re.search(r"#define\s+APP_API_VERSION\s+(\d+)", header)
+    apps = [dict(id=a["id"], title=a["title"], standby=a["standby"]) for a in catalog if not a["hidden"]]
+    ack = dict(v=1, type="app_ack", seq=2147483647, ok=True, active="x" * 23, standby="x" * 23,
+               api=int(api[1]) if api else 1, apps=apps)
+    return json.dumps(ack, ensure_ascii=False, separators=(",", ":"))
+
+def tx_budget(root):
+    header = (root / "main/usb_cdc.h").read_text()
+    match = re.search(r"#define\s+CDC_TX_BUFFER_BYTES\s+(\d+)", header)
+    if not match:
+        raise ValueError("main/usb_cdc.h must define CDC_TX_BUFFER_BYTES")
+    return int(match[1])
+
+def check(root, catalog=None):
+    """Returns (errors, app count); `catalog`, when given, is filled with each app's title and flags."""
     errors, ids = [], set()
+    catalog = [] if catalog is None else catalog
     for manifest in sorted((root / "apps").glob("*/manifest.json")):
         try:
             m = json.loads(manifest.read_text())
@@ -29,10 +53,25 @@ def check(root):
                 raise ValueError("descriptor symbol missing")
             if not re.search(r'\.id\s*=\s*"' + app_id + '"', combined):
                 raise ValueError("descriptor id mismatch")
+            descriptor = descriptor_text(combined, app_id)
+            title = re.search(r'\.title\s*=\s*"((?:[^"\\]|\\.)*)"', descriptor)
+            flags = re.search(r"\.flags\s*=\s*([^,}]+)", descriptor)
+            if not title:
+                raise ValueError("descriptor needs a literal .title")
+            catalog.append(dict(id=app_id, title=title[1], hidden=bool(flags and "APP_HIDDEN" in flags[1]),
+                                standby=bool(flags and "APP_STANDBY" in flags[1])))
             if re.search(r'#\s*include\s*[<"](?:driver/|esp_lcd|esp_http_client|usb_cdc\.h|(?:esphook/)?(?:robot_runtime|motion_ports)\.h)', combined):
                 raise ValueError("apps must use framework device/transport APIs")
         except (KeyError, ValueError, TypeError, OSError) as exc:
             errors.append(f"{manifest.relative_to(root)}: {exc}")
+    try:
+        # The ack must fit the USB TX ring in one piece (+1 for the newline); see test-usb-cdc and usb_cdc.c.
+        size, budget = len(list_ack_frame(root, catalog).encode()) + 1, tx_budget(root)
+        if size > budget:
+            errors.append(f"worst-case `list` ack is {size} bytes, above the {budget}-byte CDC_TX_BUFFER_BYTES budget; "
+                          "shorten titles, reduce visible apps or enlarge main/usb_cdc.h")
+    except (OSError, ValueError) as exc:
+        errors.append(f"cannot verify the `list` ack size: {exc}")
     for required in ("launcher", "face", "settings"):
         if required not in ids:
             errors.append(f"missing required app {required}")

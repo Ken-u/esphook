@@ -1,11 +1,16 @@
+import importlib.util
 import json
 from collections import deque
 from pathlib import Path
 import sys
 import unittest
 from unittest.mock import patch
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "framework/pc"))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "framework/pc"))
 from esphook_sdk import AppLink
+spec = importlib.util.spec_from_file_location("check_apps", ROOT / "scripts/check-apps.py")
+check_apps = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(check_apps)
 
 class FakeSerial:
     in_waiting = 0
@@ -23,6 +28,26 @@ class FakeSerial:
         self.rx.extend(json.dumps(dict(v=1,type="app_ack" if prefix==b"app" else "game_ack",seq=self.sent["seq"],ok=True,queued=True,mapping=self.mapping,hardware=self.hardware)).encode()+b'\n')
     def read(self, n):
         raw = bytes(self.rx[:9]); del self.rx[:9]; return raw
+
+class ListAckSerial:
+    """Answers `list` with the real catalog's worst-case ack, split into tiny reads between log noise."""
+    in_waiting = 0
+
+    def __init__(self, frame):
+        self.frame, self.rx = frame, bytearray()
+
+    def write(self, raw):
+        request = json.loads(raw.split(b" ", 1)[1])
+        assert request["op"] == "list"
+        ack = json.loads(self.frame)
+        ack["seq"] = request["seq"]
+        self.rx.extend(b"I (88) cdc: log line\n" + json.dumps(ack, ensure_ascii=False, separators=(",", ":")).encode() + b"\n")
+
+    def read(self, n):
+        raw = bytes(self.rx[:5])
+        del self.rx[:5]
+        return raw
+
 
 class SdkTests(unittest.TestCase):
     def link(self,cls=AppLink):
@@ -80,5 +105,27 @@ class SdkTests(unittest.TestCase):
         link.message("demo", dict(text="hello"))
         self.assertEqual(link.sequence, 1)
         with self.assertRaises(ValueError): link.message("demo", dict(text="x"*2000))
+
+    def test_catalog_survives_ack_longer_than_the_old_tx_ring(self):
+        # Regression for test-report-usb-ack-and-gestures.md: the `list` ack exceeded IDF's 256-byte default TX ring
+        # and never reached the PC. The firmware budget and the SDK parse are both checked against the real catalog.
+        catalog = []
+        errors, count = check_apps.check(ROOT, catalog)
+        self.assertEqual(errors, [])
+        frame = check_apps.list_ack_frame(ROOT, catalog)
+        self.assertGreater(len(frame.encode()) + 1, 256)
+        self.assertLessEqual(len(frame.encode()) + 1, check_apps.tx_budget(ROOT))
+        link = object.__new__(AppLink)
+        link.serial, link.sequence, link.events, link.pending, link.selected = ListAckSerial(frame), 0, deque(), bytearray(), False
+        apps = link.catalog()
+        self.assertEqual([a["id"] for a in apps], ["basketball", "demo", "face", "hook", "key_report", "radar", "settings", "stock"])
+        self.assertEqual(apps[0]["title"], "投篮")
+
+    def test_list_ack_budget_guard(self):
+        catalog = [dict(id=f"app_{i:02d}_" + "x" * 10, title="四个汉字", hidden=False, standby=True) for i in range(40)]
+        frame = check_apps.list_ack_frame(ROOT, catalog)
+        self.assertGreater(len(frame.encode()) + 1, check_apps.tx_budget(ROOT))
+        hidden = [dict(entry, hidden=True) for entry in catalog]
+        self.assertNotIn('"apps":[{', check_apps.list_ack_frame(ROOT, hidden))
 
 if __name__ == "__main__": unittest.main()

@@ -76,6 +76,14 @@ python run.py input keymap --set apps/key_report/pc/keymap.example.json
 python run.py keys --config apps/key_report/pc/bindings.example.json
 ```
 
+```bash
+python run.py bridge                       # 终端实时转发：space/enter/tab 或 1/2/3 为 K1/K2/K3 短按，h+键长按，t 三击，m 菜单，q 退出
+python run.py bridge --app key_report      # 先打开应用，再转发，并打印设备回传事件
+uv run --with pyserial --with pynput python run.py bridge --backend pynput --config apps/key_report/pc/bridge.example.json
+```
+
+bridge 不依赖 Tkinter。终端后端看不到按键松开，所以每个键是一次短按；全局 pynput 后端有真实按下/松开，能做出真实长按，但会监听整台电脑的键盘且不能吞键，务必绑定专用键。
+
 keys 打开一个仅在自身窗口有焦点时接收键盘的控制器，需要 Python Tkinter；没有 Tkinter 仍可用 input 命令和 SDK。默认 Space 对应 K1、Return 对应 K2、Tab 对应 K3，例子可将 Space/Return 都绑定到 K1。USB 模拟的是原始按下/松开，设备统一判定短按、500ms 长按和快速三击。实体键和 USB 键各自记录状态，某一边松开不会把另一边仍按住的键松开。
 
 设备映射 physical/usb 分别将三个原始键映射到逻辑 K1/K2/K3（0/1/2），words 是三个逻辑键的 Hook 回传词；整体保存到 NVS。新的映射用于下一次按下，正在按住的键松开仍使用原映射。全局菜单手势属于逻辑 K1；改映射时保留可操作的 K1，必要时用 USB menu/keymap 恢复。

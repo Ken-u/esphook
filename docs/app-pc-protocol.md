@@ -9,6 +9,7 @@
 | 示例程序 | `uv run --with pyserial python apps/demo/pc/main.py --text '你好'` |
 | 按键事件查看器 | `uv run --with pyserial python apps/key_report/pc/main.py` |
 | USB 键盘窗口 | `python run.py keys --config apps/key_report/pc/bindings.example.json` |
+| 实时键盘转发 | `python run.py bridge`（终端）或 `python run.py bridge --backend pynput --config apps/key_report/pc/bridge.example.json`（全局） |
 | 通用 USB SDK | `framework/pc/esphook_sdk`，AppLink / UsbLink |
 
 没有 uv 时安装 pyserial 后用 Python 3。传 `--port` 指定串口，否则匹配唯一 Espressif USB；同一串口不要同时运行 monitor 和配套。demo / key_report / stock 支持 `--dry-run`，不会打开 USB。
@@ -66,6 +67,14 @@ SDK 过滤普通日志、合并分包，只接受匹配 seq 的 ACK，并在等�
 
 大数据不要塞进通用 message。参考 stock 的 begin/bars/show：校验总数、偏移、行内容，上传到暂存区，完整后一次提交；数据只在 RAM，设置才写 NVS。使用 game v1 的股票上位机仍与本版兼容，具体字段见 [robot-stock-t.md](robot-stock-t.md)。
 
+## 回复长度与丢帧
+
+设备的 USB TX 环为 2048 字节（`CDC_TX_BUFFER_BYTES`），整行 ACK 按 256 字节分片写入；`cdc_write` 只有整行进入 TX 环才返回成功。IDF 默认的 256 字节环放不下超过它的单次写入，曾使约 480 字节的 `list` ACK 整条丢失、线上只剩一个换行。现在：
+
+- `scripts/check-apps.py` 按全部 manifest 的标题和标志估算 `list` ACK 的最坏长度，超过 `CDC_TX_BUFFER_BYTES` 即失败；新增应用前先看这条预算。
+- 主机长时间不读串口时设备丢弃整行，不再留下孤立换行；被截断的行以换行收尾，不会与下一帧粘连。`usb_tx_drops` 是开机以来丢弃的行数，请求超时后立即查 `hardware`，若数字增长即确认设备侧 TX 停滞。
+- 打开串口后可能先读到设备残留的旧行（如启动提示）；SDK 忽略非 JSON 行和 seq 不匹配的 ACK。
+
 ## USB 输入 SDK
 
 ```python
@@ -79,8 +88,10 @@ print(link.hardware())
 link.set_hardware_profile("robot", reboot=True)
 ```
 
+`run.py bridge` 是同一 SDK 的实时键盘转发：监听 PC 键盘并转成 key_down/key_up/tap/hold，同时把设备事件（key_report、应用事件）按行 JSON 打印。默认 `terminal` 后端只需终端，终端拿不到松开事件，因此每个键是一次短按，`h` 再按键是 550ms 长按，`t` 三击 K1，`m` 菜单，`r` 取消按住，`q`/Esc 退出；`--backend pynput` 用全局监听得到真实按下/松开（需 `pip install pynput`，macOS 要给终端“输入监控”权限），按住就是设备上的按住，`--quit-key`（默认 F12）停止。全局监听无法吞掉按键，请绑定专用键（`bridge.example.json` 用 F9/F10/F11）。它不向其他程序注入按键，和 monitor、其他 PC 配套一样独占串口。
+
 keymap ACK 的 mapping 是已持久化配置，usb_lease_ms 为 350。physical/usb 各为三个 0..2 的逻辑键；允许多个原始键映射到同一键。words 为三个 1..15 字符可打印 ASCII 回复词。正在按住的键使用 DOWN 时的映射直到松开。
 
 hold/press/poll 每 100ms 续期；手动 key_down 后须持续 poll 或重复 key_down。超时发 CANCEL，释放后不补发 SHORT/CONFIRM。实体/USB 多来源按住合并，一方释放不会松开另一方。close 与窗口失焦取消 USB 键；GameLink 使用相同连接调用这些接口，不占第二个串口。stock 真机只接受设备确认，CANCEL 恢复暂停而不交易。
 
-hardware ACK 的 hardware 含 active/configured/restart_required/drivers_compiled/physical_keys、screen/radar/servo 和 radar_frames。状态为 unknown、initialized_connection_unknown、not_detected、detected、disabled 或 error。初始化成功不代表设备实物接入；只有有效雷达帧可确认检测。auto 默认不初始化 PWM，robot 需保存后重启并显式 arm；旧屏幕设备可选 screen。详见 [发布指南](release-kit.md)。
+hardware ACK 的 hardware 含 active/configured/restart_required/drivers_compiled/physical_keys、screen/radar/servo、radar_frames 和 usb_tx_drops。状态为 unknown、initialized_connection_unknown、not_detected、detected、disabled 或 error。初始化成功不代表设备实物接入；只有有效雷达帧可确认检测。auto 默认不初始化 PWM，robot 需保存后重启并显式 arm；旧屏幕设备可选 screen。详见 [发布指南](release-kit.md)。

@@ -5,7 +5,7 @@ if(NOT CMAKE_SCRIPT_MODE_FILE)
 endif()
 set(framework "${PROJECT_DIR}/framework")
 idf_component_register(
-    SRCS "main.c" "usb_cdc.c" "config_store.c"
+    SRCS "main.c" "usb_cdc.c" "usb_cdc_tx.c" "config_store.c"
          "aihook_font_12.c" "aihook_font_16.c" "ota_update.c"
          "font_store.c"
          "device_link.c"
