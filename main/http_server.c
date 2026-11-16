@@ -253,7 +253,9 @@ static esp_err_t h_config(httpd_req_t *req)
             keys[i] = kbuf[i];
         }
     }
-    config_set_keymap(keys);
+    if (config_set_keymap(keys) != ESP_OK) {
+        httpd_resp_send_err(req,400,"{\"ok\":false,\"error\":\"invalid keymap\"}");return ESP_OK;
+    }
 
     /* 解析形如 c:<id>=<name> 和 s:<id>=<name> 的字段（Web 页新格式）。
        字段名以 c: 或 s: 开头。逐字段扫描，含末尾无 & 的最后一个字段。 */

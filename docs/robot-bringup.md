@@ -1,6 +1,6 @@
 # 桌面跟随机器人首版调试
 
-本分支默认开启 `CONFIG_DESKTOP_FOLLOW_ROBOT`。硬件为 ESP32-C3 SuperMini（4MB）、原 ST7735 160×80 SPI 屏、LD2450 和 NHY009，新增 GPIO6 游戏按键。电脑 USB 经同一个 Type-C 入口给整机供电。
+通用构建默认编入 `CONFIG_DESKTOP_FOLLOW_ROBOT` 可选驱动，但运行配置默认 auto，保留旧三按键且不初始化 PWM。先运行 `python run.py hardware --set robot --reboot`（或设置应用配置页保存并重启），再执行下面的机器人调试。配置/检测状态详见 [发布指南](release-kit.md)。硬件为 ESP32-C3 SuperMini（4MB）、原 ST7735 160×80 SPI 屏、LD2450 和 NHY009，新增 GPIO6 游戏按键。电脑 USB 经同一个 Type-C 入口给整机供电。
 
 ## 默认接线
 
@@ -89,7 +89,7 @@ robot follow
 - 正常空上报进入 lost，保持原目标角最多 1.5s，再限速回中；800ms 没有有效上报进入 radar_fault，并在保持期结束后回中。
 - 收到新数据后重新建立过期的目标关联；不会把上一次断流前的目标直接当成当前人。
 - 黑底紫色像素眼睛、金色嘴、粉色脸颊，带眨眼和视线偏移。跟随时笑眼，雷达故障时黄色叉眼。底部紫/金小标识对应关闭/开启输出。表情显示不依赖 Wi-Fi，机器人模式保持屏幕亮起。
-- Wi-Fi 配网和 HTTP OTA 沿用原入口。本版不把 Hook 提醒覆盖到表情上，也不回传实体按键。
+- Wi-Fi 配网和 HTTP OTA 沿用原入口。待机收到 Hook 通知时可进入 Hook 应用；游戏不会被打断。Hook 和按键应用均可回传，USB 虚拟按键也使用同一 SDK/手势框架。
 
 ## 自定义表情、文字与雷达页
 

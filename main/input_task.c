@@ -1,6 +1,7 @@
 #include "input_task.h"
 #include "sdkconfig.h"
 #include "esphook/app_runtime.h"
+#include "esphook/app_hardware.h"
 #include "esphook/robot_runtime.h"
 #include "esphook/robot_ui.h"
 #include "usb_cdc.h"
@@ -18,12 +19,9 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
-#ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
-static const int s_gpios[]={6};
-#else
 static const int s_gpios[]={6,10,11};
-#endif
-#define KEY_COUNT (sizeof s_gpios / sizeof s_gpios[0])
+static unsigned s_key_count=3;
+#define KEY_COUNT 3U
 static void IRAM_ATTR button_isr(void *arg)
 {
     BaseType_t wake=pdFALSE; vTaskNotifyGiveFromISR((TaskHandle_t)arg,&wake);
@@ -33,12 +31,12 @@ static void input_task(void *arg)
 {
     (void)arg; app_button_t buttons[KEY_COUNT]; memset(buttons,0,sizeof buttons);
     uint64_t now=(uint64_t)esp_timer_get_time()/1000;
-    for(unsigned i=0;i<KEY_COUNT;++i) (void)app_button_sample(&buttons[i],gpio_get_level(s_gpios[i])==0,now);
+    for(unsigned i=0;i<s_key_count;++i) (void)app_button_sample(&buttons[i],gpio_get_level(s_gpios[i])==0,now);
     TickType_t wait=portMAX_DELAY;
     for(;;) {
         uint32_t edges=ulTaskNotifyTake(pdTRUE,wait); now=(uint64_t)esp_timer_get_time()/1000;
         wait=portMAX_DELAY;
-        for(unsigned i=0;i<KEY_COUNT;++i) {
+        for(unsigned i=0;i<s_key_count;++i) {
             app_button_t *b=&buttons[i]; bool level=gpio_get_level(s_gpios[i])==0;
             if(edges) app_button_edge(b,level,now);
             bool was=b->stable_pressed,down=app_button_sample(b,level,now);
@@ -54,7 +52,8 @@ static void input_task(void *arg)
 }
 void input_start(void)
 {
-    for(unsigned i=0;i<KEY_COUNT;++i) {
+    s_key_count=app_hardware_policy(app_hardware_active()).physical_keys;
+    for(unsigned i=0;i<s_key_count;++i) {
         gpio_config_t c={.pin_bit_mask=1ULL<<s_gpios[i],.mode=GPIO_MODE_INPUT,
             .pull_up_en=GPIO_PULLUP_ENABLE,.pull_down_en=GPIO_PULLDOWN_DISABLE,.intr_type=GPIO_INTR_DISABLE};
         ESP_ERROR_CHECK(gpio_config(&c));
@@ -63,7 +62,7 @@ void input_start(void)
     if(err!=ESP_OK && err!=ESP_ERR_INVALID_STATE) ESP_ERROR_CHECK(err);
     TaskHandle_t task=NULL;
     if(xTaskCreate(input_task,"app_input",3072,NULL,5,&task)!=pdPASS) { ESP_LOGE("input","input task failed"); return; }
-    for(unsigned i=0;i<KEY_COUNT;++i) {
+    for(unsigned i=0;i<s_key_count;++i) {
         ESP_ERROR_CHECK(gpio_isr_handler_add(s_gpios[i],button_isr,task));
         ESP_ERROR_CHECK(gpio_set_intr_type(s_gpios[i],GPIO_INTR_ANYEDGE)); ESP_ERROR_CHECK(gpio_intr_enable(s_gpios[i]));
     }

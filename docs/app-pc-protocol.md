@@ -8,6 +8,7 @@
 | 做 T 数据、逻辑和 chart 协议适配 | `apps/stock/pc`；`scripts/stock-t.sh` 保留 |
 | 示例程序 | `uv run --with pyserial python apps/demo/pc/main.py --text '你好'` |
 | 按键事件查看器 | `uv run --with pyserial python apps/key_report/pc/main.py` |
+| USB 键盘窗口 | `python run.py keys --config apps/key_report/pc/bindings.example.json` |
 | 通用 USB SDK | `framework/pc/esphook_sdk`，AppLink / UsbLink |
 
 没有 uv 时安装 pyserial 后用 Python 3。传 `--port` 指定串口，否则匹配唯一 Espressif USB；同一串口不要同时运行 monitor 和配套。demo / key_report / stock 支持 `--dry-run`，不会打开 USB。
@@ -43,6 +44,10 @@ finally:
 | open | `{"v":1,"seq":2,"op":"open","app":"demo"}` |
 | menu | 排队回系统启动器 |
 | standby | 带 app，必须有 APP_STANDBY；排队保存 NVS |
+| key | 带 key（0..2 整数）、pressed（布尔）；原始按下/松开入队，由设备判定手势 |
+| keys_release | 取消所有 USB 按住，不产生短按或确认 |
+| keymap | 无 mapping 时读取；写入完整 `{"physical":[0,1,2],"usb":[0,1,2],"words":["ok","continue","done"]}`；同步保存 NVS |
+| hardware | 无 profile 时读取；可选 profile 为 auto/screen/robot，可选 reboot 布尔需同时带 profile |
 | message | 带 app 和 data 对象；data 序列化后 ≤128 UTF-8 字节，只送当前前台目标应用 |
 
 返回 `{"v":1,"type":"app_ack","seq":2,"ok":true,"queued":true}`。seq 匹配请求；`queued` 只保证操作已入队，open 后使用 wait_active/status 验证进入。standby 保存结果通过后续 status 的 standby 确认，保存失败保留旧值并输出错误。message 若在消费前离开目标页面会被丢弃，不跨应用保留私有消息。
@@ -60,3 +65,22 @@ finally:
 SDK 过滤普通日志、合并分包，只接受匹配 seq 的 ACK，并在等待 ACK 时暂存事件。事件队列最多 256 项，消费者需及时 poll；过慢会丢弃最旧事件。错误/断开以异常报告，关闭端口后由应用自己的协议策略清理会话。
 
 大数据不要塞进通用 message。参考 stock 的 begin/bars/show：校验总数、偏移、行内容，上传到暂存区，完整后一次提交；数据只在 RAM，设置才写 NVS。使用 game v1 的股票上位机仍与本版兼容，具体字段见 [robot-stock-t.md](robot-stock-t.md)。
+
+## USB 输入 SDK
+
+```python
+link.set_bindings({"space": 0, "return": 0})  # PC 键名映射到 USB 原始键
+link.tap("space")
+link.hold(0, 550)
+link.triple(0)
+print(link.keymap())
+link.set_keymap(physical=[0,1,2], usb=[0,1,2], words=["ok","continue","done"])
+print(link.hardware())
+link.set_hardware_profile("robot", reboot=True)
+```
+
+keymap ACK 的 mapping 是已持久化配置，usb_lease_ms 为 350。physical/usb 各为三个 0..2 的逻辑键；允许多个原始键映射到同一键。words 为三个 1..15 字符可打印 ASCII 回复词。正在按住的键使用 DOWN 时的映射直到松开。
+
+hold/press/poll 每 100ms 续期；手动 key_down 后须持续 poll 或重复 key_down。超时发 CANCEL，释放后不补发 SHORT/CONFIRM。实体/USB 多来源按住合并，一方释放不会松开另一方。close 与窗口失焦取消 USB 键；GameLink 使用相同连接调用这些接口，不占第二个串口。stock 真机只接受设备确认，CANCEL 恢复暂停而不交易。
+
+hardware ACK 的 hardware 含 active/configured/restart_required/drivers_compiled/physical_keys、screen/radar/servo 和 radar_frames。状态为 unknown、initialized_connection_unknown、not_detected、detected、disabled 或 error。初始化成功不代表设备实物接入；只有有效雷达帧可确认检测。auto 默认不初始化 PWM，robot 需保存后重启并显式 arm；旧屏幕设备可选 screen。详见 [发布指南](release-kit.md)。

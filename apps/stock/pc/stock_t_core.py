@@ -17,7 +17,7 @@ class TradingDay:
 
 
 class StockT:
-    def __init__(self, day, now=0.0, interval=1.0):
+    def __init__(self, day, now=0.0, interval=1.0, *, device_confirm=False):
         if interval <= 0 or day.first >= len(day.bars):
             raise ValueError("invalid replay")
         self.day, self.interval = day, interval
@@ -33,6 +33,7 @@ class StockT:
         self.last_action = None
         self.request = None
         self.pause_remaining = interval
+        self.device_confirm = device_confirm
 
     @property
     def price(self):
@@ -100,8 +101,14 @@ class StockT:
         if self.down_at is not None and not self.consumed:
             self._hold(now)
 
+    def cancel(self, now):
+        if self.down_at is not None and not self.consumed and self.phase == "play":
+            self.next_bar = now + self.pause_remaining
+        self.down_at = None
+        self.consumed = False
+
     def update(self, now):
-        if self.down_at is not None and not self.consumed and now - self.down_at >= HOLD_SECONDS:
+        if not self.device_confirm and self.down_at is not None and not self.consumed and now - self.down_at >= HOLD_SECONDS:
             self._hold(now)
         if self.phase != "play" or (self.down_at is not None and not self.consumed):
             return

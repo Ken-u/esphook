@@ -23,6 +23,7 @@ static void event(app_context_t *ctx, const app_event_t *e)
     if (e->kind == APP_EVENT_DOWN) stock_transport_event("down", e->ms);
     if (e->kind == APP_EVENT_CONFIRM) stock_transport_event("hold", e->ms);
     if (e->kind == APP_EVENT_UP) stock_transport_event("up", e->ms);
+    if (e->kind == APP_EVENT_CANCEL) stock_transport_event("cancel", e->ms);
     if (e->kind == APP_EVENT_SHORT) { state_t *s=ctx->state;
         stock_transport_view(ctx->now_ms, &s->view);
         if (!s->view.active || s->view.offline) app_menu(ctx); }

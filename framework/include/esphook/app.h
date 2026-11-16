@@ -14,7 +14,7 @@ typedef struct app_manager app_manager_t;
 typedef struct app_context app_context_t;
 typedef struct app_descriptor app_descriptor_t;
 typedef enum { APP_EVENT_DOWN, APP_EVENT_UP, APP_EVENT_SHORT, APP_EVENT_CONFIRM,
-               APP_EVENT_MESSAGE, APP_EVENT_NOTIFY, APP_EVENT_NETWORK } app_event_kind_t;
+               APP_EVENT_MESSAGE, APP_EVENT_NOTIFY, APP_EVENT_NETWORK, APP_EVENT_CANCEL } app_event_kind_t;
 typedef struct {
     app_event_kind_t kind;
     unsigned key;

@@ -14,13 +14,16 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef enum { R_KEY, R_OPEN, R_MENU, R_STANDBY, R_MESSAGE } request_kind_t;
+typedef enum { R_KEY, R_OPEN, R_MENU, R_STANDBY, R_MESSAGE, R_USB_KEY, R_USB_RELEASE } request_kind_t;
 typedef struct { request_kind_t kind; uint64_t ms; unsigned key; bool down;
                  char id[APP_ID_MAX + 1], text[APP_MESSAGE_MAX + 1]; } request_t;
 static QueueHandle_t s_requests;
 static app_manager_t s_manager;
 static char s_active[APP_ID_MAX + 1], s_standby[APP_ID_MAX + 1];
 static bool s_started;
+static bool s_map_reload;
+static app_key_router_t s_keys;
+static uint64_t s_reboot_at;
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 extern esp_err_t app_services_init(void);
 extern void app_services_release(const char *id, void *user);
@@ -28,6 +31,11 @@ static void *scene_create(void *user) { (void)user; return app_ui_layer(lv_scree
 static void scene_delete(void *root, void *user) { (void)user; lv_obj_delete(root); }
 static bool save_standby(const char *id, void *user) { (void)user; return config_set_standby(id) == ESP_OK; }
 static uint64_t clock_ms(void) { return (uint64_t)esp_timer_get_time() / 1000; }
+static void key_edge(void *user,unsigned key,bool down,bool cancel,uint64_t ms)
+{
+    app_manager_t *m=user;
+    if(cancel) app_manager_cancel_key(m,key,ms); else app_manager_key(m,key,down,ms);
+}
 static void publish(void)
 {
     portENTER_CRITICAL(&s_lock);
@@ -74,6 +82,8 @@ static void boot(uint64_t now)
     app_platform_t platform = {.scene_create = scene_create, .scene_delete = scene_delete,
         .release_services = app_services_release, .save_standby = save_standby};
     ESP_ERROR_CHECK(app_manager_init(&s_manager, esphook_apps, esphook_app_count, &platform, standby, now) ? ESP_OK : ESP_ERR_INVALID_STATE);
+    app_keymap_t map;(void)config_get_input_keymap(&map);
+    app_key_router_init(&s_keys,&map,key_edge,&s_manager);
     s_started = true; publish();
 }
 void app_runtime_display_event(const display_event_t *e, uint64_t now)
@@ -96,10 +106,15 @@ void app_runtime_display_event(const display_event_t *e, uint64_t now)
 void app_runtime_tick(uint64_t now)
 {
     if (!s_started) boot(now);
+    portENTER_CRITICAL(&s_lock);bool reload=s_map_reload;s_map_reload=false;portEXIT_CRITICAL(&s_lock);
+    if(reload) { app_keymap_t map;(void)config_get_input_keymap(&map);(void)app_key_router_configure(&s_keys,&map); }
     request_t r;
     for (unsigned i = 0; i < 16 && xQueueReceive(s_requests, &r, 0); ++i) {
         s_manager.context.now_ms = r.ms;
-        if (r.kind == R_KEY) app_manager_key(&s_manager, r.key, r.down, r.ms);
+        app_key_router_tick(&s_keys,r.ms);
+        if (r.kind == R_KEY || r.kind == R_USB_KEY)
+            app_key_router_edge(&s_keys,r.kind==R_KEY?APP_KEY_PHYSICAL:APP_KEY_USB,r.key,r.down,false,r.ms);
+        else if(r.kind==R_USB_RELEASE) app_key_router_release_usb(&s_keys,r.ms);
         else if (r.kind == R_OPEN) (void)app_open(&s_manager.context, r.id);
         else if (r.kind == R_MENU) app_menu(&s_manager.context);
         else if (r.kind == R_STANDBY) {
@@ -110,7 +125,10 @@ void app_runtime_tick(uint64_t now)
         }
         app_manager_commit(&s_manager); publish();
     }
+    app_key_router_tick(&s_keys,now);
     app_manager_tick(&s_manager, now); publish(); app_manager_render(&s_manager);
+    portENTER_CRITICAL(&s_lock);uint64_t restart=s_reboot_at;portEXIT_CRITICAL(&s_lock);
+    if(restart && now>=restart) app_device_restart();
     /* Every app controls its own idle behavior; active animations stay awake. */
     dv_activity();
 }
@@ -121,6 +139,32 @@ static void ack(const app_request_t *request, bool ok, bool queued)
     cJSON_AddNumberToObject(j, "seq", request->seq); cJSON_AddBoolToObject(j, "ok", ok);
     if (!ok) cJSON_AddStringToObject(j, "error", "invalid request, app unavailable or queue full");
     if (queued) cJSON_AddBoolToObject(j, "queued", true);
+    if(ok && request->op==APP_OP_KEYMAP) {
+        app_keymap_t map;(void)config_get_input_keymap(&map);
+        cJSON *mapping=cJSON_AddObjectToObject(j,"mapping");
+        cJSON *physical=cJSON_AddArrayToObject(mapping,"physical"), *usb=cJSON_AddArrayToObject(mapping,"usb"), *words=cJSON_AddArrayToObject(mapping,"words");
+        for(unsigned i=0;i<3;++i) {
+            cJSON_AddItemToArray(physical,cJSON_CreateNumber(map.physical[i]));
+            cJSON_AddItemToArray(usb,cJSON_CreateNumber(map.usb[i]));
+            cJSON_AddItemToArray(words,cJSON_CreateString(map.words[i]));
+        }
+        cJSON_AddNumberToObject(j,"usb_lease_ms",APP_USB_KEY_LEASE_MS);
+    }
+    if(ok && request->op==APP_OP_HARDWARE) {
+        app_hardware_info_t info;app_hardware_info(&info);
+        cJSON *hardware=cJSON_AddObjectToObject(j,"hardware");
+        cJSON_AddStringToObject(hardware,"active",app_hardware_profile_name(info.active));
+        cJSON_AddStringToObject(hardware,"configured",app_hardware_profile_name(info.configured));
+        cJSON_AddBoolToObject(hardware,"restart_required",info.restart_required);
+        cJSON_AddBoolToObject(hardware,"drivers_compiled",info.drivers_compiled);
+        cJSON_AddNumberToObject(hardware,"physical_keys",info.physical_keys);
+        const char *names[]={"unknown","initialized_connection_unknown","not_detected","detected","disabled","error"};
+        cJSON_AddStringToObject(hardware,"screen",names[info.screen]);
+        cJSON_AddStringToObject(hardware,"radar",names[info.radar]);
+        cJSON_AddStringToObject(hardware,"servo",names[info.servo]);
+        cJSON_AddNumberToObject(hardware,"radar_frames",info.radar_frames);
+        if(request->reboot) cJSON_AddBoolToObject(j,"rebooting",true);
+    }
     if (ok && (request->op == APP_OP_STATUS || request->op == APP_OP_LIST)) {
         char active[24], standby[24];
         portENTER_CRITICAL(&s_lock); strcpy(active, s_active); strcpy(standby, s_standby); portEXIT_CRITICAL(&s_lock);
@@ -151,6 +195,16 @@ bool app_runtime_command(const char *line)
                 const app_descriptor_t *a = find_app(r.app);
                 request_t request = {.kind = R_STANDBY, .ms = clock_ms()}; strcpy(request.id, r.app);
                 ok = queued = a && (a->flags & APP_STANDBY) && post(&request);
+            } else if(r.op==APP_OP_KEY) {
+                request_t request={.kind=R_USB_KEY,.key=r.key,.down=r.pressed,.ms=clock_ms()};ok=queued=post(&request);
+            } else if(r.op==APP_OP_KEYS_RELEASE) {
+                request_t request={.kind=R_USB_RELEASE,.ms=clock_ms()};ok=queued=post(&request);
+            } else if(r.op==APP_OP_KEYMAP && r.keymap_set) {
+                ok=config_set_input_keymap(&r.keymap)==ESP_OK;
+                if(ok) { portENTER_CRITICAL(&s_lock);s_map_reload=true;portEXIT_CRITICAL(&s_lock); }
+            } else if(r.op==APP_OP_HARDWARE && r.hardware_set) {
+                ok=app_hardware_set_profile(r.hardware_profile);
+                if(ok && r.reboot) { portENTER_CRITICAL(&s_lock);s_reboot_at=clock_ms()+500;portEXIT_CRITICAL(&s_lock); }
             }
         }
         ack(&r, ok, queued); return true;

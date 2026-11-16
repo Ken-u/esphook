@@ -132,6 +132,13 @@ void app_manager_tick(app_manager_t *m, uint64_t ms)
     if (m->context.app->on_tick) m->context.app->on_tick(&m->context);
     app_manager_commit(m);
 }
+void app_manager_cancel_key(app_manager_t *m,unsigned key,uint64_t ms)
+{
+    if(!m->ready || key>=3) return;
+    bool notify=m->input[key].down && !m->input[key].blocked;
+    memset(&m->input[key],0,sizeof m->input[key]);
+    if(notify) { app_event_t e={.kind=APP_EVENT_CANCEL,.key=key,.ms=ms};app_manager_event(m,&e); }
+}
 void app_manager_render(app_manager_t *m)
 {
     if (!m->ready) return;

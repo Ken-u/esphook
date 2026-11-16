@@ -37,6 +37,8 @@ static lv_display_t *s_display;
 static esp_timer_handle_t s_lv_tick_timer;
 static int64_t s_last_activity_us;
 static bool s_screen_awake;
+static bool s_initialized;
+bool dv_is_initialized(void) { return s_initialized; }
 static bool lcd_color_trans_done_cb(esp_lcd_panel_io_handle_t panel_io,
                                     esp_lcd_panel_io_event_data_t *edata,
                                     void *user_ctx)
@@ -177,6 +179,7 @@ esp_err_t dv_init(void)
     ESP_ERROR_CHECK(esp_timer_create(&tick_args, &s_lv_tick_timer));
     ESP_ERROR_CHECK(esp_timer_start_periodic(s_lv_tick_timer, LVGL_TICK_PERIOD_MS * 1000));
 
+    s_initialized=true;
     ESP_LOGI(TAG, "LVGL ST7735 initialized %dx%d, partial=%d lines",
              DV_WIDTH, DV_HEIGHT, LVGL_DRAW_BUF_LINES);
     return ESP_OK;

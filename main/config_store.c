@@ -12,6 +12,23 @@ static const char *NS_DISPLAY = "display";
 static const char *NS_SEEN = "seen";
 static const char *DEFAULT_KEYS[3] = {"ok", "continue", "done"};
 
+app_hardware_profile_t config_get_hardware_profile(void)
+{
+    nvs_handle_t h;app_hardware_profile_t profile=APP_PROFILE_AUTO;
+    if(nvs_open("apps",NVS_READONLY,&h)!=ESP_OK) return profile;
+    char name[16];size_t len=sizeof name;
+    if(nvs_get_str(h,"hardware",name,&len)==ESP_OK) (void)app_hardware_profile_parse(name,&profile);
+    nvs_close(h);return profile;
+}
+esp_err_t config_set_hardware_profile(app_hardware_profile_t profile)
+{
+    if((unsigned)profile>APP_PROFILE_ROBOT) return ESP_ERR_INVALID_ARG;
+    nvs_handle_t h;esp_err_t err=nvs_open("apps",NVS_READWRITE,&h);if(err!=ESP_OK) return err;
+    err=nvs_set_str(h,"hardware",app_hardware_profile_name(profile));
+    if(err==ESP_OK) err=nvs_commit(h);
+    nvs_close(h);return err;
+}
+
 esp_err_t config_get_standby(char *out, size_t len)
 {
     if (!out || !len) return ESP_ERR_INVALID_ARG;
@@ -164,35 +181,54 @@ esp_err_t config_get_link_secret(char *out, size_t len)
     return err;
 }
 
-esp_err_t config_set_keymap(const char *keys[3])
+/* One versioned NVS blob commits maps and reply words together. Read old
+ * individual key strings only until the first new configuration is saved. */
+typedef struct { uint8_t version; app_keymap_t map; } input_blob_t;
+_Static_assert(sizeof(input_blob_t)==55, "input configuration format changed");
+esp_err_t config_get_input_keymap(app_keymap_t *out)
 {
-    nvs_handle_t h;
-    if (nvs_open(NS_KEYMAP, NVS_READWRITE, &h) != ESP_OK) return ESP_FAIL;
-    for (int i = 0; i < 3; i++) {
-        if (keys[i]) {
-            char k[12];
-            snprintf(k, sizeof(k), "key%d", i);
-            nvs_set_str(h, k, keys[i]);
+    if(!out) return ESP_ERR_INVALID_ARG;
+    *out=app_keymap_default();nvs_handle_t h;
+    esp_err_t err=nvs_open(NS_KEYMAP,NVS_READONLY,&h);
+    if(err==ESP_ERR_NVS_NOT_FOUND) return ESP_OK;
+    if(err!=ESP_OK) return err;
+    input_blob_t saved;size_t len=sizeof saved;
+    if(nvs_get_blob(h,"input_v1",&saved,&len)==ESP_OK && len==sizeof saved && saved.version==1 && app_keymap_valid(&saved.map)) {
+        *out=saved.map;nvs_close(h);return ESP_OK;
+    }
+    for(int i=0;i<3;++i) {
+        char key[12],word[APP_KEY_WORD_SIZE];snprintf(key,sizeof key,"key%d",i);len=sizeof word;
+        if(nvs_get_str(h,key,word,&len)==ESP_OK) {
+            app_keymap_t next=*out;snprintf(next.words[i],sizeof next.words[i],"%s",word);
+            if(app_keymap_valid(&next)) *out=next;
         }
     }
-    nvs_commit(h);
-    nvs_close(h);
-    return ESP_OK;
+    nvs_close(h);return ESP_OK;
 }
-
+esp_err_t config_set_input_keymap(const app_keymap_t *map)
+{
+    if(!app_keymap_valid(map)) return ESP_ERR_INVALID_ARG;
+    nvs_handle_t h;esp_err_t err=nvs_open(NS_KEYMAP,NVS_READWRITE,&h);
+    if(err!=ESP_OK) return err;
+    input_blob_t saved={.version=1,.map=*map};err=nvs_set_blob(h,"input_v1",&saved,sizeof saved);
+    if(err==ESP_OK) err=nvs_commit(h);
+    nvs_close(h);return err;
+}
+esp_err_t config_set_keymap(const char *keys[3])
+{
+    app_keymap_t map;esp_err_t err=config_get_input_keymap(&map);if(err!=ESP_OK) return err;
+    for(unsigned i=0;i<3;++i) if(keys[i]) {
+        if(strlen(keys[i])>=APP_KEY_WORD_SIZE) return ESP_ERR_INVALID_ARG;
+        strcpy(map.words[i],keys[i]);
+    }
+    return config_set_input_keymap(&map);
+}
 const char *config_get_key(int index)
 {
-    static char buf[32];
-    if (index < 0 || index > 2) return "ok";
-    nvs_handle_t h;
-    if (nvs_open(NS_KEYMAP, NVS_READONLY, &h) == ESP_OK) {
-        char k[12];
-        snprintf(k, sizeof(k), "key%d", index);
-        size_t len = sizeof(buf);
-        if (nvs_get_str(h, k, buf, &len) == ESP_OK) { nvs_close(h); return buf; }
-        nvs_close(h);
-    }
-    return DEFAULT_KEYS[index];
+    static char word[APP_KEY_WORD_SIZE];app_keymap_t map;
+    if(index<0 || index>2) return "ok";
+    if(config_get_input_keymap(&map)!=ESP_OK) return DEFAULT_KEYS[index];
+    strcpy(word,map.words[index]);return word;
 }
 
 esp_err_t config_set_display_name(const char *type, const char *id, const char *name)

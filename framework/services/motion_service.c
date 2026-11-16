@@ -1,5 +1,6 @@
 #include "sdkconfig.h"
 #include "robot_runtime.h"
+#include "app_hardware.h"
 #include "usb_cdc.h"
 #include "motion_ports.h"
 #include "esp_timer.h"
@@ -18,6 +19,7 @@
 static const char *TAG = "robot";
 static QueueHandle_t s_commands;
 static bool s_force_disarm;
+static bool s_servo_ready, s_radar_ready;
 static portMUX_TYPE s_status_lock = portMUX_INITIALIZER_UNLOCKED;
 static robot_status_t s_status = {.state = ROBOT_FAULT, .radar_age_ms = UINT32_MAX};
 typedef struct { char line[80]; } command_t;
@@ -96,7 +98,8 @@ static void robot_task(void *arg)
     uint64_t last_step = now_ms();
     int last_pulse = 0;
     while (1) {
-        radar_port_poll(receive_frame, &follow);
+        if(s_radar_ready) radar_port_poll(receive_frame, &follow);
+        else vTaskDelay(pdMS_TO_TICKS(20));
         raw = *radar_port_frame();
         uint64_t now = now_ms();
         robot_follow_tick(&follow, now);
@@ -126,6 +129,7 @@ static void robot_task(void *arg)
                 continue;
             }
             if (!strcmp(cmd, "arm")) {
+                if(!s_servo_ready) { cdc_write("ERR servo unavailable; select robot profile and reboot"); continue; }
                 if (armed) { cdc_write("ERR already armed; disarm before re-centering"); continue; }
                 /* First pulse is neutral. Install the horn AFTER centering;
                  * no sensor provides the shaft's actual initial angle. */
@@ -151,6 +155,7 @@ static void robot_task(void *arg)
                     continue;
                 }
                 if (!armed) { cdc_write("ERR robot is disarmed; use robot arm"); continue; }
+                if(!strcmp(cmd,"follow") && (!s_radar_ready || !follow.have_frame || now-follow.frame_ms>800)) { cdc_write("ERR no detected online radar; manual servo mode remains available"); continue; }
                 following = !strcmp(cmd, "follow");
                 manual_goal = requested;
                 cdc_write("OK robot motion mode set");
@@ -199,6 +204,7 @@ static void robot_task(void *arg)
         robot_status_t status = {
             .state = hardware_fault ? ROBOT_FAULT : follow.state,
             .armed = armed, .following = following, .hardware_fault = hardware_fault,
+            .servo_ready=s_servo_ready,.radar_ready=s_radar_ready,
             .angle_deg = angle, .target_deg = follow.goal_deg,
             .x_mm = (int)follow.x_mm, .y_mm = (int)follow.y_mm,
             .frames = radar_port_parser()->frames, .rejected = radar_port_parser()->rejected, .config = follow.config,
@@ -223,29 +229,46 @@ static bool available_gpio(int pin)
 esp_err_t robot_start(void)
 {
     if (s_commands) return ESP_ERR_INVALID_STATE;
+    app_hardware_profile_t profile=app_hardware_active();
+    app_hardware_policy_t policy=app_hardware_policy(profile);
+    if(!policy.radar && !policy.servo) {
+        robot_status_t status={.state=ROBOT_IDLE,.radar_age_ms=UINT32_MAX,.config=robot_default_config()};
+        portENTER_CRITICAL(&s_status_lock);s_status=status;portEXIT_CRITICAL(&s_status_lock);
+        return ESP_OK;
+    }
     int rx = CONFIG_ROBOT_RADAR_RX_GPIO, tx = CONFIG_ROBOT_RADAR_TX_GPIO;
     int servo = CONFIG_ROBOT_SERVO_GPIO;
     if (!available_gpio(rx) || !available_gpio(tx) || !available_gpio(servo) ||
         rx == tx || rx == servo || tx == servo || servo == 21 || rx == 21)
         return ESP_ERR_INVALID_ARG;
-    esp_err_t err = servo_port_init(servo, CONFIG_ROBOT_SERVO_HZ);
-    if (err != ESP_OK) return err;
-    err = radar_port_init(rx, tx, CONFIG_ROBOT_RADAR_BAUD);
-    if (err != ESP_OK) return err;
+    esp_err_t err;
+    if(policy.servo) {
+        err=servo_port_init(servo,CONFIG_ROBOT_SERVO_HZ);s_servo_ready=err==ESP_OK;
+        if(err!=ESP_OK) ESP_LOGW(TAG,"optional servo driver unavailable: %s",esp_err_to_name(err));
+    }
+    if(policy.radar) {
+        /* Auto probes only RX, preserving old display-only GPIO behavior. */
+        err=radar_port_init(rx,profile==APP_PROFILE_AUTO?-1:tx,CONFIG_ROBOT_RADAR_BAUD);
+        s_radar_ready=err==ESP_OK;
+        if(err!=ESP_OK) ESP_LOGW(TAG,"optional radar driver unavailable: %s",esp_err_to_name(err));
+    }
+    portENTER_CRITICAL(&s_status_lock);
+    s_status.radar_ready=s_radar_ready;s_status.servo_ready=s_servo_ready;
+    portEXIT_CRITICAL(&s_status_lock);
     s_commands = xQueueCreate(8, sizeof(command_t));
-    if (!s_commands) { radar_port_close(); return ESP_ERR_NO_MEM; }
+    if (!s_commands) { if(s_radar_ready) radar_port_close(); return ESP_ERR_NO_MEM; }
     if (xTaskCreate(robot_task, "robot", 4096, NULL, 5, NULL) != pdPASS) {
         vQueueDelete(s_commands);
         s_commands = NULL;
-        radar_port_close();
+        if(s_radar_ready) radar_port_close();
         return ESP_ERR_NO_MEM;
     }
-    ESP_LOGI(TAG, "LD2450 RX=%d TX=%d, servo=%d %dHz (DISARMED)", rx, tx, servo, CONFIG_ROBOT_SERVO_HZ);
+    ESP_LOGI(TAG,"profile=%s radar=%d servo_initialized=%d (PWM DISARMED)",app_hardware_profile_name(profile),s_radar_ready,s_servo_ready);
     return ESP_OK;
 }
 bool robot_servo_request(unsigned action, int value)
 {
-    if (!s_commands || action > 4) return false;
+    if (!s_commands || action > 4 || (!s_servo_ready && action!=1)) return false;
     if (action == 1) {
         portENTER_CRITICAL(&s_status_lock); s_force_disarm = true; portEXIT_CRITICAL(&s_status_lock);
         return true;

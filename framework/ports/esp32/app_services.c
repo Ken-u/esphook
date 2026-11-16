@@ -25,9 +25,7 @@ static char s_servo_owner[APP_ID_MAX + 1]; /* UI task only. */
 void app_radar_read(app_radar_t *out)
 {
     robot_status_t s; robot_get_status(&s); memset(out, 0, sizeof *out);
-#ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
-    out->available = true;
-#endif
+    out->available = s.radar_ready;
     out->online = s.radar_online; out->age_ms = s.radar_age_ms; out->frames = s.frames;
     out->rejected = s.rejected; out->frame = s.raw;
     robot_ui_t v; robot_ui_get(&v); out->range_mm = v.range_mm;
@@ -35,9 +33,7 @@ void app_radar_read(app_radar_t *out)
 void app_servo_read(app_servo_t *out)
 {
     robot_status_t s; robot_get_status(&s); memset(out, 0, sizeof *out);
-#ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
-    out->available = true;
-#endif
+    out->available = s.servo_ready;
     out->armed = s.armed; out->following = s.following; out->fault = s.hardware_fault;
     out->angle_deg = s.angle_deg; out->target_deg = s.target_deg; out->tracking = s.state;
     out->limit_deg = s.config.limit_deg;
@@ -104,6 +100,8 @@ static void reply_worker(void *user)
 }
 esp_err_t app_services_init(void)
 {
+    extern void app_hardware_init(void);
+    app_hardware_init();
     s_replies = xQueueCreate(8, sizeof(reply_t));
     if (!s_replies) return ESP_ERR_NO_MEM;
     return xTaskCreate(reply_worker, "app_replies", 4096, NULL, 4, NULL) == pdPASS ? ESP_OK : ESP_ERR_NO_MEM;
@@ -115,9 +113,8 @@ void app_device_info(app_device_info_t *out)
     snprintf(out->build, sizeof out->build, "%s %s", d->date, d->time);
     (void)config_get_link_host(out->daemon_host, sizeof out->daemon_host); out->daemon_port = config_get_link_port();
     snprintf(out->ip, sizeof out->ip, "%s", wifi_get_ip());
-#ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
-    out->robot_hardware = true;
-#endif
+    robot_status_t status;robot_get_status(&status);
+    out->robot_hardware=app_hardware_active()==APP_PROFILE_ROBOT || status.radar_online;
 }
 uint32_t app_random(void) { return esp_random(); }
 uint64_t app_clock_ms(void) { return (uint64_t)esp_timer_get_time() / 1000; }

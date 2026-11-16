@@ -6,6 +6,7 @@ import json
 import secrets
 import sys
 import time
+from pathlib import Path
 from stock_link import GameLink
 from stock_t_core import StockT
 from stock_t_data import DataSource
@@ -20,6 +21,8 @@ def main(argv=None):
     p.add_argument("--interval", type=float, default=1.0, help="seconds per 5-minute candle, default 1")
     p.add_argument("--seed", type=int, help="repeatable data selection")
     p.add_argument("--dry-run", action="store_true", help="fetch/validate a day and print metadata, without USB")
+    p.add_argument("--keyboard",action="store_true",help="open a focused USB keyboard window on the same serial connection")
+    p.add_argument("--key-config",type=Path,help="PC keyboard bindings JSON")
     args = p.parse_args(argv)
     if args.interval <= 0:
         p.error("--interval must be positive")
@@ -36,15 +39,21 @@ def main(argv=None):
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     future = None
     down_ms = None
+    keyboard = None
     try:
         link.upload(day, session)
-        engine = StockT(day, time.monotonic(), args.interval)
+        engine = StockT(day, time.monotonic(), args.interval, device_confirm=True)
         link.request(engine.frame(session, time.monotonic()))
         print("已就绪：设备短按打开菜单，选择做T并按住500ms进入。", file=sys.stderr)
+        if args.keyboard:
+            sys.path.insert(0,str(Path(__file__).resolve().parents[2]/"key_report/pc"))
+            from controller import KeyController
+            keyboard=KeyController(link,args.key_config,poll=False)
         last_frame = None
         last_sent = 0.0
         was_selected = link.selected
         while True:
+            if keyboard:keyboard.pump()
             for event in link.poll():
                 if event.get("id") != session:
                     continue
@@ -58,6 +67,10 @@ def main(argv=None):
                 if action == "launch":
                     link.selected = True
                     engine.next_bar = now + args.interval
+                    continue
+                if action == "cancel":
+                    engine.cancel(now)
+                    down_ms = None
                     continue
                 if not link.selected:
                     continue
@@ -102,7 +115,7 @@ def main(argv=None):
                 print(f"下一局 {day.symbol} {day.date}", file=sys.stderr)
                 session = secrets.randbelow(2147483646) + 1
                 link.upload(day, session)
-                engine = StockT(day, time.monotonic(), args.interval)
+                engine = StockT(day, time.monotonic(), args.interval, device_confirm=True)
                 last_frame = None
                 future = None
                 down_ms = None
@@ -117,6 +130,7 @@ def main(argv=None):
     except KeyboardInterrupt:
         pass
     finally:
+        if keyboard:keyboard.close()
         try:
             link.request(dict(op="close", id=session))
         except (OSError, ValueError, RuntimeError, TimeoutError):

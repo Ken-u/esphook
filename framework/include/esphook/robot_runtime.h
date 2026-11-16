@@ -4,7 +4,7 @@
 
 typedef struct {
     robot_state_t state;
-    bool armed, following, hardware_fault;
+    bool armed, following, hardware_fault, radar_ready, servo_ready;
     float angle_deg, target_deg;
     int x_mm, y_mm;
     uint32_t frames, rejected;

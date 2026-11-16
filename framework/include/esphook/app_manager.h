@@ -15,6 +15,7 @@ bool app_manager_init(app_manager_t *m, const app_descriptor_t *const *catalog,
                       size_t count, const app_platform_t *platform,
                       const char *standby_id, uint64_t now_ms);
 void app_manager_key(app_manager_t *m, unsigned key, bool down, uint64_t ms);
+void app_manager_cancel_key(app_manager_t *m, unsigned key, uint64_t ms);
 void app_manager_event(app_manager_t *m, const app_event_t *event);
 void app_manager_tick(app_manager_t *m, uint64_t ms);
 void app_manager_render(app_manager_t *m);

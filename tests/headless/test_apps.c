@@ -29,7 +29,13 @@ void app_servo_read(app_servo_t *s) { memset(s,0,sizeof *s);s->available=true;s-
 void app_hook_read(app_hook_t *h) { memset(h,0,sizeof *h);h->current=h->connected=true;h->clients=1;h->unread=2;strcpy(h->client,"Codex");strcpy(h->title,"任务已完成");strcpy(h->body,"长按回复继续"); }
 bool app_hook_reply(unsigned key) { return key<3; }
 void app_key_word(unsigned key,char *s,size_t n) { const char *words[]={"ok","continue","done"};snprintf(s,n,"%s",words[key%3]); }
-void app_device_info(app_device_info_t *d) { memset(d,0,sizeof *d);strcpy(d->version,"0.2.0");strcpy(d->build,"2026-11-16");strcpy(d->daemon_host,"192.168.1.10");strcpy(d->ip,"192.168.1.24");d->daemon_port=18765;d->robot_hardware=true; }
+static unsigned restarts;
+static app_hardware_profile_t hardware_profile=APP_PROFILE_ROBOT;
+app_hardware_profile_t app_hardware_active(void) { return APP_PROFILE_ROBOT; }
+void app_hardware_info(app_hardware_info_t *h) { memset(h,0,sizeof *h);h->active=APP_PROFILE_ROBOT;h->configured=hardware_profile;h->drivers_compiled=true;h->restart_required=h->active!=h->configured;h->screen=APP_HW_INITIALIZED;h->radar=APP_HW_DETECTED;h->servo=APP_HW_INITIALIZED;h->physical_keys=1; }
+bool app_hardware_set_profile(app_hardware_profile_t p) { hardware_profile=p;return true; }
+void app_device_restart(void) { ++restarts; }
+void app_device_info(app_device_info_t *d) { memset(d,0,sizeof *d);strcpy(d->version,"0.3.0");strcpy(d->build,"2026-11-16");strcpy(d->daemon_host,"192.168.1.10");strcpy(d->ip,"192.168.1.24");d->daemon_port=18765;d->robot_hardware=true; }
 void app_display_read(robot_ui_t *v) { *v=ui; }
 bool app_display_update(const char *j,size_t n,char *e,size_t z) { return robot_ui_parse(j,n,&ui,e,z); }
 bool app_host_event(const app_context_t *c,const char *a,unsigned k,const char *t) { (void)c;(void)a;(void)k;(void)t;return true; }
@@ -101,6 +107,10 @@ int main(int argc,char **argv)
     assert(app_open(&manager.context,"settings"));app_manager_commit(&manager);run(20);
     event(APP_EVENT_SHORT);event(APP_EVENT_SHORT);event(APP_EVENT_SHORT);event(APP_EVENT_CONFIRM);
     event(APP_EVENT_SHORT);event(APP_EVENT_CONFIRM);assert(standby[0] && strcmp(standby,"face"));dump(out,"settings-standby");
+    event(APP_EVENT_SHORT);dump(out,"settings-hardware");event(APP_EVENT_SHORT);dump(out,"settings-profile");
+    event(APP_EVENT_CONFIRM);event(APP_EVENT_SHORT);event(APP_EVENT_CONFIRM);
+    assert(hardware_profile==APP_PROFILE_AUTO && restarts==0);
+    event(APP_EVENT_CONFIRM);assert(restarts==1);
     assert(app_open(&manager.context,"launcher"));app_manager_commit(&manager);run(20);
     for(size_t i=0;i<app_count(&manager.context);++i) { event(APP_EVENT_SHORT);assert(!strcmp(app_active_id(&manager.context),"launcher")); }
 #ifdef ESPHOOK_TEST_DEMO

@@ -1,0 +1,5 @@
+{
+  "physical": [0, 1, 2],
+  "usb": [0, 1, 2],
+  "words": ["ok", "continue", "done"]
+}

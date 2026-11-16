@@ -31,8 +31,18 @@ static void protocol(void)
     assert(app_protocol_parse("{\"v\":1,\"seq\":1,\"op\":\"list\"}",27,&r) && r.op==APP_OP_LIST);
     const char *message="{\"v\":1,\"seq\":24,\"op\":\"message\",\"app\":\"demo\",\"data\":{\"text\":\"hi\"}}";
     assert(app_protocol_parse(message,strlen(message),&r) && !strcmp(r.message,"{\"text\":\"hi\"}"));
+    const char *key="{\"v\":1,\"seq\":2,\"op\":\"key\",\"key\":0,\"pressed\":true}";
+    assert(app_protocol_parse(key,strlen(key),&r) && r.op==APP_OP_KEY && r.key==0 && r.pressed);
+    const char *map="{\"v\":1,\"seq\":3,\"op\":\"keymap\",\"mapping\":{\"physical\":[0,1,2],\"usb\":[2,1,0],\"words\":[\"yes\",\"no\",\"next\"]}}";
+    assert(app_protocol_parse(map,strlen(map),&r) && r.keymap_set && r.keymap.usb[0]==2 && !strcmp(r.keymap.words[0],"yes"));
     const char *bad[]={"{\"v\":1,\"seq\":1,\"op\":\"list\",\"op\":\"menu\"}","{\"v\":1,\"seq\":1.5,\"op\":\"list\"}","{\"v\":1,\"seq\":1,\"op\":\"open\",\"app\":\"../bad\"}","{\"v\":1,\"seq\":1,\"op\":\"list\"} trailing","{\"v\":1,\"seq\":1,\"op\":\"message\",\"app\":\"demo\",\"data\":{\"text\":\"\\u0000\"}}"};
     for(unsigned i=0;i<sizeof bad/sizeof bad[0];++i) assert(!app_protocol_parse(bad[i],strlen(bad[i]),&r));
+    const char *bad_keys[]={"{\"v\":1,\"seq\":1,\"op\":\"key\",\"key\":3,\"pressed\":true}","{\"v\":1,\"seq\":1,\"op\":\"key\",\"key\":0,\"pressed\":1}","{\"v\":1,\"seq\":1,\"op\":\"keymap\",\"mapping\":{\"physical\":[0,1,2],\"usb\":[0,1,3],\"words\":[\"a\",\"b\",\"c\"]}}"};
+    for(unsigned i=0;i<sizeof bad_keys/sizeof bad_keys[0];++i) assert(!app_protocol_parse(bad_keys[i],strlen(bad_keys[i]),&r));
+    const char *hardware="{\"v\":1,\"seq\":4,\"op\":\"hardware\",\"profile\":\"robot\",\"reboot\":true}";
+    assert(app_protocol_parse(hardware,strlen(hardware),&r) && r.hardware_set && r.hardware_profile==APP_PROFILE_ROBOT && r.reboot);
+    const char *bad_hardware[]={"{\"v\":1,\"seq\":1,\"op\":\"hardware\",\"profile\":\"missing\"}","{\"v\":1,\"seq\":1,\"op\":\"hardware\",\"reboot\":true}","{\"v\":1,\"seq\":1,\"op\":\"hardware\",\"profile\":\"robot\",\"reboot\":1}"};
+    for(unsigned i=0;i<sizeof bad_hardware/sizeof bad_hardware[0];++i) assert(!app_protocol_parse(bad_hardware[i],strlen(bad_hardware[i]),&r));
     char nested[100];memset(nested,'[',20);memset(nested+20,']',20);assert(!app_protocol_parse(nested,40,&r));
 }
 int main(void)

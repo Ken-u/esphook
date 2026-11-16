@@ -16,6 +16,15 @@ def day():
 
 
 class CoreTests(unittest.TestCase):
+    def test_device_confirmation_and_cancel(self):
+        g=StockT(day(),device_confirm=True)
+        g.button(True,0,0);g.update(1)
+        self.assertEqual(g.trades,0)
+        g.cancel(1);g.update(1.1)
+        self.assertEqual(g.trades,0);self.assertIsNone(g.down_at)
+        g.button(True,1.2,g.cursor);g.confirm(1.7)
+        self.assertEqual(g.trades,1)
+
     def test_hold_pause_buy_and_resume(self):
         g = StockT(day())
         g.button(True, 0.5, 0)

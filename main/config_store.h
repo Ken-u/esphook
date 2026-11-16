@@ -3,8 +3,14 @@
 #include "esp_err.h"
 #include <stddef.h>
 #include <stdint.h>
+#include "esphook/app_keys.h"
+#include "esphook/app_hardware.h"
 
 esp_err_t config_store_init(void);
+esp_err_t config_get_input_keymap(app_keymap_t *out);
+esp_err_t config_set_input_keymap(const app_keymap_t *map);
+app_hardware_profile_t config_get_hardware_profile(void);
+esp_err_t config_set_hardware_profile(app_hardware_profile_t profile);
 esp_err_t config_get_standby(char *out, size_t len);
 esp_err_t config_set_standby(const char *id);
 

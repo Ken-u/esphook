@@ -7,8 +7,8 @@ ESP32-C3 小屏应用与小游戏框架，所有内置应用共用生命周期�
 - 项目内置 `$esphook-app`、`$esphook-pc`、`$esphook-check`，见 [AGENTS.md](AGENTS.md)。支持项目 skills 的工具可直接使用；其他工具读取对应 SKILL.md 即可。
 - 设置应用可查看固件版本、应用数量、Hook 信息，并选择待机应用（默认表情，保存后重启保留）。
 
-> 当前 `feat/desktop-follow-robot` 分支增加桌面跟随机器人固件：ESP32-C3 SuperMini + ST7735 + LD2450 + NHY009。
-> 构建、接线及首次 USB 校准见 [机器人调试指南](docs/robot-bringup.md)。上电 PWM 默认关闭，通过 USB 校准后使用 `robot arm` / `robot follow` 开启。
+> 通用固件同时支持原屏幕/Hook 设备和桌面机器人（ESP32-C3 SuperMini + ST7735 + LD2450 + NHY009）。[下载正式发布包](https://github.com/Ken-u/esphook/releases/latest)，烧录、USB 按键 SDK、映射和硬件状态见 [发布指南](docs/release-kit.md)。
+> 构建、接线及首次 USB 校准见 [机器人调试指南](docs/robot-bringup.md)。默认 auto 不初始化 PWM；机器人需先在设置中选择 robot 并重启，通过 USB 校准后使用 `robot arm` / `robot follow` 开启。
 > 新增 [表情/文字协议与扇形雷达调试页](docs/robot-display-protocol.md)：USB 输入 `robot radar` 切雷达页，`robot face` 返回；JSON 可客制表情和文字。
 > [GPIO6 启动器与全局按键](docs/robot-launcher.md)：待机眼睛动画，短按打开菜单；短按切换、按住 500ms 画圆确认；菜单 10s 无操作回待机；任何页面快速三击回菜单。
 > [投篮游戏](docs/robot-basketball.md)：从菜单进入，限时 2 分钟，篮筐随机变速，每中一球 2 分。
@@ -154,7 +154,7 @@ DEVICE_PORT=18765
 
 目标硬件是 4 MB Flash 的 ESP32-C3 SuperMini，加一块 0.96 寸 160×80 ST7735 SPI 屏、三个按键和一个无源蜂鸣器。接线、电平、初次 USB 烧录和分区说明见 [docs/hardware.md](docs/hardware.md)。
 
-屏幕布局已经用 LVGL 实现：完成为绿色、错误为红色、确认是黄色；标题/正文占主要面积，过长文字自动滚动；10 分钟没有新事件后关闭显示和背光，按键或新通知唤醒。
+屏幕布局已经用 LVGL 实现：完成为绿色、错误为红色、确认是黄色；标题/正文占主要面积，过长文字自动滚动；当前框架保持待机表情动画，菜单 10s 无操作回所选待机应用。
 
 OTA 只更新 `ota_0`/`ota_1` 应用分区，不会覆盖 NVS、分区表或固定 `fontdata` 中文字库。网页上传、curl、USB 完整刷写和 reverse device link 的限制见 [docs/ota.md](docs/ota.md)。
 

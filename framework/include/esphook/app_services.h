@@ -1,5 +1,6 @@
 #pragma once
 #include "app.h"
+#include "app_hardware.h"
 #include "robot_follow.h"
 #include "robot_ui_protocol.h"
 

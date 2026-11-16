@@ -12,6 +12,8 @@ find_library(CJSON_LIBRARY NAMES cjson libcjson.so.1 REQUIRED)
 add_executable(apps_headless test_apps.c ${ESPHOOK_APP_SOURCES}
     "${PROJECT_DIR}/framework/core/app_manager.c"
     "${PROJECT_DIR}/framework/core/app_input.c"
+    "${PROJECT_DIR}/framework/core/app_keys.c"
+    "${PROJECT_DIR}/framework/core/app_hardware.c"
     "${PROJECT_DIR}/framework/services/display_protocol.c"
     "${PROJECT_DIR}/framework/services/radar_plot.c"
     "${PROJECT_DIR}/framework/ports/esp32/app_ui.c"

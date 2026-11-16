@@ -24,5 +24,9 @@ EOF
   -fsanitize=address,undefined -fno-omit-frame-pointer \
   -I framework/include/esphook -I "${CJSON_INCLUDE_DIR:-/usr/include/cjson}" \
   tests/test_app_framework.c framework/core/app_manager.c framework/core/app_input.c \
-  framework/core/app_protocol.c framework/services/display_protocol.c "${CJSON_LIB:--lcjson}" -lm -o "$app_test_bin"
+  framework/core/app_protocol.c framework/core/app_keys.c framework/core/app_hardware.c framework/services/display_protocol.c "${CJSON_LIB:--lcjson}" -lm -o "$app_test_bin"
+"$app_test_bin"
+"${CC:-cc}" -std=c11 -Wall -Wextra -Werror -pedantic -g \
+  -fsanitize=address,undefined -fno-omit-frame-pointer -I framework/include/esphook \
+  tests/test_app_keys.c framework/core/app_keys.c framework/core/app_manager.c framework/core/app_input.c -o "$app_test_bin"
 "$app_test_bin"

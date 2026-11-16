@@ -14,7 +14,8 @@ esp_err_t servo_port_init(int gpio, unsigned hz)
 }
 esp_err_t servo_port_write(int pulse_us)
 {
-    if (!s_hz || (pulse_us && (pulse_us < 1000 || pulse_us > 2000))) return ESP_ERR_INVALID_ARG;
+    if(!s_hz) return pulse_us?ESP_ERR_INVALID_STATE:ESP_OK;
+    if(pulse_us && (pulse_us<1000 || pulse_us>2000)) return ESP_ERR_INVALID_ARG;
     uint32_t duty = pulse_us ? (uint32_t)(((uint64_t)pulse_us * s_hz * (1U << 14) + 500000) / 1000000) : 0;
     esp_err_t err = ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, duty);
     return err == ESP_OK ? ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1) : err;

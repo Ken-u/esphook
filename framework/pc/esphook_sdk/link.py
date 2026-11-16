@@ -2,9 +2,10 @@
 import json
 import time
 from collections import deque
+from .keys import VirtualKeys
 
 
-class UsbLink:
+class UsbLink(VirtualKeys):
     prefix = "app"
     ack_type = "app_ack"
 
@@ -44,17 +45,21 @@ class UsbLink:
             if len(self.pending) > 4096:  # A reset or an unterminated console log.
                 self.pending.clear()
 
-    def request(self, payload):
+    def request(self, payload, *, channel=None):
+        if channel not in (None, "app"):
+            raise ValueError("only the app control channel may override the native protocol")
+        prefix = self.prefix if channel is None else channel
+        ack_type = self.ack_type if channel is None else "app_ack"
         self.sequence = self.sequence % 2147483647 + 1
         body = dict(payload, v=1, seq=self.sequence)
         raw = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode()
         if len(raw) > 1024:
             raise ValueError("game JSON exceeds 1024 bytes")
-        self.serial.write(self.prefix.encode() + b" " + raw + b"\n")
+        self.serial.write(prefix.encode() + b" " + raw + b"\n")
         for msg in self._read(time.monotonic() + 3):
             if msg.get("type") in ("game_button", "app_event"):
                 self.events.append(msg)
-            elif msg.get("type") == self.ack_type and msg.get("seq") == self.sequence:
+            elif msg.get("type") == ack_type and msg.get("seq") == self.sequence:
                 if not msg.get("ok"):
                     raise RuntimeError("固件拒绝请求：" + msg.get("error", "unknown"))
                 self.selected = msg.get("selected", self.selected)
@@ -62,15 +67,31 @@ class UsbLink:
         raise TimeoutError(f"ESP 未确认 {self.prefix} 协议；检查固件和串口")
 
     def poll(self, timeout=0.02):
-        for msg in self._read(time.monotonic() + timeout):
-            if msg.get("type") in ("game_button", "app_event"):
-                self.events.append(msg)
+        self._renew_keys()
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            for msg in self._read(min(deadline, time.monotonic() + 0.08)):
+                if msg.get("type") in ("game_button", "app_event"):
+                    self.events.append(msg)
+            self._renew_keys()
         result = list(self.events)
         self.events.clear()
         return result
 
     def close(self):
-        self.serial.close()
+        try:
+            if getattr(self, "_usb_pressed", {}):
+                self.release_keys()
+        finally:
+            self.serial.close()
+
+    def hardware(self):
+        return self.request(dict(op="hardware"),channel="app")["hardware"]
+
+    def set_hardware_profile(self,profile,*,reboot=False):
+        if profile not in ("auto","screen","robot") or type(reboot) is not bool:
+            raise ValueError("profile must be auto, screen or robot; reboot must be bool")
+        return self.request(dict(op="hardware",profile=profile,reboot=reboot),channel="app")["hardware"]
 
 
 class AppLink(UsbLink):
