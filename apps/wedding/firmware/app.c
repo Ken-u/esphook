@@ -22,7 +22,7 @@
 #define STREAMERS 8
 #define CONFETTI 18
 #define RAIN 22
-#define WISH_MAX 96
+#define WISH_MAX 128
 #define DEFAULT_WISH "百年好合 ★ 永结同心 ★ 幸福美满 ★ 白头偕老 ★ Wishing you a lifetime of love and happiness ★ "
 
 typedef struct {
@@ -32,6 +32,7 @@ typedef struct {
     char text[WISH_MAX];
 } state_t;
 _Static_assert(sizeof(state_t) <= APP_STATE_CAPACITY, "wedding state too large");
+_Static_assert(sizeof DEFAULT_WISH <= WISH_MAX, "the default blessing must fit its buffer untruncated");
 typedef struct { bool active; unsigned page; uint32_t frames; } status_t;
 static status_t s_status;
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;

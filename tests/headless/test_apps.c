@@ -268,7 +268,7 @@ int main(int argc,char **argv)
     assert(app_open(&manager.context,"launcher"));app_manager_commit(&manager);run(20);
     for(size_t i=0;i<app_count(&manager.context);++i) {
         event(APP_EVENT_SHORT);assert(!strcmp(app_active_id(&manager.context),"launcher"));
-        if(i%3==0) { char name[32];snprintf(name,sizeof name,"launcher-page%zu",i/3+1);run(300);dump(out,name); } /* icons of every page */
+        if(i%3==0) { char name[64];snprintf(name,sizeof name,"launcher-page%zu",i/3+1);run(300);dump(out,name); } /* icons of every page */
     }
 #ifdef ESPHOOK_TEST_DEMO
     assert(app_open(&manager.context,"demo"));app_manager_commit(&manager);event(APP_EVENT_SHORT);
