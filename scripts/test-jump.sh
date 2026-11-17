@@ -6,5 +6,5 @@ test_bin="$(mktemp "${TMPDIR:-/tmp}/esphook-jump-test.XXXXXX")"
 trap 'rm -f "$test_bin"' EXIT
 "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -pedantic -g \
   -fsanitize=address,undefined -fno-omit-frame-pointer \
-  -I apps/jump/firmware tests/test_jump.c apps/jump/firmware/jump_core.c -o "$test_bin"
+  -I framework/include -I apps/jump/firmware tests/test_jump.c apps/jump/firmware/jump_core.c -o "$test_bin"
 "$test_bin"

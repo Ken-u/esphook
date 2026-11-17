@@ -1,3 +1,4 @@
+#include "esphook/app_math.h"
 #include "esphook/app.h"
 #include "esphook/app_fish.h"
 #include "esphook/app_gfx.h"
@@ -5,7 +6,8 @@
 #include "esphook/app_services.h"
 #include "esphook/app_ui.h"
 #include "fishing_core.h"
-#include "freertos/FreeRTOS.h"
+#include "esphook/app_command.h"
+#include "esphook/app_sync.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -36,8 +38,7 @@ typedef struct { int x, y, size; } spot_t;
 typedef struct {
     fs_t core;
     haptic_t haptic;
-    lv_obj_t *plot, *band, *line, *hold, *msg, *score, *tag, *tag_text, *name, *weight, *toast;
-    lv_image_dsc_t image;
+    lv_obj_t *plot, *band, *hold, *msg, *score, *tag, *tag_text, *name, *weight, *toast;
     uint32_t last_ms, nibble_ms, shown_caught, shown_phase, shown_key, trail_ms[TRAIL];
     int16_t trail_x[TRAIL], trail_y[TRAIL], mark_x, mark_y;
     uint8_t seen_nibbles, down_in_fight;
@@ -50,24 +51,20 @@ typedef struct {
     int to;
 } status_t;
 static status_t s_status;
-static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 
 static const fish_style_t *style_of(unsigned tier)
 {
     static const fish_style_t *const styles[FS_TIERS] = {&fish_crucian, &fish_bass, &fish_carp, &fish_tuna, &fish_arowana};
     return styles[tier < FS_TIERS ? tier : FS_TIERS - 1U];
 }
-static int absi_int(int v) { return v < 0 ? -v : v; }
-static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
-static int lerp(int a, int b, int num, int den) { return a + (b - a) * num / den; }
 static int sinp(unsigned now, unsigned div, unsigned phase) { return gfx_sin256(now / div + phase); }
 /* The core's fish coordinates (x: distance from the angler, y: sideways) as a point on the water: far is high on
  * the screen, small and narrow, near is low, big and wide. */
 static spot_t spot_of(int fx, int fy)
 {
-    const int far_t = clampi((fx - FS_FISH_X_MIN) * 256 / (FS_FISH_X_MAX - FS_FISH_X_MIN), 0, 256);
+    const int far_t = app_clamp((fx - FS_FISH_X_MIN) * 256 / (FS_FISH_X_MAX - FS_FISH_X_MIN), 0, 256);
     const int half = 18 + 30 * (256 - far_t) / 256;
-    const int side = clampi((fy - (FS_FISH_Y_MIN + FS_FISH_Y_MAX) / 2) * 256 / ((FS_FISH_Y_MAX - FS_FISH_Y_MIN) / 2), -256, 256);
+    const int side = app_clamp((fy - (FS_FISH_Y_MIN + FS_FISH_Y_MAX) / 2) * 256 / ((FS_FISH_Y_MAX - FS_FISH_Y_MIN) / 2), -256, 256);
     return (spot_t){CENTER_X + half * side / 256, NEAR_Y + (FAR_Y - NEAR_Y) * far_t / 256, far_t > 235 ? 0 : far_t > 110 ? 1 : 2};
 }
 
@@ -178,7 +175,7 @@ static void sag_line(uint16_t *px, int x0, int y0, int x1, int y1, int sag, uint
 {
     int lx = x0, ly = y0;
     for (int i = 1; i <= 12; ++i) {
-        const int x = lerp(x0, x1, i, 12), y = lerp(y0, y1, i, 12) + sag * 4 * i * (12 - i) / 144;
+        const int x = app_lerp(x0, x1, i, 12), y = app_lerp(y0, y1, i, 12) + sag * 4 * i * (12 - i) / 144;
         gfx_line(px, lx, ly, x, y, c);
         lx = x;
         ly = y;
@@ -189,7 +186,7 @@ static void rod_tip(int bend, int *x, int *y) { *x = TIP_X - bend / 2; *y = TIP_
 static void draw_rod(uint16_t *px, int bend, int tip_x, int tip_y)
 {
     const int mid_x = (GRIP_X + tip_x) / 2, mid_y = (GRIP_Y + tip_y) / 2 + bend / 3;
-    const int cork_x = lerp(GRIP_X, mid_x, 2, 5), cork_y = lerp(GRIP_Y, mid_y, 2, 5);
+    const int cork_x = app_lerp(GRIP_X, mid_x, 2, 5), cork_y = app_lerp(GRIP_Y, mid_y, 2, 5);
     gfx_line2(px, GRIP_X, GRIP_Y, mid_x, mid_y, gfx_rgb565(0x2A2018)); /* the blank, thick below and thin above */
     gfx_line(px, GRIP_X - 1, GRIP_Y, mid_x - 1, mid_y - 1, gfx_rgb565(0x6A5A48));
     gfx_line(px, mid_x, mid_y, tip_x, tip_y, gfx_rgb565(0x3A2C20));
@@ -197,11 +194,11 @@ static void draw_rod(uint16_t *px, int bend, int tip_x, int tip_y)
     gfx_line2(px, GRIP_X, GRIP_Y, cork_x, cork_y, gfx_rgb565(0xB0864F)); /* the cork grip */
     gfx_line(px, GRIP_X + 2, GRIP_Y, cork_x + 2, cork_y, gfx_rgb565(0x8A6A3A));
     gfx_line(px, GRIP_X - 1, GRIP_Y - 1, cork_x - 1, cork_y - 1, gfx_rgb565(0xD6B070));
-    for (int i = 1; i <= 3; ++i) gfx_plot(px, lerp(mid_x, tip_x, i, 4) - 1, lerp(mid_y, tip_y, i, 4) - 2, gfx_rgb565(0xC8CED6)); /* guides */
+    for (int i = 1; i <= 3; ++i) gfx_plot(px, app_lerp(mid_x, tip_x, i, 4) - 1, app_lerp(mid_y, tip_y, i, 4) - 2, gfx_rgb565(0xC8CED6)); /* guides */
     gfx_disc(px, cork_x - 5, cork_y + 3, 3, gfx_rgb565(0xC8CED6)); /* the reel */
     gfx_plot(px, cork_x - 5, cork_y + 3, gfx_rgb565(0x4A5058));
     gfx_line(px, cork_x - 7, cork_y + 5, cork_x - 9, cork_y + 7, gfx_rgb565(0x4A5058)); /* the crank */
-    gfx_disc(px, lerp(GRIP_X, cork_x, 1, 2) + 1, lerp(GRIP_Y, cork_y, 1, 2) - 1, 3, gfx_rgb565(0xF2C49C)); /* the hand */
+    gfx_disc(px, app_lerp(GRIP_X, cork_x, 1, 2) + 1, app_lerp(GRIP_Y, cork_y, 1, 2) - 1, 3, gfx_rgb565(0xF2C49C)); /* the hand */
     gfx_rect(px, 148, 61, 12, 4, gfx_rgb565(0xE9A21E)); /* the sleeve */
     gfx_hline(px, 148, 159, 61, gfx_rgb565(0xFFC847));
 }
@@ -220,7 +217,7 @@ static void draw_prompt(uint16_t *px, const fs_t *f, unsigned now, int cx, int c
     gfx_tint_ellipse(px, cx, cy, 22, 18, 0x021830, 46);
     const bool hold = f->p.kind == FP_HOLD, held = f->p.state == FP_HELD;
     const int to = fs_to_target(f), slack = (int)f->p.win_ms + (held ? 40 : 0);
-    const bool inside = absi_int(to) <= slack, perfect = inside && absi_int(to) * 100 <= slack * 40;
+    const bool inside = app_abs(to) <= slack, perfect = inside && app_abs(to) * 100 <= slack * 40;
     const uint32_t lit = perfect ? 0x7CFFA8 : inside ? 0x4CE07C : 0xFFD84A;
     gfx_ring(px, cx, cy, 8, 0xFFFFFF, 230); /* the target circle */
     gfx_ring(px, cx, cy, 7, 0xFFFFFF, 120);
@@ -232,7 +229,7 @@ static void draw_prompt(uint16_t *px, const fs_t *f, unsigned now, int cx, int c
     }
     if (!hold) return;
     /* press and hold: the bar fills from the beat to the moment to let go (the green end) */
-    const int w = 40, x0 = clampi(cx - w / 2, 1, APP_CANVAS_W - w - 2), y = cy + 15;
+    const int w = 40, x0 = app_clamp(cx - w / 2, 1, APP_CANVAS_W - w - 2), y = cy + 15;
     const int zone = (int)(f->p.win_ms + 40U) * 2 * w / (int)(f->p.hold_ms + f->p.win_ms * 2U + 80U);
     gfx_rect(px, x0 - 1, y - 1, w + 2, 6, gfx_rgb565(0x0A1A2C));
     gfx_rect(px, x0, y, w, 4, gfx_rgb565(0x2A4058));
@@ -268,7 +265,7 @@ static void draw_card(uint16_t *px, const fs_t *f, unsigned now)
 /* The wake of a float that is being dragged: rings left behind where it has been. */
 static void wake(uint16_t *px, state_t *s, int x, int y, unsigned now, bool moving)
 {
-    if (moving && (s->trail_ms[0] == 0U || now - s->trail_ms[0] >= 140U || absi_int(x - s->trail_x[0]) + absi_int(y - s->trail_y[0]) >= 4)) {
+    if (moving && (s->trail_ms[0] == 0U || now - s->trail_ms[0] >= 140U || app_abs(x - s->trail_x[0]) + app_abs(y - s->trail_y[0]) >= 4)) {
         for (int i = TRAIL - 1; i > 0; --i) { s->trail_x[i] = s->trail_x[i - 1]; s->trail_y[i] = s->trail_y[i - 1]; s->trail_ms[i] = s->trail_ms[i - 1]; }
         s->trail_x[0] = (int16_t)x; s->trail_y[0] = (int16_t)y; s->trail_ms[0] = now;
     }
@@ -312,7 +309,7 @@ static void draw_scene(uint16_t *px, state_t *s, unsigned now)
     }
     case FS_CAST: {
         const int t = (int)f->phase_ms, n = (int)FS_CAST_MS;
-        const int x = lerp(tip_x, rest.x, t, n), y = lerp(tip_y + 6, rest.y, t, n) - 20 * 4 * t * (n - t) / (n * n);
+        const int x = app_lerp(tip_x, rest.x, t, n), y = app_lerp(tip_y + 6, rest.y, t, n) - 20 * 4 * t * (n - t) / (n * n);
         const int top = draw_float(px, x, y, 1, 0, 999);
         sag_line(px, tip_x, tip_y, x, top, 2, line_c);
         at = (spot_t){x, y, 1};
@@ -352,14 +349,14 @@ static void draw_scene(uint16_t *px, state_t *s, unsigned now)
         const spot_t from = spot_of(fs_fish_x(f), fs_fish_y(f));
         const int end_x = tip_x - 8, end_y = NEAR_Y + 10;
         if (t < split) {
-            const int x = lerp(from.x, end_x, t, split), y = lerp(from.y, end_y, t, split);
+            const int x = app_lerp(from.x, end_x, t, split), y = app_lerp(from.y, end_y, t, split);
             wake(px, s, x, y, now, true);
             const int top = draw_float(px, x, y, t * 3 > split ? 2 : from.size, 0, y);
             gfx_line(px, tip_x, tip_y, x, top, line_c);
             at = (spot_t){x, y, 2};
         } else {
             const int u = t - split, m = n - split;
-            const int len = fs_tier(f->tier)->len, x = lerp(end_x, tip_x - 3, u, m), y = lerp(end_y, tip_y + 14, u, m) - 24 * 4 * u * (m - u) / (m * m);
+            const int len = fs_tier(f->tier)->len, x = app_lerp(end_x, tip_x - 3, u, m), y = app_lerp(end_y, tip_y + 14, u, m) - 24 * 4 * u * (m - u) / (m * m);
             ripples(px, end_x, end_y, (unsigned)u, 2);
             fish_draw(px, x, y, len, -1, gfx_sin256(now / 4U) / 40, style_of(f->tier));
             gfx_line(px, tip_x, tip_y, x - len / 2, y, line_c);
@@ -372,7 +369,7 @@ static void draw_scene(uint16_t *px, state_t *s, unsigned now)
     draw_rod(px, bend, tip_x, tip_y);
     s->mark_x = (int16_t)at.x; s->mark_y = (int16_t)at.y;
     if (fighting) {
-        draw_prompt(px, f, now, clampi(at.x, 22, APP_CANVAS_W - 23), clampi(at.y - 4, 24, 41));
+        draw_prompt(px, f, now, app_clamp(at.x, 22, APP_CANVAS_W - 23), app_clamp(at.y - 4, 24, 41));
         gfx_tint(px, 99, 1, 60, 11, 0x000000, 100); /* lives and progress */
         for (unsigned i = 0; i < FS_LIVES; ++i) heart(px, 102 + (int)i * 7, 4, i < f->lives);
         const int w = 32, x0 = 125;
@@ -386,20 +383,13 @@ static void draw_scene(uint16_t *px, state_t *s, unsigned now)
 /* ---- app ----------------------------------------------------------------------------------------------------- */
 static void build(state_t *s, lv_obj_t *root)
 {
-    s->image.header.magic = LV_IMAGE_HEADER_MAGIC;
-    s->image.header.cf = LV_COLOR_FORMAT_RGB565;
-    s->image.header.w = APP_CANVAS_W; s->image.header.h = APP_CANVAS_H; s->image.header.stride = APP_CANVAS_W * 2;
-    s->image.data_size = APP_CANVAS_W * APP_CANVAS_H * 2; s->image.data = (const uint8_t *)app_ui_pixels();
-    s->plot = lv_image_create(root);
-    lv_obj_set_pos(s->plot, 0, 0);
-    lv_image_set_src(s->plot, &s->image);
-    s->band = app_ui_rect(root, 0, BAND_Y, APP_WIDTH, APP_HEIGHT - BAND_Y, 0x0B1E34, 0);
-    s->line = app_ui_rect(root, 0, BAND_Y, APP_WIDTH, 1, 0x2E6E96, 0);
+    s->plot = app_ui_canvas(root, 0, 0, APP_CANVAS_W, APP_CANVAS_H);
+    s->band = app_ui_band(root, 0x0B1E34, 0x2E6E96);
     s->msg = app_ui_label(s->band, &aihook_font_12, 3, 2, 126, 14, LV_LABEL_LONG_MODE_CLIP);
     s->score = app_ui_label(s->band, &aihook_font_12, 128, 2, 32, 14, LV_LABEL_LONG_MODE_CLIP);
     lv_obj_set_style_text_color(s->msg, app_ui_color(0xDDEBF7), LV_PART_MAIN);
     lv_obj_set_style_text_color(s->score, app_ui_color(0xFFD84A), LV_PART_MAIN);
-    s->hold = app_ui_rect(root, 0, BAND_Y, 0, 2, APP_COLOR_ACCENT, 0); /* the hold towards the exit */
+    s->hold = app_ui_hold_bar(root, BAND_Y, APP_COLOR_ACCENT); /* the hold towards the exit */
     app_ui_hide(s->hold, true);
     s->tag = app_ui_rect(root, 130, 13, 29, 14, 0x2E8B57, 5);
     s->tag_text = app_ui_label(s->tag, &aihook_font_12, 0, 1, 29, 12, LV_LABEL_LONG_MODE_CLIP);
@@ -424,13 +414,13 @@ static void publish(const state_t *s, bool active, bool frame)
     const fs_t *f = &s->core;
     const int to = fs_to_target(f);
     const haptic_state_t hs = haptic_state();
-    portENTER_CRITICAL(&s_lock);
+    app_critical_enter();
     s_status.active = active; s_status.phase = f->phase; s_status.tier = f->tier; s_status.done = f->done;
     s_status.need = f->need; s_status.lives = f->lives; s_status.kind = f->p.kind; s_status.state = f->p.state;
     s_status.servo = (uint8_t)hs; s_status.caught = f->caught; s_status.lost = f->lost; s_status.casts = f->casts;
     s_status.to = to == INT32_MAX ? 99999 : to;
     if (frame) ++s_status.frames;
-    portEXIT_CRITICAL(&s_lock);
+    app_critical_exit();
 }
 static void drain_shakes(state_t *s, uint64_t now)
 {
@@ -448,7 +438,7 @@ static void enter(app_context_t *ctx)
     haptic_init(&s->haptic);
     s->last_ms = (uint32_t)ctx->now_ms;
     app_set_triple_exit(ctx, false); /* a float is struck by pressing at the right moment: three quick presses are never an exit */
-    portENTER_CRITICAL(&s_lock); s_status = (status_t){0}; portEXIT_CRITICAL(&s_lock);
+    app_critical_enter(); s_status = (status_t){0}; app_critical_exit();
     publish(s, true, false);
 }
 /* The way out is a two second hold while nothing is on the line, and only for a press that began there: a hold that
@@ -457,7 +447,7 @@ static void sync_exit(app_context_t *ctx, const state_t *s)
 {
     const uint8_t p = s->core.phase;
     const bool calm = p == FS_IDLE || p == FS_CAST || p == FS_WAIT || p == FS_RESULT || p == FS_LOST;
-    app_set_exit_hold(ctx, calm && !s->down_in_fight ? EXIT_HOLD_MS : 0U);
+    app_set_exit_hold(ctx, calm ? EXIT_HOLD_MS : 0U);
 }
 static void tick(app_context_t *ctx)
 {
@@ -475,8 +465,8 @@ static void leave(app_context_t *ctx)
 {
     state_t *s = ctx->state;
     haptic_stop(&s->haptic); /* the framework disarms the servo it leased to this app */
-    if (s->plot) app_ui_plot_refresh(s->plot, &s->image); /* The shared canvas goes to the next app. */
-    portENTER_CRITICAL(&s_lock); s_status.active = false; portEXIT_CRITICAL(&s_lock);
+    if (s->plot) app_ui_canvas_refresh(s->plot); /* The shared canvas goes to the next app. */
+    app_critical_enter(); s_status.active = false; app_critical_exit();
 }
 static void event(app_context_t *ctx, const app_event_t *e)
 {
@@ -540,7 +530,7 @@ static void sync_hud(state_t *s, uint64_t now, unsigned hold_ms)
                  f->last_result != FR_NONE && !(f->phase == FS_FIGHT && (f->p.state == FP_APPROACH || f->p.state == FP_HELD));
     app_ui_hide(s->toast, !toast);
     if (toast) {
-        lv_obj_set_pos(s->toast, clampi(s->mark_x - 24, 0, APP_WIDTH - 48), clampi(s->mark_y - 34, 13, 40));
+        lv_obj_set_pos(s->toast, app_clamp(s->mark_x - 24, 0, APP_WIDTH - 48), app_clamp(s->mark_y - 34, 13, 40));
         static const char *const words[] = {"", "完美!", "好!", "太早", "太晚"};
         app_ui_text(s->toast, words[f->last_result]);
         lv_obj_set_style_text_color(s->toast, app_ui_color(f->last_result <= FR_GOOD ? (f->last_result == FR_PERFECT ? 0x7CFFA8 : 0xFFE08A) : 0xFF6A5A), LV_PART_MAIN);
@@ -552,20 +542,17 @@ static void render(app_context_t *ctx)
     if (!s->plot) build(s, ctx->root);
     draw_scene(app_ui_pixels(), s, (unsigned)ctx->now_ms);
     sync_hud(s, ctx->now_ms, app_exit_hold_progress(ctx));
-    app_ui_plot_refresh(s->plot, &s->image);
+    app_ui_canvas_refresh(s->plot);
     publish(s, true, true);
 }
 static bool command(const char *line)
 {
-    if (strcmp(line, "robot fishing status")) return false;
+    if (!app_command_is(line, "robot fishing status")) return false;
     status_t v;
-    portENTER_CRITICAL(&s_lock); v = s_status; portEXIT_CRITICAL(&s_lock);
-    char reply[256];
-    snprintf(reply, sizeof reply,
-             "active=%u phase=%u tier=%u done=%u need=%u lives=%u kind=%u state=%u to=%d caught=%lu lost=%lu casts=%lu servo=%u frames=%lu",
-             v.active ? 1U : 0U, v.phase, v.tier, v.done, v.need, v.lives, v.kind, v.state, v.to, (unsigned long)v.caught,
-             (unsigned long)v.lost, (unsigned long)v.casts, v.servo, (unsigned long)v.frames);
-    (void)app_transport_write(reply);
+    app_shared_copy(v, s_status);
+    (void)app_command_replyf("active=%u phase=%u tier=%u done=%u need=%u lives=%u kind=%u state=%u to=%d caught=%lu lost=%lu casts=%lu servo=%u frames=%lu",
+            v.active ? 1U : 0U, v.phase, v.tier, v.done, v.need, v.lives, v.kind, v.state, v.to, (unsigned long)v.caught,
+            (unsigned long)v.lost, (unsigned long)v.casts, v.servo, (unsigned long)v.frames);
     return true;
 }
 static void icon(void *parent, int x, int y, bool selected)

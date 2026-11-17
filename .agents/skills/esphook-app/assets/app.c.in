@@ -1,11 +1,23 @@
 #include "esphook/app.h"
-#include "esphook/app_ui.h"
+#include "esphook/app_command.h"
 #include "esphook/app_services.h"
+#include "esphook/app_sync.h"
+#include "esphook/app_ui.h"
 #include <stdio.h>
 #include <limits.h>
 
 typedef struct { lv_obj_t *title, *value, *hint, *ring; unsigned count; } state_t;
 _Static_assert(sizeof(state_t) <= APP_STATE_CAPACITY, "app state exceeds arena");
+
+/* Everything the USB task may see: a plain copy that the UI task publishes (app_sync.h). `state_t` itself belongs to
+ * the UI task and is gone once the app exits. */
+typedef struct { bool active; unsigned count; } status_t;
+static status_t s_status;
+static void publish(const state_t *s, bool active)
+{
+    const status_t v = {active, s->count};
+    app_shared_copy(s_status, v);
+}
 
 static void enter(app_context_t *ctx)
 {
@@ -17,14 +29,20 @@ static void enter(app_context_t *ctx)
     app_ui_center(s->title); app_ui_center(s->value);
     app_ui_text(s->title, @TITLE_C@);
     app_ui_text(s->hint, "短按计数 长按清零");
+    publish(s, true);
     (void)app_host_event(ctx, "launch", 0, NULL);
 }
-static void leave(app_context_t *ctx) { (void)app_host_event(ctx, "leave", 0, NULL); }
+static void leave(app_context_t *ctx)
+{
+    publish(ctx->state, false);
+    (void)app_host_event(ctx, "leave", 0, NULL);
+}
 static void event(app_context_t *ctx, const app_event_t *e)
 {
     state_t *s = ctx->state;
     if (e->kind == APP_EVENT_SHORT) { if (s->count < UINT_MAX) ++s->count; (void)app_host_event(ctx, "tap", e->key, NULL); }
     if (e->kind == APP_EVENT_CONFIRM) { s->count = 0; (void)app_host_event(ctx, "reset", e->key, NULL); }
+    publish(s, true);
 }
 static void render(app_context_t *ctx)
 {
@@ -34,8 +52,17 @@ static void render(app_context_t *ctx)
 }
 static void icon(void *parent, int x, int y, bool selected)
 { app_ui_rect(parent, x+4, y+4, 20, 20, selected ? APP_COLOR_ACCENT : 0xC178FF, 5); }
+/* `robot @APP_ID@ status` on the USB link; runs on the USB task, so it only reads the published copy. */
+static bool command(const char *line)
+{
+    if (!app_command_is(line, "robot @APP_ID@ status")) return false;
+    status_t v;
+    app_shared_copy(v, s_status);
+    (void)app_command_replyf("active=%u count=%u", v.active ? 1U : 0U, v.count);
+    return true;
+}
 const app_descriptor_t esphook_app_@APP_ID@ = {
     .api_version = APP_API_VERSION, .id = "@APP_ID@", .title = @TITLE_C@,
     .refresh_ms = 33, .state_size = sizeof(state_t),
-    .on_enter = enter, .on_leave = leave, .on_event = event, .render = render, .icon = icon
+    .on_enter = enter, .on_leave = leave, .on_event = event, .render = render, .icon = icon, .command = command
 };

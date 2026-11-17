@@ -25,7 +25,6 @@
 #define AQ_CHEST_X 25        /* where the treasure chest blows its bubbles */
 #define AQ_ANEMONE_X 126     /* the clownfish's home */
 #define AQ_COUNT_MAX 99999U
-#define AQ_AGE_MAX 60000U
 
 typedef enum { AQ_CLOWN, AQ_TANG, AQ_ANGEL, AQ_TETRA, AQ_JELLY, AQ_CRAB } aq_kind_t;
 
@@ -55,7 +54,7 @@ typedef struct {
     aq_food_t food[AQ_FOOD];
     aq_bubble_t bubble[AQ_BUBBLES];
     uint32_t rng, clock_ms, carry_ms, thrown, eaten;
-    uint32_t since_feed_ms, since_eat_ms; /* saturating at AQ_AGE_MAX; for the splash and the little "yum" */
+    uint32_t since_feed_ms, since_eat_ms; /* saturating at APP_AGE_MAX; for the splash and the little "yum" */
     uint16_t cooldown, bubble_wait, school_wait;
     int16_t school_x, school_y, school_gx, school_gy; /* the tetras' meeting point, whole px */
     int16_t eat_x, eat_y;                              /* where the latest pellet was eaten, whole px */

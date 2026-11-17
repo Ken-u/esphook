@@ -6,7 +6,7 @@
 struct app_manager {
     const app_descriptor_t *const *catalog;
     size_t catalog_count, active, standby, selected, pending;
-    bool idle, pending_idle, pending_set, ready, dirty, triple_blocked;
+    bool idle, pending_idle, pending_set, ready, dirty, triple_blocked, exit_armed;
     uint64_t activity_ms, rendered_ms, alarm_ms;
     unsigned exit_hold_ms, alarm_id; /* alarm_id: an alarm that started and has not been announced to its app yet */
     app_input_t input[3];

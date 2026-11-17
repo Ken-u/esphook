@@ -1,11 +1,11 @@
 #include "esphook/app.h"
+#include "esphook/app_command.h"
 #include "esphook/app_ui.h"
 #include "esphook/app_services.h"
-#include "esphook/app_runtime.h"
 #include "esphook/radar_view.h"
 #include <stdio.h>
 #include <string.h>
-typedef struct { lv_obj_t *plot, *heading, *labels[3]; lv_image_dsc_t image; } state_t;
+typedef struct { lv_obj_t *plot, *heading, *labels[3]; } state_t;
 _Static_assert(sizeof(state_t) <= APP_STATE_CAPACITY, "radar state too large");
 static void enter(app_context_t *ctx)
 {
@@ -16,10 +16,7 @@ static void enter(app_context_t *ctx)
         uint16_t color = radar_target_color(i);
         lv_obj_set_style_text_color(s->labels[i], lv_color_make((color>>11)*255/31,((color>>5)&63)*255/63,(color&31)*255/31), LV_PART_MAIN);
     }
-    s->image.header.magic=LV_IMAGE_HEADER_MAGIC; s->image.header.cf=LV_COLOR_FORMAT_RGB565;
-    s->image.header.w=RADAR_VIEW_WIDTH; s->image.header.h=RADAR_VIEW_HEIGHT; s->image.header.stride=RADAR_VIEW_WIDTH*2;
-    s->image.data_size=RADAR_VIEW_WIDTH*RADAR_VIEW_HEIGHT*2; s->image.data=(const uint8_t *)app_ui_pixels();
-    s->plot=lv_image_create(ctx->root); lv_obj_set_pos(s->plot,0,16); lv_image_set_src(s->plot,&s->image);
+    s->plot = app_ui_canvas(ctx->root, 0, 16, RADAR_VIEW_WIDTH, RADAR_VIEW_HEIGHT);
 }
 static void render(app_context_t *ctx)
 {
@@ -36,9 +33,9 @@ static void render(app_context_t *ctx)
     else snprintf(text,sizeof text,"R%u %.1fm X/Y m",count,radar.range_mm/1000.0);
     app_ui_text(s->heading,text);
     radar_view_draw(app_ui_pixels(),&radar.frame,radar.online,radar.range_mm,(unsigned)ctx->now_ms);
-    app_ui_plot_refresh(s->plot,&s->image);
+    app_ui_canvas_refresh(s->plot);
 }
-static void leave(app_context_t *ctx) { state_t *s=ctx->state; app_ui_plot_refresh(s->plot,&s->image); }
+static void leave(app_context_t *ctx) { state_t *s=ctx->state; app_ui_canvas_refresh(s->plot); }
 static void event(app_context_t *ctx,const app_event_t *e) { if(e->kind==APP_EVENT_SHORT) app_menu(ctx); }
 static void icon(void *parent,int x,int y,bool selected)
 {
@@ -55,10 +52,11 @@ static void icon(void *parent,int x,int y,bool selected)
 }
 static bool command(const char *line)
 {
-    if(strcmp(line,"robot radar")) return false;
+    if (!app_command_is(line, "robot radar")) return false;
     char error[96]; const char *json="{\"v\":1,\"mode\":\"radar\"}";
     (void)app_display_update(json,strlen(json),error,sizeof error);
-    (void)app_transport_write(app_runtime_open("radar")?"OK radar queued":"ERR app queue full"); return true;
+    (void)app_command_reply(app_command_open("radar") ? "OK radar queued" : "ERR app queue full");
+    return true;
 }
 const app_descriptor_t esphook_app_radar={.api_version=APP_API_VERSION,.id="radar",.title="雷达",
     .flags=APP_STANDBY,.refresh_ms=80,.state_size=sizeof(state_t),.on_enter=enter,.on_leave=leave,.on_event=event,.render=render,.icon=icon,.command=command};

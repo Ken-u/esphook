@@ -1,4 +1,5 @@
 #include "app_services.h"
+#include "app_sync.h"
 #include "robot_runtime.h"
 #include "robot_ui.h"
 #include "app_runtime.h"
@@ -13,6 +14,7 @@
 #include "esp_random.h"
 #include "esp_timer.h"
 #include "sdkconfig.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "cJSON.h"
 #include <stdio.h>
@@ -21,6 +23,13 @@
 #include <sys/time.h>
 #include <time.h>
 
+/* app_sync.h: one short critical section shared by all apps (they only copy a few bytes) and a thin mutex. */
+static portMUX_TYPE s_app_critical = portMUX_INITIALIZER_UNLOCKED;
+void app_critical_enter(void) { portENTER_CRITICAL(&s_app_critical); }
+void app_critical_exit(void) { portEXIT_CRITICAL(&s_app_critical); }
+app_lock_t *app_lock_create(void) { return (app_lock_t *)xSemaphoreCreateMutex(); }
+void app_lock_take(app_lock_t *lock) { (void)xSemaphoreTake((SemaphoreHandle_t)lock, portMAX_DELAY); }
+void app_lock_give(app_lock_t *lock) { (void)xSemaphoreGive((SemaphoreHandle_t)lock); }
 typedef struct { char client[24], session[48], word[16], callback[32]; } reply_t;
 static QueueHandle_t s_replies;
 static char s_servo_owner[APP_ID_MAX + 1]; /* UI task only. */

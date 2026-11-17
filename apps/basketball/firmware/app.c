@@ -6,8 +6,8 @@
 #include <stdio.h>
 #include <string.h>
 #include "basketball_game.h"
-#include "esphook/app_runtime.h"
-#include "freertos/FreeRTOS.h"
+#include "esphook/app_command.h"
+#include "esphook/app_sync.h"
 
 /* Layout: an 8 px strip (timer bar), the 64 row pixel canvas (screen y 8..71), an 8 px strip. Game coordinates are
  * screen coordinates; the scene is painted in canvas coordinates (screen y - CANVAS_Y). The hoop hangs from the
@@ -29,7 +29,6 @@ typedef struct {
     lv_obj_t *top, *plot, *bottom, *hold, *hud, *results;
     lv_obj_t *clock_pill, *clock_label, *score_pill, *score_label, *bar, *shots_pill, *shots_label, *hint_pill, *hint, *float_label;
     lv_obj_t *title, *result_score, *result_line, *result_hint;
-    lv_image_dsc_t image;
     uint64_t fx_ms;
     float fx_x, prev_hoop_x, sway;
     int16_t trail_x[TRAIL], trail_y[TRAIL];
@@ -38,7 +37,6 @@ typedef struct {
 } state_t;
 _Static_assert(sizeof(state_t) <= APP_STATE_CAPACITY, "basketball state too large");
 static basketball_view_t s_status;
-static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 
 static void enter(app_context_t *ctx)
 {
@@ -52,13 +50,13 @@ static void tick(app_context_t *ctx)
     state_t *s=ctx->state; basketball_tick(&s->game, ctx->now_ms);
     basketball_view_t view; basketball_snapshot(&s->game, ctx->now_ms, &view);
     app_set_triple_exit(ctx, view.phase != BASKETBALL_PLAY);
-    portENTER_CRITICAL(&s_lock); s_status=view; portEXIT_CRITICAL(&s_lock);
+    app_shared_copy(s_status, view);
 }
 static void leave(app_context_t *ctx)
 {
     state_t *s=ctx->state; basketball_stop(&s->game);
-    if (s->plot) app_ui_plot_refresh(s->plot, &s->image); /* The shared canvas goes to the next app. */
-    portENTER_CRITICAL(&s_lock); s_status.phase=BASKETBALL_OFF; portEXIT_CRITICAL(&s_lock);
+    if (s->plot) app_ui_canvas_refresh(s->plot); /* The shared canvas goes to the next app. */
+    app_critical_enter(); s_status.phase=BASKETBALL_OFF; app_critical_exit();
 }
 static void event(app_context_t *ctx, const app_event_t *e)
 {
@@ -259,13 +257,7 @@ static lv_obj_t *centered(lv_obj_t *label)
 static void build(state_t *s, lv_obj_t *root)
 {
     s->top = app_ui_rect(root, 0, 0, APP_WIDTH, CANVAS_Y, WALL_TOP, 0);
-    s->image.header.magic = LV_IMAGE_HEADER_MAGIC;
-    s->image.header.cf = LV_COLOR_FORMAT_RGB565;
-    s->image.header.w = APP_CANVAS_W; s->image.header.h = APP_CANVAS_H; s->image.header.stride = APP_CANVAS_W * 2;
-    s->image.data_size = APP_CANVAS_W * APP_CANVAS_H * 2; s->image.data = (const uint8_t *)app_ui_pixels();
-    s->plot = lv_image_create(root);
-    lv_obj_set_pos(s->plot, 0, CANVAS_Y);
-    lv_image_set_src(s->plot, &s->image);
+    s->plot = app_ui_canvas(root, 0, CANVAS_Y, APP_CANVAS_W, APP_CANVAS_H);
     s->bottom = app_ui_rect(root, 0, CANVAS_Y + APP_CANVAS_H, APP_WIDTH, APP_HEIGHT - CANVAS_Y - APP_CANVAS_H, FLOOR_LOW, 0);
     s->hud = overlay(root);
     s->results = overlay(root);
@@ -276,7 +268,7 @@ static void build(state_t *s, lv_obj_t *root)
     s->score_pill = pill(s->hud, 97, 10, 60, 15, 0x0B0820, 200);
     s->score_label = centered(app_ui_label(s->score_pill, &aihook_font_12, 0, 1, 60, 14, LV_LABEL_LONG_MODE_CLIP));
     lv_obj_set_style_text_color(s->score_label, app_ui_color(APP_COLOR_ACCENT), LV_PART_MAIN);
-    s->hold = app_ui_rect(s->hud, 0, 0, 0, 2, APP_COLOR_ACCENT, 0); /* the hold towards the exit */
+    s->hold = app_ui_hold_bar(s->hud, 0, APP_COLOR_ACCENT); /* the hold towards the exit */
     app_ui_hide(s->hold, true);
     s->shots_pill = pill(s->hud, 3, 65, 56, 14, 0x0B0820, 150);
     s->shots_label = centered(app_ui_label(s->shots_pill, &aihook_font_12, 0, 0, 56, 14, LV_LABEL_LONG_MODE_CLIP));
@@ -360,17 +352,17 @@ static void render(app_context_t *ctx)
         }
         draw_scene(s, game, ctx->now_ms);
     }
-    app_ui_plot_refresh(s->plot, &s->image);
+    app_ui_canvas_refresh(s->plot);
 }
 static bool command(const char *line)
 {
-    if (!strcmp(line, "robot game start")) { (void)app_transport_write(app_runtime_open("basketball") ? "OK game queued" : "ERR game queue full"); return true; }
-    if (!strcmp(line, "robot game stop")) { (void)app_runtime_menu(); return true; }
-    if (strcmp(line, "robot game status")) return false;
-    basketball_view_t v; portENTER_CRITICAL(&s_lock); v=s_status; portEXIT_CRITICAL(&s_lock);
-    char reply[160]; snprintf(reply, sizeof reply, "phase=%u seconds=%u shots=%lu made=%lu score=%lu", (unsigned)v.phase,
-        v.seconds_left, (unsigned long)v.shots, (unsigned long)v.made, (unsigned long)v.score);
-    (void)app_transport_write(reply); return true;
+    if (app_command_is(line, "robot game start")) { (void)app_command_reply(app_command_open("basketball") ? "OK game queued" : "ERR game queue full"); return true; }
+    if (app_command_is(line, "robot game stop")) { (void)app_command_menu(); return true; }
+    if (!app_command_is(line, "robot game status")) return false;
+    basketball_view_t v; app_shared_copy(v, s_status);
+    (void)app_command_replyf("phase=%u seconds=%u shots=%lu made=%lu score=%lu", (unsigned)v.phase, v.seconds_left,
+                             (unsigned long)v.shots, (unsigned long)v.made, (unsigned long)v.score);
+    return true;
 }
 static void icon(void *parent, int x, int y, bool selected)
 {

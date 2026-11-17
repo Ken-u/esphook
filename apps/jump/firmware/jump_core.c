@@ -1,14 +1,8 @@
 #include "jump_core.h"
 #include <string.h>
+#include "esphook/app_math.h"
+#include "esphook/app_rand.h"
 
-static uint32_t rnd(jp_t *g)
-{
-    uint32_t x = g->rng ? g->rng : 0x9E3779B9U;
-    x ^= x << 13; x ^= x >> 17; x ^= x << 5;
-    g->rng = x;
-    return x;
-}
-static int abs_i(int v) { return v < 0 ? -v : v; }
 int jp_hw_max(unsigned score)
 {
     const int cut = (int)(score / 12U);
@@ -19,22 +13,11 @@ const jp_plat_t *jp_plat(const jp_t *g, int which)
     return &g->plat[((int)g->cur + which + 2 * (int)JP_PLATS) % (int)JP_PLATS];
 }
 static jp_plat_t *plat_at(jp_t *g, int which) { return (jp_plat_t *)jp_plat(g, which); }
-static uint32_t isqrt32(uint32_t v)
-{
-    uint32_t r = 0, bit = 1U << 30;
-    while (bit > v) bit >>= 2;
-    while (bit) {
-        if (v >= r + bit) { v -= r + bit; r = (r >> 1) + bit; }
-        else r >>= 1;
-        bit >>= 2;
-    }
-    return r;
-}
 int jp_next_distance16(const jp_t *g)
 {
     const jp_plat_t *n = jp_plat(g, 1);
     const int va = n->a * 16 - (int)g->pa16, vb = n->b * 16 - (int)g->pb16;
-    return (int)isqrt32((uint32_t)(va * va + vb * vb));
+    return (int)app_isqrt((uint32_t)(va * va + vb * vb));
 }
 unsigned jp_charge_for(int dist16)
 {
@@ -43,7 +26,7 @@ unsigned jp_charge_for(int dist16)
 static bool overlaps(const jp_plat_t *x, const jp_plat_t *y)
 {
     const int reach = x->hw + y->hw + 2;
-    return y->hw && abs_i(x->a - y->a) < reach && abs_i(x->b - y->b) < reach;
+    return y->hw && app_abs(x->a - y->a) < reach && app_abs(x->b - y->b) < reach;
 }
 /* A new box after the last one: either diagonal, a gap of a few units between the edges, a size that shrinks with the
  * score, and never touching a box already there. */
@@ -51,13 +34,13 @@ static void make_next(jp_t *g)
 {
     const jp_plat_t last = *plat_at(g, 1);
     const int hw_max = jp_hw_max((unsigned)g->score), hw_min = 5;
-    const int hw = hw_min + (int)(rnd(g) % (unsigned)(hw_max - hw_min + 1));
+    const int hw = hw_min + (int)(app_rand_next(&g->rng) % (unsigned)(hw_max - hw_min + 1));
     const int gap_max = 6 + (int)(g->score > 30U ? 6U : g->score / 5U);
-    int gap = 3 + (int)(rnd(g) % (unsigned)(gap_max - 2));
-    const bool turn = (rnd(g) & 1U) != 0U;
+    int gap = 3 + (int)(app_rand_next(&g->rng) % (unsigned)(gap_max - 2));
+    const bool turn = (app_rand_next(&g->rng) & 1U) != 0U;
     jp_plat_t fresh = last;
     fresh.hw = (uint8_t)hw;
-    fresh.color = (uint8_t)((last.color + 1U + rnd(g) % 6U) % 8U);
+    fresh.color = (uint8_t)((last.color + 1U + app_rand_next(&g->rng) % 6U) % 8U);
     for (unsigned tries = 0; tries < 6U; ++tries, gap += 3) {
         const int dist = last.hw + gap + hw;
         fresh.a = (int16_t)(last.a + (turn ? 0 : dist));
@@ -97,7 +80,7 @@ void jp_press(jp_t *g)
 }
 static bool inside(const jp_plat_t *p, int32_t a16, int32_t b16, int slack16)
 {
-    return abs_i((int)(a16 - p->a * 16)) <= p->hw * 16 + slack16 && abs_i((int)(b16 - p->b * 16)) <= p->hw * 16 + slack16;
+    return app_abs((int)(a16 - p->a * 16)) <= p->hw * 16 + slack16 && app_abs((int)(b16 - p->b * 16)) <= p->hw * 16 + slack16;
 }
 void jp_release(jp_t *g)
 {
@@ -110,7 +93,7 @@ void jp_release(jp_t *g)
     g->la16 = g->pa16 + g->dist16 * g->ua / 256;
     g->lb16 = g->pb16 + g->dist16 * g->ub / 256;
     if (inside(next, g->la16, g->lb16, 0)) {
-        g->result = abs_i(g->dist16 - len) <= JP_PERFECT_D16 ? JP_PERFECT : JP_GOOD; /* the aim is on the line, so only the length can be off */
+        g->result = app_abs(g->dist16 - len) <= JP_PERFECT_D16 ? JP_PERFECT : JP_GOOD; /* the aim is on the line, so only the length can be off */
     } else if (inside(cur, g->la16, g->lb16, 0)) g->result = JP_STAYED;
     else g->result = JP_MISSED;
     g->fly_ms = (uint16_t)(330 + g->dist16 * 6 / 16);

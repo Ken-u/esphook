@@ -4,7 +4,8 @@
 #include "esphook/app_services.h"
 #include "esphook/app_ui.h"
 #include "aquarium_core.h"
-#include "freertos/FreeRTOS.h"
+#include "esphook/app_command.h"
+#include "esphook/app_sync.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -16,15 +17,13 @@
 
 typedef struct {
     aq_t tank;
-    lv_obj_t *plot, *band, *line, *hold, *fed, *eaten, *hint;
-    lv_image_dsc_t image;
+    lv_obj_t *plot, *band, *hold, *fed, *eaten, *hint;
     uint64_t last_ms;
     uint32_t shown_fed, shown_eaten;
 } state_t;
 _Static_assert(sizeof(state_t) <= APP_STATE_CAPACITY, "aquarium state too large");
 typedef struct { bool active; uint32_t thrown, eaten, frames; unsigned food; } status_t;
 static status_t s_status;
-static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 
 static int ang(unsigned now, unsigned div, unsigned phase) { return gfx_sin256(now / div + phase); }
 
@@ -324,15 +323,8 @@ static void draw_scene(uint16_t *px, const aq_t *a, unsigned now)
 /* ---- app ------------------------------------------------------------------------------------------------------ */
 static void build(state_t *s, lv_obj_t *root)
 {
-    s->image.header.magic = LV_IMAGE_HEADER_MAGIC;
-    s->image.header.cf = LV_COLOR_FORMAT_RGB565;
-    s->image.header.w = APP_CANVAS_W; s->image.header.h = APP_CANVAS_H; s->image.header.stride = APP_CANVAS_W * 2;
-    s->image.data_size = APP_CANVAS_W * APP_CANVAS_H * 2; s->image.data = (const uint8_t *)app_ui_pixels();
-    s->plot = lv_image_create(root);
-    lv_obj_set_pos(s->plot, 0, 0);
-    lv_image_set_src(s->plot, &s->image);
-    s->band = app_ui_rect(root, 0, BAND_Y, APP_WIDTH, APP_HEIGHT - BAND_Y, 0x2A1B10, 0); /* the wooden stand */
-    s->line = app_ui_rect(root, 0, BAND_Y, APP_WIDTH, 1, 0x8A6034, 0);
+    s->plot = app_ui_canvas(root, 0, 0, APP_CANVAS_W, APP_CANVAS_H);
+    s->band = app_ui_band(root, 0x2A1B10, 0x8A6034); /* the wooden stand */
     app_ui_rect(root, 0, BAND_Y + 1, APP_WIDTH, 1, 0x4A3018, 0);
     s->fed = app_ui_label(s->band, &aihook_font_12, 3, 2, 46, 14, LV_LABEL_LONG_MODE_CLIP);
     s->eaten = app_ui_label(s->band, &aihook_font_12, 47, 2, 46, 14, LV_LABEL_LONG_MODE_CLIP);
@@ -341,16 +333,16 @@ static void build(state_t *s, lv_obj_t *root)
     lv_obj_set_style_text_color(s->eaten, app_ui_color(0xFFB4C6), LV_PART_MAIN);
     lv_obj_set_style_text_color(s->hint, app_ui_color(0xB5A488), LV_PART_MAIN);
     app_ui_text(s->hint, "按住2秒退出");
-    s->hold = app_ui_rect(root, 0, BAND_Y, 0, 2, APP_COLOR_ACCENT, 0); /* the hold towards the exit */
+    s->hold = app_ui_hold_bar(root, BAND_Y, APP_COLOR_ACCENT); /* the hold towards the exit */
     app_ui_hide(s->hold, true);
 }
 static void publish(const state_t *s, bool active, bool frame)
 {
-    portENTER_CRITICAL(&s_lock);
+    app_critical_enter();
     s_status.active = active; s_status.thrown = s->tank.thrown; s_status.eaten = s->tank.eaten;
     s_status.food = aq_food_live(&s->tank);
     if (frame) ++s_status.frames;
-    portEXIT_CRITICAL(&s_lock);
+    app_critical_exit();
 }
 static void enter(app_context_t *ctx)
 {
@@ -360,7 +352,7 @@ static void enter(app_context_t *ctx)
     app_set_exit_hold(ctx, EXIT_HOLD_MS);
     s->last_ms = ctx->now_ms;
     s->shown_fed = s->shown_eaten = 0xFFFFFFFFU;
-    portENTER_CRITICAL(&s_lock); s_status = (status_t){0}; portEXIT_CRITICAL(&s_lock);
+    app_critical_enter(); s_status = (status_t){0}; app_critical_exit();
     publish(s, true, false);
 }
 static void tick(app_context_t *ctx)
@@ -373,8 +365,8 @@ static void tick(app_context_t *ctx)
 static void leave(app_context_t *ctx)
 {
     state_t *s = ctx->state;
-    if (s->plot) app_ui_plot_refresh(s->plot, &s->image); /* The shared canvas goes to the next app. */
-    portENTER_CRITICAL(&s_lock); s_status.active = false; portEXIT_CRITICAL(&s_lock);
+    if (s->plot) app_ui_canvas_refresh(s->plot); /* The shared canvas goes to the next app. */
+    app_critical_enter(); s_status.active = false; app_critical_exit();
 }
 static void event(app_context_t *ctx, const app_event_t *e)
 {
@@ -399,18 +391,16 @@ static void render(app_context_t *ctx)
     }
     app_ui_hold_line(s->hold, app_exit_hold_progress(ctx), false, EXIT_HOLD_MS);
     draw_scene(app_ui_pixels(), &s->tank, (unsigned)ctx->now_ms);
-    app_ui_plot_refresh(s->plot, &s->image);
+    app_ui_canvas_refresh(s->plot);
     publish(s, true, true);
 }
 static bool command(const char *line)
 {
-    if (strcmp(line, "robot aquarium status")) return false;
+    if (!app_command_is(line, "robot aquarium status")) return false;
     status_t v;
-    portENTER_CRITICAL(&s_lock); v = s_status; portEXIT_CRITICAL(&s_lock);
-    char reply[128];
-    snprintf(reply, sizeof reply, "active=%u thrown=%lu eaten=%lu food=%u frames=%lu", v.active ? 1U : 0U, (unsigned long)v.thrown,
-             (unsigned long)v.eaten, v.food, (unsigned long)v.frames);
-    (void)app_transport_write(reply);
+    app_shared_copy(v, s_status);
+    (void)app_command_replyf("active=%u thrown=%lu eaten=%lu food=%u frames=%lu", v.active ? 1U : 0U, (unsigned long)v.thrown,
+            (unsigned long)v.eaten, v.food, (unsigned long)v.frames);
     return true;
 }
 static void icon(void *parent, int x, int y, bool selected)

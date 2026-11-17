@@ -5,6 +5,23 @@ import json
 from pathlib import Path
 import re
 
+# An app may only reach the device through the public framework API, so its includes are an allowlist: the C
+# library, cJSON, its own local headers and `esphook/app*.h` (+ the radar view and the display protocol the
+# services hand out, which the include path also exposes without the prefix). Anything else - FreeRTOS, ESP-IDF,
+# drivers, the runtime internals - is a layering break; the framework exposes what an app needs instead
+# (app_sync.h for task hand-off, app_command.h for USB commands, app_services.h for hardware).
+STD_HEADERS = {"assert.h", "ctype.h", "errno.h", "float.h", "inttypes.h", "limits.h", "math.h", "stdarg.h", "stdbool.h",
+               "stddef.h", "stdint.h", "stdio.h", "stdlib.h", "string.h", "time.h"}
+PUBLIC_HEADER = re.compile(r"(?:esphook/)?(?:app(?!_runtime\b)(?:_[a-z0-9]+)*|radar_view|robot_ui_protocol)\.h")
+
+def include_errors(text, local_headers=()):
+    """Includes in `text` outside the app allowlist; `local_headers` are the file names of the app's own headers."""
+    bad = []
+    for quote, name in re.findall(r'^\s*#\s*include\s*([<"])([^>"]+)[>"]', text, re.M):
+        if not ((quote == '"' and name in local_headers) or name in STD_HEADERS or name == "cJSON.h" or PUBLIC_HEADER.fullmatch(name)):
+            bad.append(name)
+    return bad
+
 def descriptor_text(combined, app_id):
     """The `esphook_app_<id> = {...};` initializer, without unrelated structs in the same sources."""
     start = re.search(r"\bconst\s+app_descriptor_t\s+esphook_app_" + app_id + r"\s*=", combined)
@@ -64,8 +81,11 @@ def check(root, catalog=None):
                 raise ValueError("APP_DEFAULT_STANDBY needs APP_STANDBY as well")
             catalog.append(dict(id=app_id, title=title[1], hidden=has("APP_HIDDEN"), standby=has("APP_STANDBY"),
                                 default=has("APP_DEFAULT_STANDBY")))
-            if re.search(r'#\s*include\s*[<"](?:driver/|esp_lcd|esp_http_client|usb_cdc\.h|(?:esphook/)?(?:robot_runtime|motion_ports)\.h)', combined):
-                raise ValueError("apps must use framework device/transport APIs")
+            sources = sorted(f for pattern in ("*.c", "*.h") for f in (manifest.parent / "firmware").rglob(pattern))
+            local = {f.name for f in sources}
+            bad = sorted({name for f in sources for name in include_errors(f.read_text(), local)})
+            if bad:
+                raise ValueError(f"apps must use the public framework API (esphook/app*.h), not {', '.join(bad)}")
         except (KeyError, ValueError, TypeError, OSError) as exc:
             errors.append(f"{manifest.relative_to(root)}: {exc}")
     try:

@@ -1,9 +1,11 @@
+#include "esphook/app_math.h"
 #include "esphook/app.h"
 #include "esphook/app_gfx.h"
 #include "esphook/app_ui.h"
 #include "esphook/app_services.h"
 #include "muyu_core.h"
-#include "freertos/FreeRTOS.h"
+#include "esphook/app_command.h"
+#include "esphook/app_sync.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -32,14 +34,12 @@
 
 typedef struct {
     muyu_t core;
-    lv_obj_t *plot, *band, *line, *hold, *hint, *hud, *count, *tag, *tag_text, *floating[2];
-    lv_image_dsc_t image;
+    lv_obj_t *plot, *band, *hold, *hint, *hud, *count, *tag, *tag_text, *floating[2];
     unsigned hud_width;
 } state_t;
 _Static_assert(sizeof(state_t) <= APP_STATE_CAPACITY, "muyu state too large");
 typedef struct { bool active, auto_on; uint32_t count, rounds, frames; } status_t;
 static status_t s_status;
-static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 
 static const uint32_t FISH_LIGHT = 0xF4B561, FISH_MID = 0xC9733A, FISH_DARK = 0x6A2B10, FISH_RIM = 0x32130A;
 static const uint32_t GOLD = 0xFFD54A;
@@ -149,12 +149,11 @@ static void draw_fish(uint16_t *px, unsigned squash)
         gfx_plot(px, FISH_CX + 9 + i * 5, cy - 6 + i * 2, gfx_rgb565(FISH_DARK));
     }
 }
-static int lerp(int a, int b, int t256) { return a + (b - a) * t256 / 256; }
 /* Head position of the mallet `age` ms after the latest knock. After the landing the head keeps resting on the fish
  * while the fish is pressed in and springs back, so it is pushed up by it instead of hovering. */
 static void head_at(const muyu_view_t *v, unsigned age, unsigned now, unsigned squash, int *hx, int *hy)
 {
-    int y = lerp(HEAD_HIT_Y, HEAD_REST_Y, muyu_lift(age, v->swing_from));
+    int y = app_lerp(HEAD_HIT_Y, HEAD_REST_Y, muyu_lift(age, v->swing_from), 256);
     if (age >= MUYU_SWING_MS) {
         int contact = fish_top(HEAD_X, squash) - 5;
         if (contact > y) y = contact;
@@ -252,16 +251,9 @@ static lv_obj_t *pill(lv_obj_t *parent, int x, int y, int w, int h, uint32_t rgb
 }
 static void build(state_t *s, lv_obj_t *root)
 {
-    s->image.header.magic = LV_IMAGE_HEADER_MAGIC;
-    s->image.header.cf = LV_COLOR_FORMAT_RGB565;
-    s->image.header.w = APP_CANVAS_W; s->image.header.h = APP_CANVAS_H; s->image.header.stride = APP_CANVAS_W * 2;
-    s->image.data_size = APP_CANVAS_W * APP_CANVAS_H * 2; s->image.data = (const uint8_t *)app_ui_pixels();
-    s->plot = lv_image_create(root);
-    lv_obj_set_pos(s->plot, 0, 0);
-    lv_image_set_src(s->plot, &s->image);
-    s->band = app_ui_rect(root, 0, BAND_Y, APP_WIDTH, APP_HEIGHT - BAND_Y, 0x1B0F18, 0);
-    s->line = app_ui_rect(root, 0, BAND_Y, APP_WIDTH, 1, 0x7A5A1E, 0);
-    s->hold = app_ui_rect(root, 0, BAND_Y, 0, 2, GOLD, 0);
+    s->plot = app_ui_canvas(root, 0, 0, APP_CANVAS_W, APP_CANVAS_H);
+    s->band = app_ui_band(root, 0x1B0F18, 0x7A5A1E);
+    s->hold = app_ui_hold_bar(root, BAND_Y, GOLD);
     s->hint = app_ui_label(s->band, &aihook_font_12, 0, 2, APP_WIDTH, 14, LV_LABEL_LONG_MODE_CLIP);
     app_ui_center(s->hint);
     lv_obj_set_style_text_color(s->hint, app_ui_color(0xC9B79C), LV_PART_MAIN);
@@ -284,10 +276,10 @@ static void publish(const state_t *s, bool active, bool frame)
 {
     muyu_view_t v;
     muyu_snapshot(&s->core, &v);
-    portENTER_CRITICAL(&s_lock);
+    app_critical_enter();
     s_status.active = active; s_status.auto_on = v.auto_on; s_status.count = v.count; s_status.rounds = v.rounds;
     if (frame) ++s_status.frames;
-    portEXIT_CRITICAL(&s_lock);
+    app_critical_exit();
 }
 static void enter(app_context_t *ctx)
 {
@@ -295,7 +287,7 @@ static void enter(app_context_t *ctx)
     muyu_start(&s->core, ctx->now_ms);
     app_set_triple_exit(ctx, false); /* a mallet is swung by mashing the key; holding for two seconds is the way out */
     app_set_exit_hold(ctx, EXIT_HOLD_MS);
-    portENTER_CRITICAL(&s_lock); s_status = (status_t){0}; portEXIT_CRITICAL(&s_lock);
+    app_critical_enter(); s_status = (status_t){0}; app_critical_exit();
     publish(s, true, false);
 }
 static void tick(app_context_t *ctx)
@@ -308,8 +300,8 @@ static void tick(app_context_t *ctx)
 static void leave(app_context_t *ctx)
 {
     state_t *s = ctx->state;
-    if (s->plot) app_ui_plot_refresh(s->plot, &s->image); /* The shared canvas goes to the next app. */
-    portENTER_CRITICAL(&s_lock); s_status.active = false; portEXIT_CRITICAL(&s_lock);
+    if (s->plot) app_ui_canvas_refresh(s->plot); /* The shared canvas goes to the next app. */
+    app_critical_enter(); s_status.active = false; app_critical_exit();
 }
 static void event(app_context_t *ctx, const app_event_t *e)
 {
@@ -354,18 +346,16 @@ static void render(app_context_t *ctx)
     muyu_snapshot(&s->core, &v);
     sync_hud(s, &v, app_exit_hold_progress(ctx));
     draw_scene(app_ui_pixels(), &v, (unsigned)ctx->now_ms);
-    app_ui_plot_refresh(s->plot, &s->image);
+    app_ui_canvas_refresh(s->plot);
     publish(s, true, true);
 }
 static bool command(const char *line)
 {
-    if (strcmp(line, "robot muyu status")) return false;
+    if (!app_command_is(line, "robot muyu status")) return false;
     status_t v;
-    portENTER_CRITICAL(&s_lock); v = s_status; portEXIT_CRITICAL(&s_lock);
-    char reply[96];
-    snprintf(reply, sizeof reply, "active=%u count=%lu auto=%u rounds=%lu frames=%lu", v.active ? 1U : 0U, (unsigned long)v.count,
-             v.auto_on ? 1U : 0U, (unsigned long)v.rounds, (unsigned long)v.frames);
-    (void)app_transport_write(reply);
+    app_shared_copy(v, s_status);
+    (void)app_command_replyf("active=%u count=%lu auto=%u rounds=%lu frames=%lu", v.active ? 1U : 0U, (unsigned long)v.count,
+            v.auto_on ? 1U : 0U, (unsigned long)v.rounds, (unsigned long)v.frames);
     return true;
 }
 static void icon(void *parent, int x, int y, bool selected)

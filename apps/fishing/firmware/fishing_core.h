@@ -15,7 +15,6 @@
 #define FS_LOST_MS 1800U
 #define FS_RESULT_MIN_MS 700U /* the result stays this long before a press casts again */
 #define FS_NIBBLES 2
-#define FS_AGE_MAX 60000U
 #define FS_WAIT_MIN_MS 1800U
 #define FS_WAIT_MAX_MS 4200U
 #define FS_FISH_X_MIN 66

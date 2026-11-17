@@ -1,5 +1,7 @@
 #include "fortune_core.h"
 #include <string.h>
+#include "esphook/app_math.h"
+#include "esphook/app_rand.h"
 
 static const char *const k_category[FT_CATEGORIES] = {"事业", "人际", "家庭", "学业", "爱情"};
 static const char *const k_level[FT_LEVELS] = {"大吉", "中吉", "小吉"};
@@ -33,22 +35,15 @@ const char *ft_text(unsigned category, unsigned level, unsigned text)
     return k_text[category % FT_CATEGORIES][level % FT_LEVELS][text % FT_TEXTS];
 }
 
-static uint32_t rnd(uint32_t *s)
-{
-    *s ^= *s << 13;
-    *s ^= *s >> 17;
-    *s ^= *s << 5;
-    return *s;
-}
 ft_sign_t ft_pick(uint32_t *rng)
 {
     ft_sign_t s;
-    const unsigned grade = (unsigned)(rnd(rng) % 100U);
-    s.category = (uint8_t)(rnd(rng) % FT_CATEGORIES);
+    const unsigned grade = (unsigned)(app_rand_next(rng) % 100U);
+    s.category = (uint8_t)(app_rand_next(rng) % FT_CATEGORIES);
     s.level = (uint8_t)(grade < 25U ? FT_BIG : grade < 65U ? FT_MID : FT_SMALL);
-    s.text = (uint8_t)(rnd(rng) % FT_TEXTS);
-    s.number = (uint8_t)(1U + rnd(rng) % 99U);
-    s.colour = (uint8_t)(rnd(rng) % FT_COLOURS);
+    s.text = (uint8_t)(app_rand_next(rng) % FT_TEXTS);
+    s.number = (uint8_t)(1U + app_rand_next(rng) % 99U);
+    s.colour = (uint8_t)(app_rand_next(rng) % FT_COLOURS);
     return s;
 }
 
@@ -56,7 +51,7 @@ void ft_init(ft_t *f, uint32_t seed)
 {
     memset(f, 0, sizeof *f);
     f->rng = seed ? seed : 0x5EEDF00DU;
-    for (unsigned i = 0; i < 4U; ++i) (void)rnd(&f->rng); /* a small seed (a clock) is not a small first draw */
+    for (unsigned i = 0; i < 4U; ++i) (void)app_rand_next(&f->rng); /* a small seed (a clock) is not a small first draw */
     f->phase = FT_IDLE;
 }
 void ft_press(ft_t *f)

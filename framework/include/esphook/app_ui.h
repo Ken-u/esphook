@@ -29,3 +29,16 @@ void app_ui_hold_line(lv_obj_t *line, unsigned hold_ms, bool confirm, unsigned e
 #define APP_CANVAS_H 64
 uint16_t *app_ui_pixels(void);
 void app_ui_plot_refresh(lv_obj_t *image, const lv_image_dsc_t *descriptor);
+/* The usual way to show the shared canvas: an image object at (x, y) under `parent` that displays the first `h` rows
+ * of `w` pixels of app_ui_pixels() (w <= APP_CANVAS_W, h <= APP_CANVAS_H; 0 or too large means the whole canvas).
+ * The framework owns the image descriptor, so the app keeps only the returned object - no lv_image_dsc_t in its
+ * state. Create it once in `init`; after repainting the pixels call app_ui_canvas_refresh(). */
+lv_obj_t *app_ui_canvas(lv_obj_t *parent, int x, int y, int w, int h);
+void app_ui_canvas_refresh(lv_obj_t *canvas);
+/* The 16 px status strip under the canvas (y = APP_CANVAS_H .. APP_HEIGHT): background `bg` and, unless `rule` is
+ * APP_UI_NO_RULE, a 1 px line on top of it in `rule`. Returns the strip; put its labels inside it. */
+#define APP_UI_NO_RULE 0xFFFFFFFFU
+lv_obj_t *app_ui_band(lv_obj_t *parent, uint32_t bg, uint32_t rule);
+/* The hold progress line app_ui_hold_line() draws into: 2 px high, zero wide until a hold is under way, at row `y`
+ * of `parent` in colour `rgb` (the framework recolours it for confirmation and exit holds). */
+lv_obj_t *app_ui_hold_bar(lv_obj_t *parent, int y, uint32_t rgb);

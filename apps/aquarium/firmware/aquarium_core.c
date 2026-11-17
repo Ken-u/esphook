@@ -1,5 +1,7 @@
 #include "aquarium_core.h"
 #include <string.h>
+#include "esphook/app_math.h"
+#include "esphook/app_rand.h"
 
 #define X_MIN 10
 #define X_MAX 150
@@ -17,28 +19,6 @@ static const int8_t k_sin32[32] = {0,   25,  49,  71,  90,  106, 117, 125, 127, 
                                    0,   -25, -49, -71, -90, -106, -117, -125, -127, -125, -117, -106, -90, -71, -49, -25};
 
 int aq_fish_len(unsigned kind) { return kind <= AQ_CRAB ? k_kind[kind].len : 12; }
-static int iabs(int v) { return v < 0 ? -v : v; }
-static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
-static uint32_t rnd(aq_t *a)
-{
-    a->rng ^= a->rng << 13;
-    a->rng ^= a->rng >> 17;
-    a->rng ^= a->rng << 5;
-    return a->rng;
-}
-static int rr(aq_t *a, int lo, int hi) { return lo + (int)(rnd(a) % (uint32_t)(hi - lo + 1)); }
-static uint32_t isqrt32(uint32_t v)
-{
-    uint32_t root = 0, bit = 1U << 30;
-    while (bit > v) bit >>= 2;
-    while (bit) {
-        if (v >= root + bit) { v -= root + bit; root = (root >> 1) + bit; }
-        else root >>= 1;
-        bit >>= 2;
-    }
-    return root;
-}
-static uint32_t sat_add(uint32_t v, uint32_t d) { return v + d > AQ_AGE_MAX ? AQ_AGE_MAX : v + d; }
 
 int aq_hand_x(const aq_t *a)
 {
@@ -65,7 +45,7 @@ static void spawn_bubble(aq_t *a, int x_px, int y_px, unsigned size)
         if (b->alive) continue;
         b->x = (int16_t)x_px;
         b->y = (int16_t)(y_px * 256);
-        b->speed = (uint8_t)rr(a, 16, 40);
+        b->speed = (uint8_t)app_rand_range(&a->rng, 16, 40);
         b->size = (uint8_t)size;
         b->alive = 1;
         return;
@@ -78,24 +58,24 @@ static void new_goal(aq_t *a, aq_fish_t *f)
     int gx, gy, steps;
     switch (f->kind) {
     case AQ_CLOWN:
-        if (rnd(a) % 5U) { gx = AQ_ANEMONE_X + rr(a, -26, 10); gy = AQ_FLOOR - 12 + rr(a, -10, 2); }
-        else { gx = rr(a, 20, 140); gy = rr(a, 22, 46); }
-        steps = rr(a, 150, 350);
+        if (app_rand_next(&a->rng) % 5U) { gx = AQ_ANEMONE_X + app_rand_range(&a->rng, -26, 10); gy = AQ_FLOOR - 12 + app_rand_range(&a->rng, -10, 2); }
+        else { gx = app_rand_range(&a->rng, 20, 140); gy = app_rand_range(&a->rng, 22, 46); }
+        steps = app_rand_range(&a->rng, 150, 350);
         break;
-    case AQ_TANG: gx = rr(a, 14, 146); gy = rr(a, 18, 44); steps = rr(a, 300, 600); break;
-    case AQ_ANGEL: gx = rr(a, 14, 146); gy = rr(a, 18, 40); steps = rr(a, 300, 600); break;
-    case AQ_TETRA: gx = a->school_x + rr(a, -14, 14); gy = a->school_y + rr(a, -6, 6); steps = rr(a, 60, 140); break;
-    default: gx = rr(a, 14, 146); gy = rr(a, 20, 40); steps = rr(a, 300, 600); break;
+    case AQ_TANG: gx = app_rand_range(&a->rng, 14, 146); gy = app_rand_range(&a->rng, 18, 44); steps = app_rand_range(&a->rng, 300, 600); break;
+    case AQ_ANGEL: gx = app_rand_range(&a->rng, 14, 146); gy = app_rand_range(&a->rng, 18, 40); steps = app_rand_range(&a->rng, 300, 600); break;
+    case AQ_TETRA: gx = a->school_x + app_rand_range(&a->rng, -14, 14); gy = a->school_y + app_rand_range(&a->rng, -6, 6); steps = app_rand_range(&a->rng, 60, 140); break;
+    default: gx = app_rand_range(&a->rng, 14, 146); gy = app_rand_range(&a->rng, 20, 40); steps = app_rand_range(&a->rng, 300, 600); break;
     }
-    f->gx = (int16_t)clampi(gx, X_MIN + 2, X_MAX - 2);
-    f->gy = (int16_t)clampi(gy, Y_MIN + 2, Y_MAX - 2);
+    f->gx = (int16_t)app_clamp(gx, X_MIN + 2, X_MAX - 2);
+    f->gy = (int16_t)app_clamp(gy, Y_MIN + 2, Y_MAX - 2);
     f->wander = (uint16_t)steps;
 }
 /* Eases the velocity towards "speed towards the goal"; a steering step never leaves a fish stuck just short of it. */
 static void steer(aq_fish_t *f, int gx, int gy, int speed)
 {
     const int sx = (gx * 256 - f->x) / 16, sy = (gy * 256 - f->y) / 16; /* 1/16 px */
-    int dist = (int)isqrt32((uint32_t)(sx * sx + sy * sy));
+    int dist = (int)app_isqrt((uint32_t)(sx * sx + sy * sy));
     if (dist < 1) dist = 1;
     const int want_x = sx * speed / dist, want_y = sy * speed / dist;
     int dx = want_x - f->vx, dy = want_y - f->vy;
@@ -119,7 +99,7 @@ static void integrate(aq_fish_t *f)
 static void move(aq_fish_t *f)
 {
     integrate(f);
-    const int speed = iabs(f->vx) + iabs(f->vy);
+    const int speed = app_abs(f->vx) + app_abs(f->vy);
     f->tail = (uint16_t)(f->tail + 2U + (unsigned)speed / 24U);
 }
 static bool try_eat(aq_t *a, aq_fish_t *f)
@@ -128,7 +108,7 @@ static bool try_eat(aq_t *a, aq_fish_t *f)
     for (unsigned i = 0; i < AQ_FOOD; ++i) {
         aq_food_t *p = &a->food[i];
         if (!p->alive || (f->kind == AQ_CRAB && !p->landed)) continue;
-        if (iabs(aq_food_x(p) - mx) > 5 || iabs(p->y / 256 - my) > 5) continue;
+        if (app_abs(aq_food_x(p) - mx) > 5 || app_abs(p->y / 256 - my) > 5) continue;
         p->alive = 0;
         if (a->eaten < AQ_COUNT_MAX) ++a->eaten;
         a->since_eat_ms = 0;
@@ -166,12 +146,12 @@ static void swim(aq_t *a, aq_fish_t *f)
     } else {
         if (was_chasing) f->wander = 0;
         if (f->wander) --f->wander;
-        if (!f->wander || (iabs(f->gx - f->x / 256) < 3 && iabs(f->gy - f->y / 256) < 3)) new_goal(a, f);
+        if (!f->wander || (app_abs(f->gx - f->x / 256) < 3 && app_abs(f->gy - f->y / 256) < 3)) new_goal(a, f);
     }
     int speed = PXS(k_kind[f->kind].speed);
     if (f->chase) {
         speed = speed * 22 / 10;
-        if (iabs(f->gx - f->x / 256) < 10 && iabs(f->gy - f->y / 256) < 8) speed = speed / 2;
+        if (app_abs(f->gx - f->x / 256) < 10 && app_abs(f->gy - f->y / 256) < 8) speed = speed / 2;
     }
     steer(f, f->gx, f->gy, speed);
     move(f);
@@ -180,7 +160,7 @@ static void swim(aq_t *a, aq_fish_t *f)
 static void jelly(aq_t *a, aq_fish_t *f)
 {
     f->tail++;
-    if (!f->wander || iabs(f->gx - f->x / 256) < 4) new_goal(a, f);
+    if (!f->wander || app_abs(f->gx - f->x / 256) < 4) new_goal(a, f);
     else --f->wander;
     const int y = f->y / 256;
     if (y > AQ_FLOOR - 16 && f->tail % 220U > 60U) f->tail = (uint16_t)(f->tail - f->tail % 220U); /* too low: pulse now */
@@ -204,18 +184,18 @@ static void crab(aq_t *a, aq_fish_t *f)
         if (f->chase) { f->chase = 0; f->wander = 0; }
         if (f->wander) --f->wander;
         else {
-            f->gx = rnd(a) % 3U == 0U ? (int16_t)(f->x / 256) : (int16_t)rr(a, 16, 144); /* sometimes it just sits */
-            f->wander = (uint16_t)rr(a, 150, 450);
+            f->gx = app_rand_next(&a->rng) % 3U == 0U ? (int16_t)(f->x / 256) : (int16_t)app_rand_range(&a->rng, 16, 144); /* sometimes it just sits */
+            f->wander = (uint16_t)app_rand_range(&a->rng, 150, 450);
         }
     }
-    const int dx = f->gx - f->x / 256, want = iabs(dx) < 2 ? 0 : dx > 0 ? speed : -speed;
+    const int dx = f->gx - f->x / 256, want = app_abs(dx) < 2 ? 0 : dx > 0 ? speed : -speed;
     f->vx = (int16_t)(f->vx + (want - f->vx) / 6);
     f->vy = 0;
-    f->x = clampi(f->x + f->vx, X_MIN * 256, X_MAX * 256);
+    f->x = app_clamp(f->x + f->vx, X_MIN * 256, X_MAX * 256);
     f->y = CRAB_Y * 256;
     if (f->vx > 4) f->dir = 1;
     else if (f->vx < -4) f->dir = -1;
-    f->tail = (uint16_t)(f->tail + (unsigned)iabs(f->vx) / 2U);
+    f->tail = (uint16_t)(f->tail + (unsigned)app_abs(f->vx) / 2U);
     if (!f->full) (void)try_eat(a, f);
 }
 
@@ -230,13 +210,13 @@ static void place(aq_t *a, unsigned i, unsigned kind, int x, int y)
     f->gx = (int16_t)x;
     f->gy = (int16_t)y;
     f->tail = (uint16_t)(i * 37U);
-    f->wander = (uint16_t)rr(a, 1, 120);
+    f->wander = (uint16_t)app_rand_range(&a->rng, 1, 120);
 }
 void aq_init(aq_t *a, uint32_t seed)
 {
     memset(a, 0, sizeof *a);
     a->rng = seed ? seed : 0x2545F491U;
-    a->since_feed_ms = a->since_eat_ms = AQ_AGE_MAX;
+    a->since_feed_ms = a->since_eat_ms = APP_AGE_MAX;
     a->school_x = a->school_gx = 84;
     a->school_y = a->school_gy = 26;
     a->bubble_wait = 60;
@@ -261,9 +241,9 @@ bool aq_feed(aq_t *a)
         aq_food_t *p = &a->food[i];
         if (p->alive) continue;
         p->alive = 1;
-        p->age = (uint16_t)(rnd(a) % 128U); /* a different sway phase for each */
+        p->age = (uint16_t)(app_rand_next(&a->rng) % 128U); /* a different sway phase for each */
         p->landed = 0;
-        p->x = (int32_t)(hx + ((int)dropped - 1) * 3 + rr(a, -1, 1)) * 256;
+        p->x = (int32_t)(hx + ((int)dropped - 1) * 3 + app_rand_range(&a->rng, -1, 1)) * 256;
         p->y = (int32_t)(AQ_SURFACE + 1 + (int)dropped) * 256; /* just under the fingers, staggered so they do not overlap */
         ++dropped;
     }
@@ -276,8 +256,8 @@ bool aq_feed(aq_t *a)
 static void step(aq_t *a)
 {
     a->clock_ms += AQ_STEP_MS;
-    a->since_feed_ms = sat_add(a->since_feed_ms, AQ_STEP_MS);
-    a->since_eat_ms = sat_add(a->since_eat_ms, AQ_STEP_MS);
+    a->since_feed_ms = app_age_add(a->since_feed_ms, AQ_STEP_MS);
+    a->since_eat_ms = app_age_add(a->since_eat_ms, AQ_STEP_MS);
     if (a->cooldown) --a->cooldown;
     /* pellets sink, sway, settle on the sand and dissolve there */
     for (unsigned i = 0; i < AQ_FOOD; ++i) {
@@ -292,9 +272,9 @@ static void step(aq_t *a)
     /* the school's meeting point drifts around the tank */
     if (a->school_wait) --a->school_wait;
     else {
-        a->school_gx = (int16_t)rr(a, 30, 130);
-        a->school_gy = (int16_t)rr(a, 20, 42);
-        a->school_wait = (uint16_t)rr(a, 300, 600);
+        a->school_gx = (int16_t)app_rand_range(&a->rng, 30, 130);
+        a->school_gy = (int16_t)app_rand_range(&a->rng, 20, 42);
+        a->school_wait = (uint16_t)app_rand_range(&a->rng, 300, 600);
     }
     if (a->clock_ms % 80U == 0U) {
         a->school_x = (int16_t)(a->school_x + (a->school_gx > a->school_x) - (a->school_gx < a->school_x));
@@ -314,16 +294,11 @@ static void step(aq_t *a)
     }
     if (a->bubble_wait) --a->bubble_wait;
     else {
-        spawn_bubble(a, AQ_CHEST_X + rr(a, -1, 1), AQ_FLOOR - 12, (unsigned)rr(a, 0, 2));
-        a->bubble_wait = (uint16_t)rr(a, 80, 220);
+        spawn_bubble(a, AQ_CHEST_X + app_rand_range(&a->rng, -1, 1), AQ_FLOOR - 12, (unsigned)app_rand_range(&a->rng, 0, 2));
+        a->bubble_wait = (uint16_t)app_rand_range(&a->rng, 80, 220);
     }
 }
 void aq_advance(aq_t *a, uint32_t dt_ms)
 {
-    if (dt_ms > AQ_MAX_ADVANCE_MS) dt_ms = AQ_MAX_ADVANCE_MS;
-    a->carry_ms += dt_ms;
-    while (a->carry_ms >= AQ_STEP_MS) {
-        a->carry_ms -= AQ_STEP_MS;
-        step(a);
-    }
+    for (unsigned n = app_step_take(&a->carry_ms, dt_ms, AQ_STEP_MS, AQ_MAX_ADVANCE_MS); n; --n) step(a);
 }

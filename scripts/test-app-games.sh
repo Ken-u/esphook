@@ -9,6 +9,10 @@ trap 'rm -f "$app_test_bin"' EXIT
   -I framework/include -I framework/include/esphook - <<'EOF'
 #include "esphook/app.h"
 #include "esphook/app_services.h"
+#include "esphook/app_math.h"
+#include "esphook/app_rand.h"
+#include "esphook/app_sync.h"
+#include "esphook/app_command.h"
 EOF
 "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -pedantic -g \
   -fsanitize=address,undefined -fno-omit-frame-pointer \

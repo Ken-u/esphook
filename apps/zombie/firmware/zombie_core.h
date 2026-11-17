@@ -29,7 +29,6 @@
 #define ZB_LOST_STEPS 70
 #define ZB_CAM_STEP 44         /* the most the view turns per step (2200 per second) */
 #define ZB_STREAK_STEPS 150
-#define ZB_AGE_MAX 60000U
 
 typedef enum { ZB_TITLE, ZB_INTRO, ZB_PLAY, ZB_DYING, ZB_OVER } zb_phase_t;
 typedef enum { ZK_WALKER, ZK_RUNNER, ZK_BRUTE, ZK_KINDS } zb_kind_t;

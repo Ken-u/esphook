@@ -1,5 +1,7 @@
 #include "esphook/app_manager.h"
+#include "esphook/app_command.h"
 #include "esphook/app_runtime.h"
+#include "esphook/app_sync.h"
 #include "esphook/app_services.h"
 #include "esphook/app_ui.h"
 #ifdef ESPHOOK_TEST_STOCK
@@ -39,12 +41,17 @@
 static app_manager_t manager;
 static robot_ui_t ui;
 static char standby[24],output[512];
-static bool locked;
+/* app_sync.h: a section may never nest or leak, and a lock may never be taken twice by the one test thread. */
+static unsigned critical_depth,critical_total;
+struct app_lock { bool held; };
+static struct app_lock the_lock;
 static uint16_t framebuffer[160*80],draw_buffer[160*16];
 static unsigned roots;
-void *xSemaphoreCreateMutex(void) { return &locked; }
-int xSemaphoreTake(void *s,unsigned t) { (void)s;(void)t;assert(!locked);locked=true;return 1; }
-int xSemaphoreGive(void *s) { (void)s;assert(locked);locked=false;return 1; }
+void app_critical_enter(void) { assert(!critical_depth);++critical_depth;++critical_total; }
+void app_critical_exit(void) { assert(critical_depth);--critical_depth; }
+app_lock_t *app_lock_create(void) { return &the_lock; }
+void app_lock_take(app_lock_t *l) { assert(l==&the_lock && !l->held);l->held=true; }
+void app_lock_give(app_lock_t *l) { assert(l==&the_lock && l->held);l->held=false; }
 uint64_t app_clock_ms(void) { return manager.context.now_ms; }
 uint32_t app_random(void) { return 24; }
 /* The wall clock is a plain variable and the settings store a few RAM slots: a test sets the time and reads what an app saved. */
@@ -69,9 +76,9 @@ bool app_storage_save(const char *key,const void *data,size_t size)
     return false;
 }
 bool app_transport_write(const char *s) { snprintf(output,sizeof output,"%s",s);return true; }
-bool app_runtime_is_active(const char *id) { return !strcmp(app_active_id(&manager.context),id); }
-bool app_runtime_open(const char *id) { return app_open(&manager.context,id); }
-bool app_runtime_menu(void) { app_menu(&manager.context);return true; }
+bool app_command_active(const char *id) { return !strcmp(app_active_id(&manager.context),id); }
+bool app_command_open(const char *id) { return app_open(&manager.context,id); }
+bool app_command_menu(void) { app_menu(&manager.context);return true; }
 /* The radar sees one person and the servo is a plain recorder: a game can be steered and its servo requests inspected. */
 static ld2450_target_t radar_target={.valid=true,.x_mm=1000,.y_mm=1500};
 static bool radar_online=true;
@@ -1253,6 +1260,7 @@ int main(int argc,char **argv)
 #endif
     assert(app_open(&manager.context,"face"));app_manager_commit(&manager);
     if(manager.context.app->on_leave) manager.context.app->on_leave(&manager.context);
+    assert(!critical_depth && critical_total>100 && !the_lock.held); /* every app published through the shared sections, none leaked one */
     destroy(manager.context.root,NULL);lv_display_delete(d);lv_deinit();free(font);
     printf("all built-in apps: real LVGL rendering, %u app transitions, 64KB UI heap (peak %u bytes at sampled frames), settings persistence and PC message passed\n",(unsigned)(30*esphook_app_count),peak_heap);
 }

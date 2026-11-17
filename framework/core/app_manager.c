@@ -55,12 +55,16 @@ void app_select_next(app_context_t *c)
 void app_set_triple_exit(app_context_t *c, bool enabled) { c->manager->triple_blocked = !enabled; }
 bool app_triple_exit(const app_context_t *c) { return !c->manager->triple_blocked; }
 void app_set_exit_hold(app_context_t *c, unsigned ms)
-{ c->manager->exit_hold_ms = ms == 0 ? 0 : ms < 1000U ? 1000U : ms > 10000U ? 10000U : ms; }
+{
+    app_manager_t *m = c->manager;
+    m->exit_hold_ms = ms == 0 ? 0 : ms < 1000U ? 1000U : ms > 10000U ? 10000U : ms;
+    if (!m->exit_hold_ms) m->exit_armed = false; /* switching it off drops the press under way: turning it on again does not revive it */
+}
 unsigned app_exit_hold_progress(const app_context_t *c)
 {
     const app_manager_t *m = c->manager;
     const app_input_t *i = &m->input[0];
-    if (!m->exit_hold_ms || !i->down || i->blocked || c->now_ms < i->down_ms) return 0;
+    if (!m->exit_hold_ms || !m->exit_armed || !i->down || i->blocked || c->now_ms < i->down_ms) return 0;
     const uint64_t held = c->now_ms - i->down_ms;
     return held > m->exit_hold_ms ? m->exit_hold_ms : (unsigned)held;
 }
@@ -75,7 +79,7 @@ void app_manager_commit(app_manager_t *m)
         if (m->platform.release_services) m->platform.release_services(m->context.app->id, m->platform.user);
         if (m->context.root && m->platform.scene_delete) m->platform.scene_delete(m->context.root, m->platform.user);
     }
-    m->active = target; m->idle = idle; m->triple_blocked = false; m->exit_hold_ms = 0;
+    m->active = target; m->idle = idle; m->triple_blocked = false; m->exit_hold_ms = 0; m->exit_armed = false;
     memset(&m->storage, 0, sizeof m->storage);
     m->context.app = m->catalog[target]; m->context.standby = idle;
     m->context.state = m->storage.bytes;
@@ -137,7 +141,9 @@ void app_manager_key(app_manager_t *m, unsigned key, bool down, uint64_t ms)
 {
     if (!m->ready || key >= 3) return;
     if (key || m->triple_blocked) m->input[key].clicks = 0; /* Triple navigation belongs only to K1, and an app may switch it off. */
+    const bool was_down = m->input[key].down;
     unsigned action = app_input_edge(&m->input[key], down, ms);
+    if (!key && down && !was_down) m->exit_armed = m->exit_hold_ms != 0; /* only a press that began with the exit hold on counts */
     if (key) action &= ~INPUT_MENU;
     dispatch(m, key, action, ms);
 }
@@ -178,7 +184,7 @@ void app_manager_tick(app_manager_t *m, uint64_t ms)
     poll_alarms(m, ms);
     app_manager_commit(m);
     announce_alarm(m, ms);
-    if (m->exit_hold_ms && m->input[0].down && !m->input[0].blocked && ms >= m->input[0].down_ms &&
+    if (m->exit_hold_ms && m->exit_armed && m->input[0].down && !m->input[0].blocked && ms >= m->input[0].down_ms &&
         ms - m->input[0].down_ms >= m->exit_hold_ms) { /* held long enough: the deliberate exit of a game with no triple */
         m->activity_ms = ms; m->dirty = true;
         app_menu(&m->context); app_manager_commit(m); /* the commit consumes the held key, so its release does nothing */

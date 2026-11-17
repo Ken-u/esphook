@@ -1,23 +1,8 @@
 #include "zombie_core.h"
 #include <string.h>
+#include "esphook/app_math.h"
+#include "esphook/app_rand.h"
 
-static int iabs(int v) { return v < 0 ? -v : v; }
-static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
-static uint32_t rnd(zb_t *s)
-{
-    s->rng ^= s->rng << 13;
-    s->rng ^= s->rng >> 17;
-    s->rng ^= s->rng << 5;
-    return s->rng;
-}
-static int rr(zb_t *s, int lo, int hi) { return lo + (int)(rnd(s) % (uint32_t)(hi - lo + 1)); }
-/* -127..127 over a 256 step period (a parabola: close enough for weaving). */
-static int isin(unsigned phase)
-{
-    const int x = (int)(phase & 127U), v = x * (128 - x) * 127 / 4096;
-    return (phase & 128U) ? -v : v;
-}
-static uint32_t sat_add(uint32_t v, uint32_t d) { return v + d > ZB_AGE_MAX ? ZB_AGE_MAX : v + d; }
 const zb_info_t *zb_info(unsigned kind)
 {
     static const zb_info_t info[ZK_KINDS] = {
@@ -51,7 +36,7 @@ void zb_init(zb_t *s, uint32_t seed)
     s->phase = ZB_TITLE;
     s->hp = ZB_HP;
     s->ammo = ZB_MAG;
-    s->shot_age_ms = s->hitmark_age_ms = s->bite_age_ms = s->kill_age_ms = s->over_age_ms = ZB_AGE_MAX;
+    s->shot_age_ms = s->hitmark_age_ms = s->bite_age_ms = s->kill_age_ms = s->over_age_ms = APP_AGE_MAX;
 }
 static int speed_pct(const zb_t *s) { return 100 + (s->wave < 15U ? s->wave : 15U) * 4; }
 static int spawn_gap_steps(const zb_t *s)
@@ -77,7 +62,7 @@ void zb_start(zb_t *s)
     s->best = best; /* the best score survives a restart */
     begin_wave(s);
 }
-void zb_steer(zb_t *s, int steer) { s->target_x = (int16_t)(clampi(steer, -256, 256) * ZB_X_MAX / 256); }
+void zb_steer(zb_t *s, int steer) { s->target_x = (int16_t)(app_clamp(steer, -256, 256) * ZB_X_MAX / 256); }
 void zb_fire(zb_t *s, bool down)
 {
     s->firing = down; /* it fires only in a fight, but a key held down from the last wave still counts */
@@ -96,7 +81,7 @@ static int half_units(const zb_t *s, const zb_z_t *z)
 bool zb_on_target(const zb_t *s, unsigned i)
 {
     const zb_z_t *z = &s->z[i];
-    return i < ZB_Z && z->alive && !z->dying_ms && iabs(z->x - s->cam_x) <= half_units(s, z);
+    return i < ZB_Z && z->alive && !z->dying_ms && app_abs(z->x - s->cam_x) <= half_units(s, z);
 }
 
 static void spawn(zb_t *s)
@@ -106,20 +91,20 @@ static void spawn(zb_t *s)
     if (!slot) return;
     const unsigned w = s->wave;
     unsigned kind = ZK_WALKER;
-    const int r = rr(s, 0, 99), brute_p = w >= 3U ? (4 + (int)w < 18 ? 4 + (int)w : 18) : 0,
+    const int r = app_rand_range(&s->rng, 0, 99), brute_p = w >= 3U ? (4 + (int)w < 18 ? 4 + (int)w : 18) : 0,
               runner_p = w >= 2U ? (12 + 3 * (int)w < 40 ? 12 + 3 * (int)w : 40) : 0;
     if (r < brute_p) kind = ZK_BRUTE;
     else if (r < brute_p + runner_p) kind = ZK_RUNNER;
     int x0 = 0;
     for (unsigned tries = 0; tries < 5U; ++tries) { /* not on top of one that has just come out */
-        x0 = rr(s, -ZB_LANE, ZB_LANE);
+        x0 = app_rand_range(&s->rng, -ZB_LANE, ZB_LANE);
         bool crowded = false;
         for (unsigned i = 0; i < ZB_Z; ++i)
-            if (s->z[i].alive && s->z[i].z > ZB_ZF - 500 && iabs(s->z[i].x0 - x0) < 80) crowded = true;
+            if (s->z[i].alive && s->z[i].z > ZB_ZF - 500 && app_abs(s->z[i].x0 - x0) < 80) crowded = true;
         if (!crowded) break;
     }
     *slot = (zb_z_t){.x = (int16_t)x0, .x0 = (int16_t)x0, .z = ZB_ZF, .alive = 1, .kind = (uint8_t)kind, .hp = zb_info(kind)->hp,
-                     .seed = (uint8_t)rnd(s), .amp = (uint8_t)(kind == ZK_BRUTE ? rr(s, 10, 30) : kind == ZK_RUNNER ? rr(s, 50, 110) : rr(s, 25, 80))};
+                     .seed = (uint8_t)app_rand_next(&s->rng), .amp = (uint8_t)(kind == ZK_BRUTE ? app_rand_range(&s->rng, 10, 30) : kind == ZK_RUNNER ? app_rand_range(&s->rng, 50, 110) : app_rand_range(&s->rng, 25, 80))};
 }
 static void kill(zb_t *s, zb_z_t *z)
 {
@@ -190,7 +175,7 @@ static void move_zombies(zb_t *s)
         if (s->phase == ZB_DYING) continue; /* everything stands and watches */
         ++z->age;
         const unsigned rate = z->kind == ZK_RUNNER ? 5U : z->kind == ZK_BRUTE ? 2U : 3U;
-        z->x = (int16_t)(z->x0 + z->amp * isin(z->age * rate + z->seed) / 127);
+        z->x = (int16_t)(z->x0 + z->amp * app_wave127(z->age * rate + z->seed) / 127);
         if (z->stun) { --z->stun; continue; }
         const int speed16 = zb_info(z->kind)->speed * 16 * speed_pct(s) / 100 + z->zf;
         z->zf = (uint8_t)(speed16 & 15);
@@ -201,19 +186,19 @@ static void move_zombies(zb_t *s)
 static void step(zb_t *s)
 {
     s->clock_ms += ZB_STEP_MS;
-    s->shot_age_ms = sat_add(s->shot_age_ms, ZB_STEP_MS);
-    s->hitmark_age_ms = sat_add(s->hitmark_age_ms, ZB_STEP_MS);
-    s->bite_age_ms = sat_add(s->bite_age_ms, ZB_STEP_MS);
-    s->kill_age_ms = sat_add(s->kill_age_ms, ZB_STEP_MS);
-    s->over_age_ms = s->phase == ZB_OVER ? sat_add(s->over_age_ms, ZB_STEP_MS) : 0U;
-    s->phase_ms = sat_add(s->phase_ms, ZB_STEP_MS);
+    s->shot_age_ms = app_age_add(s->shot_age_ms, ZB_STEP_MS);
+    s->hitmark_age_ms = app_age_add(s->hitmark_age_ms, ZB_STEP_MS);
+    s->bite_age_ms = app_age_add(s->bite_age_ms, ZB_STEP_MS);
+    s->kill_age_ms = app_age_add(s->kill_age_ms, ZB_STEP_MS);
+    s->over_age_ms = s->phase == ZB_OVER ? app_age_add(s->over_age_ms, ZB_STEP_MS) : 0U;
+    s->phase_ms = app_age_add(s->phase_ms, ZB_STEP_MS);
     for (unsigned i = 0; i < ZB_FX; ++i) {
         zb_fx_t *f = &s->fx[i];
         if (f->alive && ++f->age > (f->kind == ZX_BITE ? 16U : f->kind == ZX_SPLAT ? 22U : 10U)) f->alive = 0;
     }
     if (s->phase == ZB_DYING && --s->dying == 0) { s->phase = ZB_OVER; s->over_age_ms = 0; }
     if (s->phase == ZB_TITLE || s->phase == ZB_OVER) return;
-    s->cam_x = (int16_t)(s->cam_x + clampi(s->target_x - s->cam_x, -ZB_CAM_STEP, ZB_CAM_STEP));
+    s->cam_x = (int16_t)(s->cam_x + app_clamp(s->target_x - s->cam_x, -ZB_CAM_STEP, ZB_CAM_STEP));
     if (s->invuln) --s->invuln;
     if (s->cooldown) --s->cooldown;
     if (s->phase == ZB_INTRO) {
@@ -234,7 +219,7 @@ static void step(zb_t *s)
             else if (zb_alive(s) < ZB_Z) {
                 spawn(s);
                 --s->to_spawn;
-                s->spawn_wait = (uint16_t)(spawn_gap_steps(s) + rr(s, -8, 12));
+                s->spawn_wait = (uint16_t)(spawn_gap_steps(s) + app_rand_range(&s->rng, -8, 12));
             }
         }
     }
@@ -247,10 +232,5 @@ static void step(zb_t *s)
 }
 void zb_advance(zb_t *s, uint32_t dt_ms)
 {
-    if (dt_ms > ZB_MAX_ADVANCE_MS) dt_ms = ZB_MAX_ADVANCE_MS;
-    s->carry_ms += dt_ms;
-    while (s->carry_ms >= ZB_STEP_MS) {
-        s->carry_ms -= ZB_STEP_MS;
-        step(s);
-    }
+    for (unsigned n = app_step_take(&s->carry_ms, dt_ms, ZB_STEP_MS, ZB_MAX_ADVANCE_MS); n; --n) step(s);
 }

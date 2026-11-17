@@ -194,6 +194,18 @@ int main(void)
     key(&m,true,61000);app_manager_tick(&m,61900);active(&m,"game");app_manager_tick(&m,62000);active(&m,"launcher");key(&m,false,62100);
     assert(app_open(&m.context,"game"));app_manager_commit(&m);active(&m,"game");
     app_set_exit_hold(&m.context,2000);app_set_exit_hold(&m.context,0);key(&m,true,63000);app_manager_tick(&m,70000);active(&m,"game");key(&m,false,70100);
+    /* Only a press that began with the hold on counts: a game over screen reached while fire is still held is not an exit. */
+    key(&m,true,71000);app_set_exit_hold(&m.context,2000);app_manager_tick(&m,71600);assert(app_exit_hold_progress(&m.context)==0);
+    app_manager_tick(&m,74000);active(&m,"game");assert(app_exit_hold_progress(&m.context)==0);key(&m,false,74100);
+    key(&m,true,75000);app_manager_tick(&m,76999);active(&m,"game");assert(app_exit_hold_progress(&m.context)==1999); /* the next press is armed */
+    app_manager_tick(&m,77000);active(&m,"launcher");key(&m,false,77100);
+    /* Switching it off drops the press under way: switching it back on does not revive it. */
+    assert(app_open(&m.context,"game"));app_manager_commit(&m);active(&m,"game");
+    app_set_exit_hold(&m.context,2000);key(&m,true,80000);app_manager_tick(&m,80500);assert(app_exit_hold_progress(&m.context)==500);
+    app_set_exit_hold(&m.context,0);assert(app_exit_hold_progress(&m.context)==0);
+    app_set_exit_hold(&m.context,2000);assert(app_exit_hold_progress(&m.context)==0);
+    app_manager_tick(&m,83000);active(&m,"game");key(&m,false,83100);
+    app_set_exit_hold(&m.context,0);
     app_event_t msg={.kind=APP_EVENT_MESSAGE,.text="{\"text\":\"hi\"}",.ms=35000};app_manager_event(&m,&msg);active(&m,"launcher");
     assert(enters==leaves+1 && scenes==1 && releases==leaves);
     app_descriptor_t invalid=face;invalid.state_size=APP_STATE_CAPACITY+1;

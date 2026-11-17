@@ -25,7 +25,6 @@
 #define RC_CAR_LONG_MM 5000          /* how close along the road is a collision */
 #define RC_CAR_WIDE 480              /* and across it, in permille */
 #define RC_FINISH_MS 1800U           /* coasting after the clock runs out */
-#define RC_AGE_MAX 60000U
 #define RC_DIFF_MM 8000000           /* the track reaches full difficulty after 8 km */
 
 typedef enum { RC_TITLE, RC_COUNT, RC_RACE, RC_FINISH, RC_OVER } rc_phase_t;

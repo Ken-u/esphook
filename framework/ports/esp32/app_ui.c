@@ -68,3 +68,28 @@ void app_ui_hold_line(lv_obj_t *line, unsigned hold_ms, bool confirm, unsigned e
 }
 void app_ui_plot_refresh(lv_obj_t *image, const lv_image_dsc_t *descriptor)
 { lv_image_cache_drop(descriptor); lv_obj_invalidate(image); }
+/* The shared canvas has exactly one live view at a time (an app owns the screen), so one descriptor is enough. */
+static lv_image_dsc_t s_canvas_dsc;
+lv_obj_t *app_ui_canvas(lv_obj_t *parent, int x, int y, int w, int h)
+{
+    if (w < 1 || w > APP_CANVAS_W) w = APP_CANVAS_W;
+    if (h < 1 || h > APP_CANVAS_H) h = APP_CANVAS_H;
+    memset(&s_canvas_dsc, 0, sizeof s_canvas_dsc);
+    s_canvas_dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
+    s_canvas_dsc.header.cf = LV_COLOR_FORMAT_RGB565;
+    s_canvas_dsc.header.w = (uint32_t)w; s_canvas_dsc.header.h = (uint32_t)h; s_canvas_dsc.header.stride = (uint32_t)w * 2U;
+    s_canvas_dsc.data_size = (uint32_t)w * (uint32_t)h * 2U; s_canvas_dsc.data = (const uint8_t *)s_pixels;
+    lv_image_cache_drop(&s_canvas_dsc); /* whatever the previous app had cached under this descriptor is stale */
+    lv_obj_t *canvas = lv_image_create(parent);
+    lv_obj_set_pos(canvas, x, y);
+    lv_image_set_src(canvas, &s_canvas_dsc);
+    return canvas;
+}
+void app_ui_canvas_refresh(lv_obj_t *canvas) { lv_image_cache_drop(&s_canvas_dsc); lv_obj_invalidate(canvas); }
+lv_obj_t *app_ui_band(lv_obj_t *parent, uint32_t bg, uint32_t rule)
+{
+    lv_obj_t *band = app_ui_rect(parent, 0, APP_CANVAS_H, APP_WIDTH, APP_HEIGHT - APP_CANVAS_H, bg, 0);
+    if (rule != APP_UI_NO_RULE) (void)app_ui_rect(band, 0, 0, APP_WIDTH, 1, rule, 0);
+    return band;
+}
+lv_obj_t *app_ui_hold_bar(lv_obj_t *parent, int y, uint32_t rgb) { return app_ui_rect(parent, 0, y, 0, 2, rgb, 0); }

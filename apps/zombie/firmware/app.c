@@ -1,10 +1,12 @@
+#include "esphook/app_math.h"
 #include "esphook/app.h"
 #include "esphook/app_gfx.h"
 #include "esphook/app_haptic.h"
 #include "esphook/app_services.h"
 #include "esphook/app_steer.h"
 #include "esphook/app_ui.h"
-#include "freertos/FreeRTOS.h"
+#include "esphook/app_command.h"
+#include "esphook/app_sync.h"
 #include "zombie_core.h"
 #include <stddef.h>
 #include <stdio.h>
@@ -29,8 +31,7 @@ typedef struct {
     zb_t core;
     steer_t steer;
     haptic_t haptic;
-    lv_obj_t *plot, *band, *line, *hold, *msg, *score, *tag, *tag_text, *title, *sub;
-    lv_image_dsc_t image;
+    lv_obj_t *plot, *band, *hold, *msg, *score, *tag, *tag_text, *title, *sub;
     uint64_t last_ms;
     uint32_t shown_key, shown_score, shown_info;
     uint8_t down_in_play;
@@ -44,14 +45,12 @@ typedef struct {
     int steer, cam;
 } status_t;
 static status_t s_status;
-static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 
-static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
 static uint16_t c565(uint32_t rgb) { return gfx_rgb565(rgb); }
 static int screen_x(const zb_t *g, int bearing, int shift) { return CX + (bearing - g->cam_x) / ZB_UNITS_PX * 256 / shift; }
 static int feet_y(int z) { return HY + EYE * ZB_FOC / (z < 40 ? 40 : z); }
 /* Things far off fade into the mist. */
-static uint32_t misty(uint32_t rgb, int z) { return gfx_mix(rgb, 0x2A2040, (unsigned)clampi((z - 250) * 190 / 1250, 0, 190)); }
+static uint32_t misty(uint32_t rgb, int z) { return gfx_mix(rgb, 0x2A2040, (unsigned)app_clamp((z - 250) * 190 / 1250, 0, 190)); }
 
 /* ---- the zombies ------------------------------------------------------------------------------------------------ */
 /* A colour as it is on this zombie right now: darker as it falls, white for a moment when it is hit, and misty by distance. */
@@ -335,21 +334,14 @@ static void draw_scene(uint16_t *px, state_t *s, unsigned now)
 /* ---- app ------------------------------------------------------------------------------------------------------- */
 static void build(state_t *s, lv_obj_t *root)
 {
-    s->image.header.magic = LV_IMAGE_HEADER_MAGIC;
-    s->image.header.cf = LV_COLOR_FORMAT_RGB565;
-    s->image.header.w = APP_CANVAS_W; s->image.header.h = APP_CANVAS_H; s->image.header.stride = APP_CANVAS_W * 2;
-    s->image.data_size = APP_CANVAS_W * APP_CANVAS_H * 2; s->image.data = (const uint8_t *)app_ui_pixels();
-    s->plot = lv_image_create(root);
-    lv_obj_set_pos(s->plot, 0, 0);
-    lv_image_set_src(s->plot, &s->image);
-    s->band = app_ui_rect(root, 0, BAND_Y, APP_WIDTH, APP_HEIGHT - BAND_Y, 0x0E0A12, 0);
-    s->line = app_ui_rect(root, 0, BAND_Y, APP_WIDTH, 1, 0x5A1E1E, 0);
+    s->plot = app_ui_canvas(root, 0, 0, APP_CANVAS_W, APP_CANVAS_H);
+    s->band = app_ui_band(root, 0x0E0A12, 0x5A1E1E);
     s->msg = app_ui_label(s->band, &aihook_font_12, 3, 2, 118, 14, LV_LABEL_LONG_MODE_CLIP);
     s->score = app_ui_label(s->band, &aihook_font_12, 118, 2, 41, 14, LV_LABEL_LONG_MODE_CLIP);
     lv_obj_set_style_text_align(s->score, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
     lv_obj_set_style_text_color(s->msg, app_ui_color(0xE0D4D8), LV_PART_MAIN);
     lv_obj_set_style_text_color(s->score, app_ui_color(0xFFD84A), LV_PART_MAIN);
-    s->hold = app_ui_rect(root, 0, BAND_Y, 0, 2, APP_COLOR_ACCENT, 0); /* the hold towards the exit */
+    s->hold = app_ui_hold_bar(root, BAND_Y, APP_COLOR_ACCENT); /* the hold towards the exit */
     app_ui_hide(s->hold, true);
     s->tag = app_ui_rect(root, 126, 15, 29, 14, 0x2E8B57, 5);
     s->tag_text = app_ui_label(s->tag, &aihook_font_12, 0, 1, 29, 12, LV_LABEL_LONG_MODE_CLIP);
@@ -370,13 +362,13 @@ static void publish(const state_t *s, bool active, bool frame)
 {
     const zb_t *g = &s->core;
     const haptic_state_t hs = haptic_state();
-    portENTER_CRITICAL(&s_lock);
+    app_critical_enter();
     s_status.active = active; s_status.phase = g->phase; s_status.hp = g->hp; s_status.wave = g->wave;
     s_status.ammo = g->ammo; s_status.alive = (uint8_t)zb_alive(g); s_status.src = s->steer.source; s_status.servo = (uint8_t)hs;
     s_status.score = g->score; s_status.best = g->best; s_status.kills = g->kills; s_status.shots = g->shots_fired;
     s_status.hits = g->hits; s_status.remaining = zb_remaining(g); s_status.steer = s->steer.steer; s_status.cam = g->cam_x;
     if (frame) ++s_status.frames;
-    portEXIT_CRITICAL(&s_lock);
+    app_critical_exit();
 }
 static void enter(app_context_t *ctx)
 {
@@ -386,7 +378,7 @@ static void enter(app_context_t *ctx)
     haptic_init(&s->haptic);
     s->last_ms = ctx->now_ms;
     app_set_triple_exit(ctx, false); /* the gun is fired by mashing the key: three quick presses are never an exit */
-    portENTER_CRITICAL(&s_lock); s_status = (status_t){0}; portEXIT_CRITICAL(&s_lock);
+    app_critical_enter(); s_status = (status_t){0}; app_critical_exit();
     publish(s, true, false);
 }
 static bool idle_screen(const state_t *s)
@@ -401,7 +393,7 @@ static bool in_fight(const state_t *s)
  * held down through a long fight must not leave the moment the last life is gone. */
 static void sync_exit(app_context_t *ctx, const state_t *s)
 {
-    app_set_exit_hold(ctx, idle_screen(s) && !s->down_in_play ? EXIT_HOLD_MS : 0U);
+    app_set_exit_hold(ctx, idle_screen(s) ? EXIT_HOLD_MS : 0U);
 }
 static void tick(app_context_t *ctx)
 {
@@ -424,8 +416,8 @@ static void leave(app_context_t *ctx)
 {
     state_t *s = ctx->state;
     haptic_stop(&s->haptic); /* the framework disarms the servo it leased to this app */
-    if (s->plot) app_ui_plot_refresh(s->plot, &s->image); /* The shared canvas goes to the next app. */
-    portENTER_CRITICAL(&s_lock); s_status.active = false; portEXIT_CRITICAL(&s_lock);
+    if (s->plot) app_ui_canvas_refresh(s->plot); /* The shared canvas goes to the next app. */
+    app_critical_enter(); s_status.active = false; app_critical_exit();
 }
 static void event(app_context_t *ctx, const app_event_t *e)
 {
@@ -519,20 +511,17 @@ static void render(app_context_t *ctx)
     if (!s->plot) build(s, ctx->root);
     sync_hud(s, ctx->now_ms, app_exit_hold_progress(ctx));
     draw_scene(app_ui_pixels(), s, (unsigned)ctx->now_ms);
-    app_ui_plot_refresh(s->plot, &s->image);
+    app_ui_canvas_refresh(s->plot);
     publish(s, true, true);
 }
 static bool command(const char *line)
 {
-    if (strcmp(line, "robot zombie status")) return false;
+    if (!app_command_is(line, "robot zombie status")) return false;
     status_t v;
-    portENTER_CRITICAL(&s_lock); v = s_status; portEXIT_CRITICAL(&s_lock);
-    char reply[256];
-    snprintf(reply, sizeof reply,
-             "active=%u phase=%u wave=%u hp=%u ammo=%u alive=%u remain=%lu score=%lu best=%lu kills=%lu shots=%lu hits=%lu steer=%d cam=%d src=%u servo=%u frames=%lu",
-             v.active ? 1U : 0U, v.phase, v.wave, v.hp, v.ammo, v.alive, (unsigned long)v.remaining, (unsigned long)v.score, (unsigned long)v.best,
-             (unsigned long)v.kills, (unsigned long)v.shots, (unsigned long)v.hits, v.steer, v.cam, v.src, v.servo, (unsigned long)v.frames);
-    (void)app_transport_write(reply);
+    app_shared_copy(v, s_status);
+    (void)app_command_replyf("active=%u phase=%u wave=%u hp=%u ammo=%u alive=%u remain=%lu score=%lu best=%lu kills=%lu shots=%lu hits=%lu steer=%d cam=%d src=%u servo=%u frames=%lu",
+            v.active ? 1U : 0U, v.phase, v.wave, v.hp, v.ammo, v.alive, (unsigned long)v.remaining, (unsigned long)v.score, (unsigned long)v.best,
+            (unsigned long)v.kills, (unsigned long)v.shots, (unsigned long)v.hits, v.steer, v.cam, v.src, v.servo, (unsigned long)v.frames);
     return true;
 }
 static void icon(void *parent, int x, int y, bool selected)

@@ -1,5 +1,7 @@
 #include "miner_core.h"
 #include <string.h>
+#include "esphook/app_math.h"
+#include "esphook/app_rand.h"
 
 static const mn_info_t INFO[MN_KINDS] = {
     {4, 100, 50},  /* small gold */
@@ -15,24 +17,6 @@ static const int16_t BAG_AVERAGE = 150;
 
 const mn_info_t *mn_info(unsigned kind) { return &INFO[kind < MN_KINDS ? kind : 0U]; }
 
-static uint32_t rnd(mn_t *g)
-{
-    uint32_t x = g->rng ? g->rng : 0x9E3779B9U;
-    x ^= x << 13; x ^= x >> 17; x ^= x << 5;
-    g->rng = x;
-    return x;
-}
-static uint32_t isqrt32(uint32_t v)
-{
-    uint32_t r = 0, bit = 1U << 30;
-    while (bit > v) bit >>= 2;
-    while (bit) {
-        if (v >= r + bit) { v -= r + bit; r = (r >> 1) + bit; }
-        else r >>= 1;
-        bit >>= 2;
-    }
-    return r;
-}
 unsigned mn_level_time_ms(unsigned level)
 {
     const unsigned cut = (level > 1U ? level - 1U : 0U) * 3000U;
@@ -47,7 +31,7 @@ void mn_dir(const mn_t *g, int *dx256, int *dy256)
     const int s = (phase & 128U) ? -v : v;
     const int dx = s * 240 / 256;
     *dx256 = dx;
-    *dy256 = (int)isqrt32((uint32_t)(65536 - dx * dx));
+    *dy256 = (int)app_isqrt((uint32_t)(65536 - dx * dx));
 }
 void mn_tip(const mn_t *g, int *x, int *y)
 {
@@ -69,11 +53,11 @@ static void build_level(mn_t *g)
     for (unsigned k = 0; k < MN_KINDS; ++k) total_weight += weights[k];
     const unsigned want = 9U + (g->level > 4U ? 3U : g->level - 1U);
     for (unsigned attempt = 0; attempt < want * 40U && g->count < want; ++attempt) {
-        unsigned pick = rnd(g) % total_weight, kind = 0;
+        unsigned pick = app_rand_next(&g->rng) % total_weight, kind = 0;
         while (pick >= weights[kind]) pick -= weights[kind++];
         const int r = INFO[kind].radius;
-        const int x = r + 6 + (int)(rnd(g) % (unsigned)(MN_W - 2 * r - 12));
-        const int y = MN_ORIGIN_Y + r + 10 + (int)(rnd(g) % (unsigned)(MN_H - MN_ORIGIN_Y - 2 * r - 12));
+        const int x = r + 6 + (int)(app_rand_next(&g->rng) % (unsigned)(MN_W - 2 * r - 12));
+        const int y = MN_ORIGIN_Y + r + 10 + (int)(app_rand_next(&g->rng) % (unsigned)(MN_H - MN_ORIGIN_Y - 2 * r - 12));
         bool free = true;
         for (unsigned i = 0; i < g->count && free; ++i) {
             const int dx = x - g->items[i].x, dy = y - g->items[i].y, need = r + INFO[g->items[i].kind].radius + 3;
@@ -158,7 +142,7 @@ static void bring_home(mn_t *g)
     g->pop_kind = 0;
     if (it->kind == MN_BAG) {
         static const int16_t prizes[5] = {20, 80, 150, 300, 600};
-        const unsigned roll = rnd(g) % 10U;
+        const unsigned roll = app_rand_next(&g->rng) % 10U;
         if (roll < 2U) { if (g->dynamite < MN_MAX_DYNAMITE) ++g->dynamite; value = 0; g->pop_kind = 1; }
         else value = prizes[roll % 5U];
     }

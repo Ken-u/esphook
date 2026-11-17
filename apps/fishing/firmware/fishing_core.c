@@ -1,5 +1,7 @@
 #include "fishing_core.h"
 #include <string.h>
+#include "esphook/app_math.h"
+#include "esphook/app_rand.h"
 
 static const fs_tier_t k_tier[FS_TIERS] = {
     /* name      len need win  appr pause hold% hold_min hold_max amp half weight   min_g   max_g */
@@ -12,16 +14,6 @@ static const fs_tier_t k_tier[FS_TIERS] = {
 #define BASE_X 132
 
 const fs_tier_t *fs_tier(unsigned tier) { return &k_tier[tier < FS_TIERS ? tier : FS_TIERS - 1U]; }
-static uint32_t rnd(fs_t *f)
-{
-    f->rng ^= f->rng << 13;
-    f->rng ^= f->rng >> 17;
-    f->rng ^= f->rng << 5;
-    return f->rng;
-}
-static int rr(fs_t *f, int lo, int hi) { return lo + (int)(rnd(f) % (uint32_t)(hi - lo + 1)); }
-static int iabs(int v) { return v < 0 ? -v : v; }
-static uint32_t sat_add(uint32_t v, uint32_t d) { return v + d > FS_AGE_MAX ? FS_AGE_MAX : v + d; }
 static void set_phase(fs_t *f, fs_phase_t p)
 {
     f->phase = (uint8_t)p;
@@ -56,13 +48,13 @@ static int base_x(const fs_t *f)
 static void new_goal(fs_t *f, bool dash)
 {
     const int bx = base_x(f);
-    int x = bx + rr(f, -10, 10), y = rr(f, FS_FISH_Y_MIN, FS_FISH_Y_MAX);
-    if (dash) x += rr(f, 6, 14); /* a pull: it lunges away from the angler */
+    int x = bx + app_rand_range(&f->rng, -10, 10), y = app_rand_range(&f->rng, FS_FISH_Y_MIN, FS_FISH_Y_MAX);
+    if (dash) x += app_rand_range(&f->rng, 6, 14); /* a pull: it lunges away from the angler */
     if (x < FS_FISH_X_MIN) x = FS_FISH_X_MIN;
     if (x > FS_FISH_X_MAX) x = FS_FISH_X_MAX;
     f->gx = (int16_t)(x * 16);
     f->gy = (int16_t)(y * 16);
-    f->move_wait = (uint16_t)rr(f, 35, 80);
+    f->move_wait = (uint16_t)app_rand_range(&f->rng, 35, 80);
 }
 static void fish_step(fs_t *f)
 {
@@ -77,7 +69,7 @@ int fs_fish_y(const fs_t *f) { return f->fy / 16; }
 /* ---- phases -------------------------------------------------------------------------------------------------- */
 static unsigned pick_tier(fs_t *f)
 {
-    int roll = rr(f, 0, 99), acc = 0;
+    int roll = app_rand_range(&f->rng, 0, 99), acc = 0;
     for (unsigned i = 0; i < FS_TIERS; ++i) {
         acc += k_tier[i].weight;
         if (roll < acc) return i;
@@ -87,7 +79,7 @@ static unsigned pick_tier(fs_t *f)
 static void start_wait(fs_t *f)
 {
     set_phase(f, FS_WAIT);
-    f->wait_ms = (uint32_t)rr(f, (int)FS_WAIT_MIN_MS, (int)FS_WAIT_MAX_MS);
+    f->wait_ms = (uint32_t)app_rand_range(&f->rng, (int)FS_WAIT_MIN_MS, (int)FS_WAIT_MAX_MS);
     f->nibbles = 0;
     f->nibble_at_ms = f->wait_ms * 35U / 100U;
 }
@@ -96,7 +88,7 @@ static void start_bite(fs_t *f)
     set_phase(f, FS_BITE);
     f->tier = (uint8_t)pick_tier(f);
     const fs_tier_t *t = &k_tier[f->tier];
-    f->weight_g = t->min_g + rnd(f) % (t->max_g - t->min_g + 1U);
+    f->weight_g = t->min_g + app_rand_next(&f->rng) % (t->max_g - t->min_g + 1U);
     f->bite_ms = 900U - (uint32_t)f->tier * 80U;
     shake(f, 4 + f->tier, 150, 520);
 }
@@ -111,7 +103,7 @@ static void start_fight(fs_t *f)
     f->last_result = FR_NONE;
     memset(&f->p, 0, sizeof f->p);
     f->p.state = FP_NONE;
-    f->next_start_ms = (uint32_t)rr(f, 500, 1100); /* the fish starts moving on its own, at a random moment */
+    f->next_start_ms = (uint32_t)app_rand_range(&f->rng, 500, 1100); /* the fish starts moving on its own, at a random moment */
     f->fx = (int16_t)(BASE_X * 16);
     f->fy = (int16_t)(44 * 16);
     new_goal(f, false);
@@ -120,16 +112,16 @@ static void start_fight(fs_t *f)
 static void spawn_prompt(fs_t *f)
 {
     const fs_tier_t *t = &k_tier[f->tier];
-    const bool hold = t->hold_pct && (unsigned)rr(f, 0, 99) < t->hold_pct;
+    const bool hold = t->hold_pct && (unsigned)app_rand_range(&f->rng, 0, 99) < t->hold_pct;
     f->p.kind = hold ? FP_HOLD : FP_TAP;
     f->p.state = FP_APPROACH;
     f->p.win_ms = t->win_ms;
-    f->p.approach_ms = (uint16_t)(t->approach_ms + (unsigned)rr(f, -60, 100));
-    f->p.hold_ms = hold ? (uint16_t)rr(f, t->hold_min_ms, t->hold_max_ms) : 0U;
+    f->p.approach_ms = (uint16_t)(t->approach_ms + (unsigned)app_rand_range(&f->rng, -60, 100));
+    f->p.hold_ms = hold ? (uint16_t)app_rand_range(&f->rng, t->hold_min_ms, t->hold_max_ms) : 0U;
     f->p.start_ms = f->phase_ms;
     f->p.target_ms = f->phase_ms + f->p.approach_ms;
     f->p.press_quality = 0;
-    shake(f, t->amp_deg + rr(f, -1, 1), t->half_ms, (unsigned)f->p.approach_ms + f->p.hold_ms + 150U);
+    shake(f, t->amp_deg + app_rand_range(&f->rng, -1, 1), t->half_ms, (unsigned)f->p.approach_ms + f->p.hold_ms + 150U);
     new_goal(f, true);
 }
 static void resolve(fs_t *f, fs_result_t r)
@@ -163,7 +155,7 @@ static void resolve(fs_t *f, fs_result_t r)
         shake(f, 5, 130, 500);
         return;
     }
-    f->next_start_ms = f->phase_ms + t->pause_ms + (uint32_t)rr(f, 0, 200);
+    f->next_start_ms = f->phase_ms + t->pause_ms + (uint32_t)app_rand_range(&f->rng, 0, 200);
 }
 static void fight_tick(fs_t *f)
 {
@@ -182,7 +174,7 @@ void fs_init(fs_t *f, uint32_t seed, uint32_t now_ms)
     f->rng = seed ? seed : 0x9E3779B1U;
     f->now_ms = now_ms;
     f->lives = FS_LIVES;
-    f->result_age_ms = FS_AGE_MAX;
+    f->result_age_ms = APP_AGE_MAX;
     f->fx = (int16_t)(BASE_X * 16);
     f->fy = (int16_t)(44 * 16);
     f->gx = f->fx;
@@ -195,12 +187,8 @@ void fs_update(fs_t *f, uint32_t now_ms)
     if (dt > FS_STALL_MS) dt = FS_STALL_MS;
     f->now_ms = now_ms;
     f->phase_ms += dt;
-    f->result_age_ms = sat_add(f->result_age_ms, dt);
-    f->move_carry_ms += dt;
-    while (f->move_carry_ms >= 10U) {
-        f->move_carry_ms -= 10U;
-        fish_step(f);
-    }
+    f->result_age_ms = app_age_add(f->result_age_ms, dt);
+    for (unsigned n = app_step_take(&f->move_carry_ms, dt, 10U, 0U); n; --n) fish_step(f);
     switch (f->phase) {
     case FS_CAST:
         if (f->phase_ms >= FS_CAST_MS) start_wait(f);
@@ -246,8 +234,8 @@ void fs_press(fs_t *f, uint32_t now_ms)
     case FS_FIGHT: {
         if (f->p.state != FP_APPROACH) return; /* stray presses between pulls cost nothing */
         const int d = (int)f->phase_ms - (int)f->p.target_ms;
-        if (iabs(d) <= f->p.win_ms) {
-            const unsigned q = quality((unsigned)iabs(d), f->p.win_ms);
+        if (app_abs(d) <= f->p.win_ms) {
+            const unsigned q = quality((unsigned)app_abs(d), f->p.win_ms);
             if (f->p.kind == FP_TAP) resolve(f, (fs_result_t)q);
             else { f->p.state = FP_HELD; f->p.press_quality = (uint8_t)q; }
         } else resolve(f, FR_EARLY); /* the ring was still far away */
@@ -262,8 +250,8 @@ void fs_release(fs_t *f, uint32_t now_ms)
     if (f->phase != FS_FIGHT || f->p.state != FP_HELD) return;
     const int d = (int)f->phase_ms - (int)(f->p.target_ms + f->p.hold_ms);
     const unsigned win = (unsigned)f->p.win_ms + 40U;
-    if (iabs(d) <= (int)win) {
-        const unsigned q = quality((unsigned)iabs(d), win);
+    if (app_abs(d) <= (int)win) {
+        const unsigned q = quality((unsigned)app_abs(d), win);
         resolve(f, (fs_result_t)(q == FR_PERFECT && f->p.press_quality == FR_PERFECT ? FR_PERFECT : FR_GOOD));
     } else resolve(f, FR_EARLY); /* let go too soon */
 }

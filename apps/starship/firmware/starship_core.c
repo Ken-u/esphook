@@ -1,23 +1,8 @@
 #include "starship_core.h"
 #include <string.h>
+#include "esphook/app_math.h"
+#include "esphook/app_rand.h"
 
-static int iabs(int v) { return v < 0 ? -v : v; }
-static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
-static uint32_t rnd(ss_t *s)
-{
-    s->rng ^= s->rng << 13;
-    s->rng ^= s->rng >> 17;
-    s->rng ^= s->rng << 5;
-    return s->rng;
-}
-static int rr(ss_t *s, int lo, int hi) { return lo + (int)(rnd(s) % (uint32_t)(hi - lo + 1)); }
-/* -127..127 over a 256 step period (a parabola: close enough for strafing). */
-static int isin(unsigned phase)
-{
-    const int x = (int)(phase & 127U), v = x * (128 - x) * 127 / 4096;
-    return (phase & 128U) ? -v : v;
-}
-static uint32_t sat_add(uint32_t v, uint32_t d) { return v + d > SS_AGE_MAX ? SS_AGE_MAX : v + d; }
 /* 0..256: how far into the game, saturating after 150 seconds. */
 static int difficulty(const ss_t *s)
 {
@@ -70,7 +55,7 @@ void ss_init(ss_t *s, uint32_t seed)
     s->rng = seed ? seed : 0xC0FFEE11U;
     s->phase = SS_TITLE;
     s->hp = SS_HP;
-    s->hit_age_ms = s->over_age_ms = SS_AGE_MAX;
+    s->hit_age_ms = s->over_age_ms = APP_AGE_MAX;
 }
 void ss_start(ss_t *s)
 {
@@ -82,7 +67,7 @@ void ss_start(ss_t *s)
     s->rock_wait = 70;
     s->enemy_wait = 320;
 }
-void ss_steer(ss_t *s, int steer) { s->target_x = (int16_t)(clampi(steer, -256, 256) * SS_X_MAX / 256); }
+void ss_steer(ss_t *s, int steer) { s->target_x = (int16_t)(app_clamp(steer, -256, 256) * SS_X_MAX / 256); }
 static void fire_shot(ss_t *s)
 {
     for (unsigned i = 0; i < SS_SHOT; ++i) {
@@ -111,16 +96,16 @@ static void spawn_rock(ss_t *s)
         ss_obj_t *o = &s->obj[i];
         if (o->alive) continue;
         const int d = difficulty(s);
-        const bool large = rr(s, 0, 3) == 0;
+        const bool large = app_rand_range(&s->rng, 0, 3) == 0;
         memset(o, 0, sizeof *o);
         o->alive = 1;
         o->kind = SO_ASTEROID;
-        o->r = (int16_t)(large ? rr(s, 150, 190) : rr(s, 70, 125));
+        o->r = (int16_t)(large ? app_rand_range(&s->rng, 150, 190) : app_rand_range(&s->rng, 70, 125));
         o->hp = large ? 3U : 1U;
-        o->x = (int16_t)(rr(s, 0, 99) < 55 ? clampi(s->cam_x + rr(s, -(o->r + 260), o->r + 260), -1250, 1250) : rr(s, -1150, 1150));
+        o->x = (int16_t)(app_rand_range(&s->rng, 0, 99) < 55 ? app_clamp(s->cam_x + app_rand_range(&s->rng, -(o->r + 260), o->r + 260), -1250, 1250) : app_rand_range(&s->rng, -1150, 1150));
         o->z = o->pz = SS_ZF;
-        o->vz = (int16_t)-(10 + d * 8 / 256 + rr(s, 0, 3));
-        o->seed = (uint8_t)rnd(s);
+        o->vz = (int16_t)-(10 + d * 8 / 256 + app_rand_range(&s->rng, 0, 3));
+        o->seed = (uint8_t)app_rand_next(&s->rng);
         return;
     }
 }
@@ -134,13 +119,13 @@ static void spawn_enemy(ss_t *s)
         o->kind = SO_ENEMY;
         o->r = 95;
         o->hp = 2;
-        o->x0 = (int16_t)rr(s, -600, 600);
+        o->x0 = (int16_t)app_rand_range(&s->rng, -600, 600);
         o->x = o->x0;
-        o->amp = (int16_t)rr(s, 250, 520);
+        o->amp = (int16_t)app_rand_range(&s->rng, 250, 520);
         o->z = o->pz = SS_ZF;
         o->vz = -8;
-        o->fire = (uint16_t)rr(s, 40, 70);
-        o->seed = (uint8_t)rr(s, 0, 255);
+        o->fire = (uint16_t)app_rand_range(&s->rng, 40, 70);
+        o->seed = (uint8_t)app_rand_range(&s->rng, 0, 255);
         o->state = SE_ENTER;
         return;
     }
@@ -150,7 +135,7 @@ static void fire_bolt(ss_t *s, int x, int z)
     for (unsigned i = 0; i < SS_BOLT; ++i) {
         ss_bolt_t *b = &s->bolt[i];
         if (b->alive) continue;
-        *b = (ss_bolt_t){.x = (int16_t)clampi(x, -1300, 1300), .z = (int16_t)z, .vz = -34, .alive = 1};
+        *b = (ss_bolt_t){.x = (int16_t)app_clamp(x, -1300, 1300), .z = (int16_t)z, .vz = -34, .alive = 1};
         return;
     }
 }
@@ -158,9 +143,9 @@ static void enemy_volley(ss_t *s, const ss_obj_t *o)
 {
     const int d = difficulty(s);
     /* aimed where the ship is heading, not where it is */
-    const int lead = clampi((s->target_x - s->cam_x) / 3, -300, 300), aim = s->cam_x + lead;
+    const int lead = app_clamp((s->target_x - s->cam_x) / 3, -300, 300), aim = s->cam_x + lead;
     fire_bolt(s, aim, o->z - 30);
-    if (d > 100 && rr(s, 0, 99) < 50) { /* a fan of three */
+    if (d > 100 && app_rand_range(&s->rng, 0, 99) < 50) { /* a fan of three */
         fire_bolt(s, aim - 230, o->z - 30);
         fire_bolt(s, aim + 230, o->z - 30);
     }
@@ -189,22 +174,22 @@ static void move_objects(ss_t *s)
                 o->z = (int16_t)(o->z + o->vz);
                 if (o->z <= 820 - (int)(o->seed & 3U) * 60) o->state = SE_HOLD;
             } else if (o->state == SE_HOLD) {
-                o->x = (int16_t)clampi(o->x0 + o->amp * isin(o->age * 2U + o->seed) / 127, -1000, 1000);
+                o->x = (int16_t)app_clamp(o->x0 + o->amp * app_wave127(o->age * 2U + o->seed) / 127, -1000, 1000);
                 if (o->fire) --o->fire;
                 else {
                     enemy_volley(s, o);
                     const int d = difficulty(s);
-                    o->fire = (uint16_t)(80 - d * 35 / 256 + rr(s, 0, 20));
+                    o->fire = (uint16_t)(80 - d * 35 / 256 + app_rand_range(&s->rng, 0, 20));
                 }
                 if (o->age > SS_HOLD_STEPS) o->state = SE_DIVE;
             } else {
                 o->vz = -18;
                 o->z = (int16_t)(o->z + o->vz);
-                o->x = (int16_t)(o->x + clampi(s->cam_x - o->x, -9, 9));
+                o->x = (int16_t)(o->x + app_clamp(s->cam_x - o->x, -9, 9));
             }
         } else o->z = (int16_t)(o->z + o->vz);
         if (o->z <= SS_ZN) { /* it has reached the ship */
-            if (iabs(o->x - s->cam_x) <= o->r + SS_SHIP_HALF) { damage(s); destroy(s, o, false); }
+            if (app_abs(o->x - s->cam_x) <= o->r + SS_SHIP_HALF) { damage(s); destroy(s, o, false); }
             else o->alive = 0; /* a near miss */
         }
     }
@@ -220,7 +205,7 @@ static void move_shots(ss_t *s)
         for (unsigned k = 0; k < SS_OBJ; ++k) {
             ss_obj_t *o = &s->obj[k];
             if (!o->alive || b->z < o->z || b->pz > o->pz) continue;
-            if (iabs(b->x - o->x) > o->r + 20) continue;
+            if (app_abs(b->x - o->x) > o->r + 20) continue;
             b->alive = 0;
             o->flash = 5;
             add_fx(s, b->x, o->z, SX_HIT, 6);
@@ -236,15 +221,15 @@ static void move_bolts(ss_t *s)
         if (!b->alive) continue;
         b->z = (int16_t)(b->z + b->vz);
         if (b->z > SS_ZN) continue;
-        if (iabs(b->x - s->cam_x) <= SS_BOLT_HALF) damage(s);
+        if (app_abs(b->x - s->cam_x) <= SS_BOLT_HALF) damage(s);
         b->alive = 0;
     }
 }
 static void step(ss_t *s)
 {
     s->clock_ms += SS_STEP_MS;
-    s->hit_age_ms = sat_add(s->hit_age_ms, SS_STEP_MS);
-    s->over_age_ms = s->phase == SS_OVER ? sat_add(s->over_age_ms, SS_STEP_MS) : 0U;
+    s->hit_age_ms = app_age_add(s->hit_age_ms, SS_STEP_MS);
+    s->over_age_ms = s->phase == SS_OVER ? app_age_add(s->over_age_ms, SS_STEP_MS) : 0U;
     for (unsigned i = 0; i < SS_FX; ++i) {
         ss_fx_t *f = &s->fx[i];
         if (!f->alive) continue;
@@ -255,7 +240,7 @@ static void step(ss_t *s)
     }
     if (s->phase != SS_PLAY && s->phase != SS_DYING) return;
     /* the ship slides towards where it is told to be, within its speed */
-    s->cam_x = (int16_t)(s->cam_x + clampi(s->target_x - s->cam_x, -SS_SHIP_STEP, SS_SHIP_STEP));
+    s->cam_x = (int16_t)(s->cam_x + app_clamp(s->target_x - s->cam_x, -SS_SHIP_STEP, SS_SHIP_STEP));
     if (s->phase == SS_PLAY) {
         ++s->play_steps;
         if (s->invuln) --s->invuln;
@@ -265,14 +250,14 @@ static void step(ss_t *s)
         if (s->rock_wait) --s->rock_wait;
         else {
             spawn_rock(s);
-            s->rock_wait = (uint16_t)(70 - d * 45 / 256 + rr(s, -10, 14));
+            s->rock_wait = (uint16_t)(70 - d * 45 / 256 + app_rand_range(&s->rng, -10, 14));
         }
         unsigned enemies = 0;
         for (unsigned i = 0; i < SS_OBJ; ++i) enemies += s->obj[i].alive && s->obj[i].kind == SO_ENEMY;
         if (s->enemy_wait) --s->enemy_wait;
         else if (enemies < (d > 128 ? 2U : 1U)) {
             spawn_enemy(s);
-            s->enemy_wait = (uint16_t)(420 - d * 220 / 256 + rr(s, 0, 80));
+            s->enemy_wait = (uint16_t)(420 - d * 220 / 256 + app_rand_range(&s->rng, 0, 80));
         }
     }
     move_objects(s);
@@ -283,10 +268,5 @@ static void step(ss_t *s)
 }
 void ss_advance(ss_t *s, uint32_t dt_ms)
 {
-    if (dt_ms > SS_MAX_ADVANCE_MS) dt_ms = SS_MAX_ADVANCE_MS;
-    s->carry_ms += dt_ms;
-    while (s->carry_ms >= SS_STEP_MS) {
-        s->carry_ms -= SS_STEP_MS;
-        step(s);
-    }
+    for (unsigned n = app_step_take(&s->carry_ms, dt_ms, SS_STEP_MS, SS_MAX_ADVANCE_MS); n; --n) step(s);
 }

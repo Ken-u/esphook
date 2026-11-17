@@ -202,6 +202,17 @@ class SdkTests(unittest.TestCase):
             link_module.open_serial("/dev/cu.test", timeout=0.1)
             self.assertNotIn(RESET, opened[-1].states)
 
+    def test_apps_may_only_include_the_public_framework_api(self):
+        allowed = ('#include <stdio.h>\n#include "esphook/app.h"\n#include "esphook/app_sync.h"\n#include "esphook/app_command.h"\n'
+                   '#include "esphook/radar_view.h"\n#include "cJSON.h"\n#include <cJSON.h>\n#include "my_core.h"\n')
+        self.assertEqual(check_apps.include_errors(allowed, {"my_core.h"}), [])
+        leaks = ('#include "freertos/FreeRTOS.h"\n#include "esphook/app_runtime.h"\n#include <driver/gpio.h>\n'
+                 '#include "esphook/events.h"\n#include "esp_log.h"\n#include "lvgl.h"\n#include "missing.h"\n  #  include <sys/time.h>\n')
+        self.assertEqual(sorted(check_apps.include_errors(leaks, {"my_core.h"})),
+                         sorted(["freertos/FreeRTOS.h", "esphook/app_runtime.h", "driver/gpio.h", "esphook/events.h",
+                                 "esp_log.h", "lvgl.h", "missing.h", "sys/time.h"]))
+        self.assertEqual(check_apps.include_errors('#include "esphook/app_runtime.h"\n#include "esphook/app_ui.h"\n'), ["esphook/app_runtime.h"])
+
     def test_list_ack_budget_guard(self):
         catalog = [dict(id=f"app_{i:02d}_" + "x" * 10, title="四个汉字", hidden=False, standby=True) for i in range(40)]
         frame = check_apps.list_ack_frame(ROOT, catalog)

@@ -25,8 +25,12 @@ idf.py build
 | `framework/core/app_input.c` | 25ms 消抖、500ms 确认、800ms 三击、松手消费 |
 | `framework/core/app_time.c` | 墙上时钟换算（公历、星期、时区偏移）的纯函数，闹钟和幸运签用 |
 | `framework/core/app_alarm.c` | 全局闹钟注册表：任何应用登记“到点打开哪个应用并通知它”，框架负责判定、排队、贪睡与唤醒；见“闹钟 API” |
-| `framework/include/esphook/app_ui.h` | LVGL 标签、矩形、图层、字体、确认圆与共享 RGB565 画布 |
-| `framework/include/esphook/app_gfx.h` | 画布软件绘图：线/圆/圆环/椭圆光晕/渐变（抖动）、半透明叠加、调色板点阵、整数开方、山脉/云/太阳，只在 UI 任务调用 |
+| `framework/include/esphook/app_ui.h` | LVGL 标签、矩形、图层、字体、确认圆；共享 RGB565 画布 `app_ui_canvas`、底部状态条 `app_ui_band`、按住进度线 `app_ui_hold_bar` |
+| `framework/include/esphook/app_gfx.h` | 画布软件绘图：线/圆/圆环/椭圆光晕/渐变（抖动）、半透明叠加、调色板点阵、山脉/云/太阳，只在 UI 任务调用 |
+| `framework/include/esphook/app_math.h` | 纯整数数学（无 LVGL/RTOS，可进 `*_core.c`）：abs/clamp/lerp、饱和加、开方、抛物线正弦、哈希、固定步长累加器 |
+| `framework/include/esphook/app_rand.h` | 确定性 xorshift32：种子即序列，主机测试与实机一致 |
+| `framework/include/esphook/app_sync.h` | UI 任务与 USB 任务交接数据：`app_shared_copy`、临界区、互斥锁；应用不再 include FreeRTOS |
+| `framework/include/esphook/app_command.h` | USB 文本命令：匹配、回复、请求打开应用/回菜单 |
 | `framework/include/esphook/app_services.h` | 雷达、舵机、Hook、显示协议、设备信息、时钟、随机数、PC 事件 |
 | `framework/ports/esp32` | RTOS 队列、NVS 适配、异步 Hook 回传、LVGL 与 LCD 输出 |
 | `framework/services` | Hook 通知模型、人体跟随/校准、显示协议与雷达投影 |
@@ -59,13 +63,51 @@ const app_descriptor_t esphook_app_counter = {
 | `on_tick(ctx)` | 每个 UI 循环约 5ms 调用，推进非阻塞逻辑；用 now_ms 算时间，不按帧计时 |
 | `render(ctx)` | 根据 refresh_ms 和脏状态绘制；菜单 16ms、投篮 33ms、表情/做 T 40ms；帧率需实屏测量 |
 | `icon(parent,x,y,selected)` | 在提供的 28×28 区域画代码图标；不能保存 parent 地址或访问当前应用 state |
-| `command(line)` | 唯一从 USB 任务调用的回调；只解析并向自己的线程安全模型/队列写数据，禁止 LVGL 和读取 UI state |
+| `command(line)` | 唯一从 USB 任务调用的回调；只解析、回复、读取 UI 任务发布的快照（`app_command.h` + `app_sync.h`），禁止 LVGL 和读取 UI state |
 | `ctx->state` | 当前应用独占、按 max_align_t 对齐的 2048 字节 arena；state_size 超限拒绝启动；退出后地址内容失效 |
 | `ctx->root` | 框架拥有的 LVGL 根节点；应用不能删除 root，不能在 lv_screen_active 下另建应用节点 |
 
-除 init 和 command 外，回调都由 UI 任务调用。导航 `app_open/menu/idle` 延迟到回调返回提交；不允许把 ctx 或事件临时指针留给后台任务。回调中不等待、联网或执行长计算；传输模型需要跨任务时独立同步，例如 stock_transport 的互斥锁。
+除 init 和 command 外，回调都由 UI 任务调用。导航 `app_open/menu/idle` 延迟到回调返回提交；不允许把 ctx 或事件临时指针留给后台任务。回调中不等待、联网或执行长计算；跨任务数据用 `app_sync.h`：状态快照 `app_shared_copy`，解析/较长的临界区（stock_transport）用 `app_lock_t`。
 
-所有应用共用 2048 字节会话区，而不是每个应用预留一份。雷达、K 线、小恐龙、滑雪、投篮、新婚快乐、电子木鱼、水族箱、钓鱼、星际战机、极速赛车、黄金矿工、跳一跳、僵尸围城、幸运签、闹钟和副屏共用 160×64 的 20,480 字节像素缓冲（`APP_CANVAS_W/H`；雷达和 K 线只用其中 160×48），整屏重绘的游戏用 `app_gfx.h` 里的有裁剪绘图函数。共享画布每次使用都重绘，切出前清理图片缓存，参见雷达/股票的 on_leave。常驻股票上传暂存区仍在应用自己的 transport 中，只有完整数据才提交。
+所有应用共用 2048 字节会话区，而不是每个应用预留一份。雷达、K 线、小恐龙、滑雪、投篮、新婚快乐、电子木鱼、水族箱、钓鱼、星际战机、极速赛车、黄金矿工、跳一跳、僵尸围城、幸运签、闹钟和副屏共用 160×64 的 20,480 字节像素缓冲（`APP_CANVAS_W/H`；雷达和 K 线只用其中 160×48），整屏重绘的游戏用 `app_gfx.h` 里的有裁剪绘图函数，用 `app_ui_canvas(root, x, y, w, h)` 显示（描述符归框架，应用 state 里只留返回的对象），重绘后 `app_ui_canvas_refresh()`；创建时框架会清掉上一个应用留下的图片缓存。常驻股票上传暂存区仍在应用自己的 transport 中，只有完整数据才提交。
+
+## 公共 API 速查
+
+应用只能 include 白名单里的头文件：C 标准库、cJSON、自己的本地头、`esphook/app*.h`（含 `app_math/rand/sync/command/gfx/ui/haptic/steer/fish/alarm`）、`esphook/radar_view.h` 和 `robot_ui_protocol.h`。`check-apps.py` 对每个应用的 `firmware/` 逐文件检查，FreeRTOS、ESP-IDF、驱动或 `app_runtime.h` 一律拒绝（要什么就由框架出 API，而不是应用越层）。越稳定的 API 越能装更多应用，所以下面这些**不要在应用里再写一份**：
+
+| 需求 | 用这个 | 备注 |
+| --- | --- | --- |
+| 绝对值/限幅/插值/开方/抛物线正弦/哈希 | `app_math.h`：`app_abs/min/max/clamp/lerp`、`app_isqrt`、`app_wave127`（±127）、`app_sin256`（±256）、`app_hash32` | 纯头文件、仅依赖 `<stdint.h>`，核心逻辑（`*_core.c`）可直接用，主机测试同步编译 |
+| 计时器“距今多久”不回绕 | `app_age_add(age, dt)`（上限 `APP_AGE_MAX`）、`app_sat_add(v, d, max)` | 放置几小时的计数器也不会溢出 |
+| 固定步长模拟 | `for (n = app_step_take(&carry, dt, STEP_MS, MAX_ADVANCE_MS); n; --n) step(g);` | 卡帧不会一次补太多；同输入逐位重放一致 |
+| 随机数 | `app_rand_seed/next/range/chance`（`app_rand.h`），种子用 `app_random()` 取一次 | 状态是应用自己结构体里的 `uint32_t`，种子相同则序列相同 |
+| 显示共享画布 | `app_ui_canvas(root, x, y, w, h)` + `app_ui_canvas_refresh(obj)` | state 不再放 `lv_image_dsc_t` |
+| 画布下面 16px 状态条 | `app_ui_band(root, bg, rule)`（`rule` 传 `APP_UI_NO_RULE` 则无顶线） | 标签建在返回的对象里 |
+| 按住退出/确认进度线 | `app_ui_hold_bar(parent, y, rgb)` + `app_ui_hold_line()` | 配合 `app_set_exit_hold` |
+| UI 任务发布状态给 USB 任务读 | `app_shared_copy(dst, src)`；多字段/自增用 `app_critical_enter/exit()` | 临界区内只拷贝几个字节；不要 FreeRTOS |
+| 需要解析、较长的共享区 | `app_lock_create/take/give`（互斥锁） | 例：股票传输模型 |
+| 回复 USB 文本命令 | `app_command_is/reply/replyf`（一行，至多 `APP_COMMAND_REPLY_MAX` 字节） | `command()` 返回 true 表示这行是你的 |
+| 从命令打开应用/回菜单/问是否前台 | `app_command_open(id)`、`app_command_menu()`、`app_command_active(id)` | 只排队，真正切换在 UI 任务 |
+| 闹钟/定时唤醒 | `app_alarm.h` | 见“闹钟 API” |
+| 舵机震动/转向、雷达转向 | `app_haptic.h`、`app_steer.h` | 见“硬件与 Hook 服务” |
+
+一个只带 `status` 命令的完整样板就是 `python3 scripts/new-app.py <id>` 生成的 `firmware/app.c`：
+
+```c
+typedef struct { bool active; unsigned count; } status_t;
+static status_t s_status;                       /* UI 任务发布，command（USB 任务）读副本 */
+static void publish(const state_t *s, bool active) { const status_t v = {active, s->count}; app_shared_copy(s_status, v); }
+static bool command(const char *line)
+{
+    if (!app_command_is(line, "robot counter status")) return false;
+    status_t v;
+    app_shared_copy(v, s_status);
+    (void)app_command_replyf("active=%u count=%u", v.active ? 1U : 0U, v.count);
+    return true;
+}
+```
+
+共享状态必须是纯数据结构：不能含指向应用 arena 的指针（退出后失效）。无屏测试把 `app_critical_*` 替换成会断言“不嵌套、不泄漏”的桩，并要求每个应用都经由它发布过状态。
 
 ## 注册与应用配置
 
@@ -93,7 +135,7 @@ GPIO6 内部上拉、按下接 GND，双边沿 ISR 只唤醒输入任务。通�
 - 800ms 内第三次有效按下优先回 launcher，第三次松手被消费。为保持即时短按，前两次可能已经执行当前应用动作。
 - 导航提交会消费正在按住的键，避免长按进入后松手触发新应用。
 - **可屏蔽三击**：靠连按玩的游戏（开炮、投喂、敲木鱼、跳跃）在 `on_enter` 里调用 `app_set_triple_exit(ctx, false)`，快速三次按下就只是三次普通按下，不会再回菜单；`app_triple_exit(ctx)` 查询当前状态。该开关在**每次切换应用时恢复为开启**，忘记调用不会让下一个应用失去三击，也不用在 `on_leave` 里还原。
-- **屏蔽后的出口**：长按 K1 达到指定时间回菜单，`app_set_exit_hold(ctx, ms)` 开启（1000..10000ms，0 关闭，默认关闭，同样随应用切换复位），`app_exit_hold_progress(ctx)` 给出已按住的毫秒数，`app_ui_hold_line()` 画 2px 进度线（有 500ms 确认时金色先填满，之后红色填到出口；无确认时 600ms 之前不显示，普通按键不闪）。应用仍会收到 DOWN，500ms 时仍有 CONFIRM；到时回菜单并消费这次按住，松手无动作。**只在这次按下本身不改变画面时开启**（例如标题/结束画面用 SHORT 开局、木鱼敲击、水族箱投喂），并避免按住了很久的战斗按键在结算画面一松就退出：应用要自己记下“这一按开始于游戏中”，这样的按住不开启出口。目前：星际战机、极速赛车、钓鱼、僵尸围城只在平静画面开启（2 秒）；水族箱、木鱼、投篮、小恐龙、黄金矿工随时开启（2 秒），滑雪 3 秒；投篮结算页任何短按仍直接回菜单。跳一跳靠计时按住而不是连按，**保留全局三击**，没有按住退出（蓄力要按住很久）；副屏、闹钟、幸运签也保留三击。
+- **屏蔽后的出口**：长按 K1 达到指定时间回菜单，`app_set_exit_hold(ctx, ms)` 开启（1000..10000ms，0 关闭，默认关闭，同样随应用切换复位），`app_exit_hold_progress(ctx)` 给出已按住的毫秒数，`app_ui_hold_line()` 画 2px 进度线（有 500ms 确认时金色先填满，之后红色填到出口；无确认时 600ms 之前不显示，普通按键不闪）。应用仍会收到 DOWN，500ms 时仍有 CONFIRM；到时回菜单并消费这次按住，松手无动作。**框架只统计“按下时出口已开启”的那一按**：战斗中关闭、平静画面开启，那么开局那一按、或战斗里一直按着的开火键在结算画面一松都不会变成退出；按住途中才开启（或关闭后重新开启）要等下一次按下才生效，应用不用再自己记“这一按开始于游戏中”。目前：星际战机、极速赛车、钓鱼、僵尸围城只在平静画面开启（2 秒）；水族箱、木鱼、投篮、小恐龙、黄金矿工随时开启（2 秒），滑雪 3 秒；投篮结算页任何短按仍直接回菜单。跳一跳靠计时按住而不是连按，**保留全局三击**，没有按住退出（蓄力要按住很久）；副屏、闹钟、幸运签也保留三击。
 - 待机应用中的 K1 短按统一开菜单；非待机入口打开同一应用时由应用处理短按。三击始终保留。
 - 启动器按注册表每页三个图标，短按循环选择，500ms 确认圆填满进入；10s 无输入回当前选定的待机应用。
 
@@ -213,6 +255,7 @@ python3 scripts/check-apps.py
 python3 tests/test_scaffold.py
 python3 tests/test_app_sdk.py
 ./scripts/test-app-games.sh
+./scripts/test-app-util.sh
 ./scripts/test-robot.sh
 ./scripts/test-hardware.sh
 ./scripts/test-usb-cdc.sh

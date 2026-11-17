@@ -1,7 +1,7 @@
 #include "esphook/app.h"
+#include "esphook/app_command.h"
 #include "esphook/app_ui.h"
 #include "esphook/app_services.h"
-#include "esphook/app_runtime.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -99,10 +99,11 @@ static void icon(void *parent, int x, int y, bool selected)
 }
 static bool command(const char *line)
 {
-    if(strcmp(line,"robot face")) return false;
+    if (!app_command_is(line, "robot face")) return false;
     char error[96]; const char *json="{\"v\":1,\"mode\":\"auto\"}";
     (void)app_display_update(json,strlen(json),error,sizeof error);
-    (void)app_transport_write(app_runtime_open("face")?"OK face queued":"ERR app queue full"); return true;
+    (void)app_command_reply(app_command_open("face") ? "OK face queued" : "ERR app queue full");
+    return true;
 }
 const app_descriptor_t esphook_app_face = {.api_version=APP_API_VERSION, .id="face", .title="表情",
     .flags=APP_STANDBY, .refresh_ms=40, .state_size=sizeof(state_t), .on_enter=enter, .on_event=event, .render=render, .icon=icon, .command=command};

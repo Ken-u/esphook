@@ -85,8 +85,10 @@ void app_set_triple_exit(app_context_t *ctx, bool enabled);
 bool app_triple_exit(const app_context_t *ctx);
 /* The deliberate way out for a game that switched the triple exit off: holding K1 for `ms` (1000..10000, 0 turns it
  * off, which is the default) goes back to the menu. The app still sees DOWN, and CONFIRM at 500 ms, like any hold, so
- * pick a time no normal play reaches and only enable it where the press that starts the hold does not itself change
- * the screen. Restored (off) on every app change; the release afterwards is consumed. */
+ * pick a time no normal play reaches. It counts only a press that began while it was on: switch it on for the calm
+ * screens (title, game over) and off during play, and a press that started the game - or a fire button still held
+ * when the game ends - can never turn into an exit; turning it on mid-press waits for the next press. Restored (off)
+ * on every app change; the release afterwards is consumed. */
 void app_set_exit_hold(app_context_t *ctx, unsigned ms);
 /* How long K1 has been held towards that exit (0 when it is off or the key is up), for a progress line. */
 unsigned app_exit_hold_progress(const app_context_t *ctx);

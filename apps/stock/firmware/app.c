@@ -8,7 +8,6 @@
 #include "stock_transport.h"
 typedef struct {
     lv_obj_t *chart, *header, *price, *badge, *badge_text, *footer, *panel, *card, *accent, *title, *profit, *detail, *hint;
-    lv_image_dsc_t image;
     remote_game_view_t view;
 } state_t;
 _Static_assert(sizeof(state_t) <= APP_STATE_CAPACITY, "stock state too large");
@@ -16,7 +15,7 @@ static void enter(app_context_t *ctx) { stock_transport_event("launch", ctx->now
 static void leave(app_context_t *ctx)
 {
     state_t *s=ctx->state; stock_transport_event("menu", ctx->now_ms);
-    if(s->chart) app_ui_plot_refresh(s->chart,&s->image);
+    if(s->chart) app_ui_canvas_refresh(s->chart);
 }
 static void event(app_context_t *ctx, const app_event_t *e)
 {
@@ -38,12 +37,7 @@ static void render(app_context_t *ctx)
         lv_obj_set_style_text_color(s->header, app_ui_color(0xB9C3E0), LV_PART_MAIN);
         s->price = app_ui_label(ctx->root, &aihook_font_12, 100, 0, 58, 13, LV_LABEL_LONG_MODE_CLIP);
         lv_obj_set_style_text_align(s->price, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
-        s->image.header.magic = LV_IMAGE_HEADER_MAGIC;
-        s->image.header.cf = LV_COLOR_FORMAT_RGB565;
-        s->image.header.w = 160; s->image.header.h = 48; s->image.header.stride = 320;
-        s->image.data_size = 160 * 48 * 2; s->image.data = (const uint8_t *)app_ui_pixels();
-        s->chart = lv_image_create(ctx->root);
-        lv_obj_set_pos(s->chart, 0, 15); lv_image_set_src(s->chart, &s->image);
+        s->chart = app_ui_canvas(ctx->root, 0, 15, 160, 48);
         s->badge = app_ui_rect(ctx->root, 2, 66, 32, 13, 0x2A3350, 4);
         s->badge_text = app_ui_label(s->badge, &aihook_font_12, 0, -1, 32, 14, LV_LABEL_LONG_MODE_CLIP);
         lv_obj_set_style_text_align(s->badge_text, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
@@ -95,7 +89,7 @@ static void render(app_context_t *ctx)
         app_ui_text(s->footer, text);
         lv_obj_set_style_text_color(s->footer, app_ui_color(v->pct_bps >= 0 ? 0xFF6363 : 0x47E6AE), LV_PART_MAIN);
         stock_chart_draw(app_ui_pixels(), v);
-        app_ui_plot_refresh(s->chart, &s->image);
+        app_ui_canvas_refresh(s->chart);
     }
 }
 static void icon(void *parent, int x, int y, bool selected)

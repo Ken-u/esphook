@@ -4,7 +4,8 @@
 #include "esphook/app_services.h"
 #include "wedding_glyphs.h"
 #include "cJSON.h"
-#include "freertos/FreeRTOS.h"
+#include "esphook/app_command.h"
+#include "esphook/app_sync.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -26,8 +27,7 @@
 #define DEFAULT_WISH "百年好合 ★ 永结同心 ★ 幸福美满 ★ 白头偕老 ★ Wishing you a lifetime of love and happiness ★ "
 
 typedef struct {
-    lv_obj_t *plot, *band, *line, *wish;
-    lv_image_dsc_t image;
+    lv_obj_t *plot, *band, *wish;
     uint64_t entered_ms;
     char text[WISH_MAX];
 } state_t;
@@ -35,7 +35,6 @@ _Static_assert(sizeof(state_t) <= APP_STATE_CAPACITY, "wedding state too large")
 _Static_assert(sizeof DEFAULT_WISH <= WISH_MAX, "the default blessing must fit its buffer untruncated");
 typedef struct { bool active; unsigned page; uint32_t frames; } status_t;
 static status_t s_status;
-static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 
 static const uint32_t PALETTE[8] = {0xFFD54A, 0xFFFFFF, 0xFF8FB1, 0x58D6E0, 0xB38CFF, 0x6FE0A0, 0xFF7A5C, 0xFFE9A8};
 static const uint32_t BG_TOP = 0x3A0617, BG_MID = 0x8E1235, BG_LOW = 0xDD4670;
@@ -280,15 +279,8 @@ static void draw_scene(uint16_t *px, uint32_t rel)
 /* ---- app --------------------------------------------------------------------------------------------------- */
 static void build(state_t *s, lv_obj_t *root)
 {
-    s->image.header.magic = LV_IMAGE_HEADER_MAGIC;
-    s->image.header.cf = LV_COLOR_FORMAT_RGB565;
-    s->image.header.w = APP_CANVAS_W; s->image.header.h = APP_CANVAS_H; s->image.header.stride = APP_CANVAS_W * 2;
-    s->image.data_size = APP_CANVAS_W * APP_CANVAS_H * 2; s->image.data = (const uint8_t *)app_ui_pixels();
-    s->plot = lv_image_create(root);
-    lv_obj_set_pos(s->plot, 0, 0);
-    lv_image_set_src(s->plot, &s->image);
-    s->band = app_ui_rect(root, 0, BAND_Y, APP_WIDTH, BAND_H, 0x3A0614, 0);
-    s->line = app_ui_rect(root, 0, BAND_Y, APP_WIDTH, 1, 0xFFC93C, 0);
+    s->plot = app_ui_canvas(root, 0, 0, APP_CANVAS_W, APP_CANVAS_H);
+    s->band = app_ui_band(root, 0x3A0614, 0xFFC93C);
     s->wish = app_ui_label(s->band, &aihook_font_12, 4, 1, 152, 14, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
     lv_obj_set_style_text_color(s->wish, app_ui_color(0xFFE9A8), LV_PART_MAIN);
     app_ui_text(s->wish, s->text);
@@ -298,13 +290,13 @@ static void enter(app_context_t *ctx)
     state_t *s = ctx->state;
     s->entered_ms = ctx->now_ms;
     snprintf(s->text, sizeof s->text, "%s", DEFAULT_WISH);
-    portENTER_CRITICAL(&s_lock); s_status = (status_t){true, 0, 0}; portEXIT_CRITICAL(&s_lock);
+    app_critical_enter(); s_status = (status_t){true, 0, 0}; app_critical_exit();
 }
 static void leave(app_context_t *ctx)
 {
     state_t *s = ctx->state;
-    if (s->plot) app_ui_plot_refresh(s->plot, &s->image); /* The shared canvas goes to the next app. */
-    portENTER_CRITICAL(&s_lock); s_status.active = false; portEXIT_CRITICAL(&s_lock);
+    if (s->plot) app_ui_canvas_refresh(s->plot); /* The shared canvas goes to the next app. */
+    app_critical_enter(); s_status.active = false; app_critical_exit();
 }
 static void event(app_context_t *ctx, const app_event_t *e)
 {
@@ -326,17 +318,15 @@ static void render(app_context_t *ctx)
     if (!s->plot) build(s, ctx->root);
     uint32_t rel = (uint32_t)(ctx->now_ms - s->entered_ms);
     draw_scene(app_ui_pixels(), rel);
-    app_ui_plot_refresh(s->plot, &s->image);
-    portENTER_CRITICAL(&s_lock); s_status.page = (rel / PAGE_MS) & 1U; ++s_status.frames; portEXIT_CRITICAL(&s_lock);
+    app_ui_canvas_refresh(s->plot);
+    app_critical_enter(); s_status.page = (rel / PAGE_MS) & 1U; ++s_status.frames; app_critical_exit();
 }
 static bool command(const char *line)
 {
-    if (strcmp(line, "robot wedding status")) return false;
+    if (!app_command_is(line, "robot wedding status")) return false;
     status_t v;
-    portENTER_CRITICAL(&s_lock); v = s_status; portEXIT_CRITICAL(&s_lock);
-    char reply[80];
-    snprintf(reply, sizeof reply, "active=%u page=%u frames=%lu", v.active ? 1U : 0U, v.page, (unsigned long)v.frames);
-    (void)app_transport_write(reply);
+    app_shared_copy(v, s_status);
+    (void)app_command_replyf("active=%u page=%u frames=%lu", v.active ? 1U : 0U, v.page, (unsigned long)v.frames);
     return true;
 }
 static void icon(void *parent, int x, int y, bool selected)

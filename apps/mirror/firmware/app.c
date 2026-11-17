@@ -2,7 +2,8 @@
 #include "esphook/app_gfx.h"
 #include "esphook/app_services.h"
 #include "esphook/app_ui.h"
-#include "freertos/FreeRTOS.h"
+#include "esphook/app_command.h"
+#include "esphook/app_sync.h"
 #include "mirror_codec.h"
 #include <stddef.h>
 #include <stdio.h>
@@ -15,7 +16,7 @@
  *
  * Threads: command() runs on the USB task. It only checks a line, decodes it into a free slot of the ring and
  * answers. The UI task is the only one that paints and the only one that touches LVGL: tick() empties the ring into
- * the canvas. The two share the ring, the counters in s_st and nothing else, all behind s_lock. A single key press
+ * the canvas. The two share the ring, the counters in s_st and nothing else, all behind the app_critical section. A single key press
  * freezes the picture (the PC is told, and stops sending until it is let go again); three presses leave as always. */
 #define BAND_Y 64
 #define STALE_MS 3000U
@@ -23,8 +24,7 @@
 #define PER_TICK 8U /* strips painted per tick: a whole picture, at most, so a slow frame never queues up */
 
 typedef struct {
-    lv_obj_t *plot, *band, *line, *msg, *title;
-    lv_image_dsc_t image;
+    lv_obj_t *plot, *band, *msg, *title;
     uint64_t last_strip_ms, sample_ms;
     uint32_t shown_key, frames_at_sample;
     int16_t last_frame;
@@ -43,7 +43,6 @@ typedef struct {
 } status_t;
 static status_t s_st;
 static mirror_ring_t s_ring;
-static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 
 static uint16_t c565(uint32_t rgb) { return gfx_rgb565(rgb); }
 
@@ -79,15 +78,8 @@ static void draw_wait(uint16_t *px, unsigned now)
 /* ---- app -------------------------------------------------------------------------------------------------------- */
 static void build(state_t *s, lv_obj_t *root)
 {
-    s->image.header.magic = LV_IMAGE_HEADER_MAGIC;
-    s->image.header.cf = LV_COLOR_FORMAT_RGB565;
-    s->image.header.w = APP_CANVAS_W; s->image.header.h = APP_CANVAS_H; s->image.header.stride = APP_CANVAS_W * 2;
-    s->image.data_size = APP_CANVAS_W * APP_CANVAS_H * 2; s->image.data = (const uint8_t *)app_ui_pixels();
-    s->plot = lv_image_create(root);
-    lv_obj_set_pos(s->plot, 0, 0);
-    lv_image_set_src(s->plot, &s->image);
-    s->band = app_ui_rect(root, 0, BAND_Y, APP_WIDTH, APP_HEIGHT - BAND_Y, 0x0A1220, 0);
-    s->line = app_ui_rect(root, 0, BAND_Y, APP_WIDTH, 1, 0x24406E, 0);
+    s->plot = app_ui_canvas(root, 0, 0, APP_CANVAS_W, APP_CANVAS_H);
+    s->band = app_ui_band(root, 0x0A1220, 0x24406E);
     s->msg = app_ui_label(s->band, &aihook_font_12, 4, 2, 152, 14, LV_LABEL_LONG_MODE_CLIP);
     lv_obj_set_style_text_color(s->msg, app_ui_color(0xCFE0F4), LV_PART_MAIN);
     s->title = app_ui_label(root, &aihook_font_16, 0, 44, APP_WIDTH, 20, LV_LABEL_LONG_MODE_CLIP);
@@ -98,9 +90,9 @@ static void build(state_t *s, lv_obj_t *root)
 }
 static void publish(const state_t *s, bool active)
 {
-    portENTER_CRITICAL(&s_lock);
+    app_critical_enter();
     s_st.active = active; s_st.live = s->live != 0U; s_st.fps = s->fps; s_st.paused = s->paused != 0U;
-    portEXIT_CRITICAL(&s_lock);
+    app_critical_exit();
 }
 static void enter(app_context_t *ctx)
 {
@@ -108,19 +100,19 @@ static void enter(app_context_t *ctx)
     s->last_frame = -1;
     s->dirty = 1;
     s->sample_ms = ctx->now_ms;
-    portENTER_CRITICAL(&s_lock);
+    app_critical_enter();
     mirror_ring_reset(&s_ring);
     s_st = (status_t){0};
     s_st.active = true;
-    portEXIT_CRITICAL(&s_lock);
+    app_critical_exit();
     (void)app_host_event(ctx, "enter", 0, NULL);
 }
 static void leave(app_context_t *ctx)
 {
     state_t *s = ctx->state;
-    portENTER_CRITICAL(&s_lock); s_st.active = false; s_st.paused = false; portEXIT_CRITICAL(&s_lock);
+    app_critical_enter(); s_st.active = false; s_st.paused = false; app_critical_exit();
     (void)app_host_event(ctx, "leave", 0, NULL);
-    if (s->plot) app_ui_plot_refresh(s->plot, &s->image); /* The shared canvas goes to the next app. */
+    if (s->plot) app_ui_canvas_refresh(s->plot); /* The shared canvas goes to the next app. */
 }
 static void event(app_context_t *ctx, const app_event_t *e)
 {
@@ -135,12 +127,12 @@ static void tick(app_context_t *ctx)
     state_t *s = ctx->state;
     const uint64_t now = ctx->now_ms;
     bool bye;
-    portENTER_CRITICAL(&s_lock); bye = s_st.bye; portEXIT_CRITICAL(&s_lock);
+    app_shared_copy(bye, s_st.bye);
     if (bye && !s->bye && s->live) s->dirty = 1;
     s->bye = bye ? 1U : 0U;
     for (unsigned n = 0; n < PER_TICK; ++n) {
         const mirror_strip_t *slot;
-        portENTER_CRITICAL(&s_lock); slot = mirror_ring_peek(&s_ring); portEXIT_CRITICAL(&s_lock);
+        app_critical_enter(); slot = mirror_ring_peek(&s_ring); app_critical_exit();
         if (!slot) break;
         /* The slot is the USB task's again only after the release, so the UI task reads it without the lock. */
         if (!s->paused) {
@@ -148,25 +140,25 @@ static void tick(app_context_t *ctx)
             mirror_expand(slot, app_ui_pixels());
             if (slot->frame != s->last_frame) {
                 s->last_frame = slot->frame;
-                portENTER_CRITICAL(&s_lock); ++s_st.frames; portEXIT_CRITICAL(&s_lock);
+                app_critical_enter(); ++s_st.frames; app_critical_exit();
             }
             s->dirty = 1;
             s->last_strip_ms = now;
         } else {
-            portENTER_CRITICAL(&s_lock); ++s_st.dropped; portEXIT_CRITICAL(&s_lock);
+            app_critical_enter(); ++s_st.dropped; app_critical_exit();
         }
-        portENTER_CRITICAL(&s_lock); mirror_ring_release(&s_ring); portEXIT_CRITICAL(&s_lock);
+        app_critical_enter(); mirror_ring_release(&s_ring); app_critical_exit();
     }
     if (now - s->sample_ms >= 1000U) {
         uint32_t frames;
-        portENTER_CRITICAL(&s_lock); frames = s_st.frames; portEXIT_CRITICAL(&s_lock);
+        app_shared_copy(frames, s_st.frames);
         s->fps = (uint16_t)((frames - s->frames_at_sample) * 1000U / (unsigned)(now - s->sample_ms));
         s->frames_at_sample = frames;
         s->sample_ms = now;
     }
-    portENTER_CRITICAL(&s_lock);
+    app_critical_enter();
     s_st.age_ms = s->live ? (uint32_t)(now - s->last_strip_ms) : 0U;
-    portEXIT_CRITICAL(&s_lock);
+    app_critical_exit();
     publish(s, true);
 }
 static void sync_band(state_t *s, uint64_t now)
@@ -193,7 +185,7 @@ static void render(app_context_t *ctx)
     state_t *s = ctx->state;
     if (!s->plot) build(s, ctx->root);
     if (!s->live) { draw_wait(app_ui_pixels(), (unsigned)ctx->now_ms); s->dirty = 1; }
-    if (s->dirty) { app_ui_plot_refresh(s->plot, &s->image); s->dirty = 0; }
+    if (s->dirty) { app_ui_canvas_refresh(s->plot); s->dirty = 0; }
     sync_band(s, ctx->now_ms);
 }
 
@@ -205,71 +197,67 @@ static void reply(bool ok, const char *err, int frame, int index, unsigned free_
     if (err) n += snprintf(out + n, sizeof out - (size_t)n, ",\"err\":\"%s\"", err);
     if (frame >= 0) n += snprintf(out + n, sizeof out - (size_t)n, ",\"f\":%d,\"i\":%d", frame, index);
     snprintf(out + n, sizeof out - (size_t)n, ",\"free\":%u,\"p\":%u}", free_slots, paused ? 1U : 0U);
-    (void)app_transport_write(out);
+    (void)app_command_reply(out);
 }
 static bool strip_command(const char *line)
 {
     bool active, paused, claimed;
     mirror_strip_t *slot = NULL;
     unsigned free_slots;
-    portENTER_CRITICAL(&s_lock);
+    app_critical_enter();
     active = s_st.active; paused = s_st.paused; claimed = s_st.claimed; free_slots = mirror_ring_free(&s_ring);
     if (active && !paused && !claimed) { slot = mirror_ring_reserve(&s_ring); if (slot) s_st.claimed = true; }
-    portEXIT_CRITICAL(&s_lock);
+    app_critical_exit();
     if (!active) { reply(false, "inactive", -1, 0, 0, false); return true; }
     /* A strip sent while the picture is frozen is taken and thrown away: the PC learns it from `p` and waits. */
-    if (paused) { portENTER_CRITICAL(&s_lock); ++s_st.dropped; portEXIT_CRITICAL(&s_lock); reply(true, NULL, -1, 0, free_slots, true); return true; }
+    if (paused) { app_critical_enter(); ++s_st.dropped; app_critical_exit(); reply(true, NULL, -1, 0, free_slots, true); return true; }
     if (!slot) {
-        portENTER_CRITICAL(&s_lock); ++s_st.busy; portEXIT_CRITICAL(&s_lock);
+        app_critical_enter(); ++s_st.busy; app_critical_exit();
         reply(false, "busy", -1, 0, free_slots, false);
         return true;
     }
     const mirror_status_t st = mirror_parse_strip(line, slot);
     const int frame = st == MIRROR_ERR_ARGS ? -1 : slot->frame, index = st == MIRROR_ERR_ARGS ? 0 : slot->index;
-    portENTER_CRITICAL(&s_lock);
+    app_critical_enter();
     s_st.claimed = false;
     if (st == MIRROR_OK && s_st.active) { mirror_ring_commit(&s_ring); ++s_st.strips; s_st.bye = false; }
     else if (st == MIRROR_ERR_CRC) ++s_st.bad_crc;
     else if (st == MIRROR_ERR_B64) ++s_st.bad_b64;
     else ++s_st.bad_args;
     free_slots = mirror_ring_free(&s_ring);
-    portEXIT_CRITICAL(&s_lock);
+    app_critical_exit();
     reply(st == MIRROR_OK, st == MIRROR_OK ? NULL : mirror_status_name(st), frame, index, free_slots, false);
     return true;
 }
 static bool command(const char *line)
 {
-    if (!strcmp(line, "robot mirror status")) {
+    if (app_command_is(line, "robot mirror status")) {
         status_t v;
-        portENTER_CRITICAL(&s_lock); v = s_st; portEXIT_CRITICAL(&s_lock);
-        char out[200];
-        snprintf(out, sizeof out, "active=%u live=%u paused=%u fps=%u frames=%lu strips=%lu args=%lu b64=%lu crc=%lu busy=%lu dropped=%lu age=%lu",
-                 v.active ? 1U : 0U, v.live ? 1U : 0U, v.paused ? 1U : 0U, v.fps, (unsigned long)v.frames, (unsigned long)v.strips,
-                 (unsigned long)v.bad_args, (unsigned long)v.bad_b64, (unsigned long)v.bad_crc, (unsigned long)v.busy,
-                 (unsigned long)v.dropped, (unsigned long)v.age_ms);
-        (void)app_transport_write(out);
+        app_shared_copy(v, s_st);
+        (void)app_command_replyf("active=%u live=%u paused=%u fps=%u frames=%lu strips=%lu args=%lu b64=%lu crc=%lu busy=%lu dropped=%lu age=%lu",
+                v.active ? 1U : 0U, v.live ? 1U : 0U, v.paused ? 1U : 0U, v.fps, (unsigned long)v.frames, (unsigned long)v.strips,
+                (unsigned long)v.bad_args, (unsigned long)v.bad_b64, (unsigned long)v.bad_crc, (unsigned long)v.busy,
+                (unsigned long)v.dropped, (unsigned long)v.age_ms);
         return true;
     }
     if (strncmp(line, "mirror ", 7)) return false;
     if (!strncmp(line, "mirror s ", 9)) return strip_command(line);
     bool active, paused;
     unsigned free_slots;
-    if (!strcmp(line, "mirror bye")) {
-        portENTER_CRITICAL(&s_lock);
+    if (app_command_is(line, "mirror bye")) {
+        app_critical_enter();
         active = s_st.active; paused = s_st.paused; free_slots = mirror_ring_free(&s_ring);
         if (active) s_st.bye = true;
-        portEXIT_CRITICAL(&s_lock);
+        app_critical_exit();
         reply(active, active ? NULL : "inactive", -1, 0, free_slots, paused);
         return true;
     }
-    if (!strcmp(line, "mirror hello")) {
-        portENTER_CRITICAL(&s_lock);
+    if (app_command_is(line, "mirror hello")) {
+        app_critical_enter();
         active = s_st.active; paused = s_st.paused; free_slots = mirror_ring_free(&s_ring);
-        portEXIT_CRITICAL(&s_lock);
-        char out[160];
-        snprintf(out, sizeof out, "{\"v\":1,\"type\":\"mirror_ack\",\"op\":\"hello\",\"ok\":%s%s,\"w\":%u,\"h\":%u,\"rows\":%u,\"free\":%u,\"p\":%u}",
-                 active ? "true" : "false", active ? "" : ",\"err\":\"inactive\"", MIRROR_W, MIRROR_H, MIRROR_ROWS, free_slots, paused ? 1U : 0U);
-        (void)app_transport_write(out);
+        app_critical_exit();
+        (void)app_command_replyf("{\"v\":1,\"type\":\"mirror_ack\",\"op\":\"hello\",\"ok\":%s%s,\"w\":%u,\"h\":%u,\"rows\":%u,\"free\":%u,\"p\":%u}",
+                active ? "true" : "false", active ? "" : ",\"err\":\"inactive\"", MIRROR_W, MIRROR_H, MIRROR_ROWS, free_slots, paused ? 1U : 0U);
         return true;
     }
     reply(false, "args", -1, 0, 0, false);

@@ -25,7 +25,6 @@
 #define SS_DYING_STEPS 60
 #define SS_SHIP_STEP 52   /* the most the ship moves sideways per step (2600 per second) */
 #define SS_HOLD_STEPS 450 /* an enemy that has not been shot after this long dives at the ship */
-#define SS_AGE_MAX 60000U
 
 typedef enum { SS_TITLE, SS_PLAY, SS_DYING, SS_OVER } ss_phase_t;
 typedef enum { SO_ASTEROID, SO_ENEMY } ss_kind_t;

@@ -2,6 +2,7 @@
 #include "app_manager.h"
 #include "app_protocol.h"
 #include "app_services.h"
+#include "app_command.h"
 #include "app_ui.h"
 #include "display_view.h"
 #include "display_model.h"
@@ -70,6 +71,10 @@ bool app_runtime_open(const char *id)
     request_t r = {.kind = R_OPEN, .ms = clock_ms()}; snprintf(r.id, sizeof r.id, "%s", id); return post(&r);
 }
 bool app_runtime_menu(void) { request_t r = {.kind = R_MENU, .ms = clock_ms()}; return post(&r); }
+/* app_command.h: the public face of the three requests for an app's `command` callback. */
+bool app_command_open(const char *id) { return app_runtime_open(id); }
+bool app_command_menu(void) { return app_runtime_menu(); }
+bool app_command_active(const char *id) { return app_runtime_is_active(id); }
 bool app_runtime_message(const char *id, const char *json)
 {
     if (!id || !json || strlen(json) > APP_MESSAGE_MAX || !app_runtime_is_active(id)) return false;

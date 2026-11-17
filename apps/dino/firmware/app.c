@@ -2,10 +2,10 @@
 #include "esphook/app_gfx.h"
 #include "esphook/app_ui.h"
 #include "esphook/app_services.h"
-#include "esphook/app_runtime.h"
 #include "dino_game.h"
 #include "dino_sprites.h"
-#include "freertos/FreeRTOS.h"
+#include "esphook/app_command.h"
+#include "esphook/app_sync.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -23,12 +23,10 @@
 typedef struct {
     dino_game_t game;
     lv_obj_t *top, *plot, *bottom, *hold, *hud, *best, *score, *panel, *title, *line, *hint_pill, *hint;
-    lv_image_dsc_t image;
     uint32_t top_rgb, dirt_rgb;
 } state_t;
 _Static_assert(sizeof(state_t) <= APP_STATE_CAPACITY, "dino state too large");
 static dino_view_t s_status;
-static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 
 /* Day turns to night and back as the run goes on; the blend is smoothed so it never flashes. */
 typedef struct {
@@ -172,13 +170,13 @@ static void tick(app_context_t *ctx)
     dino_tick(&s->game, ctx->now_ms);
     dino_view_t view;
     dino_snapshot(&s->game, &view);
-    portENTER_CRITICAL(&s_lock); s_status = view; portEXIT_CRITICAL(&s_lock);
+    app_shared_copy(s_status, view);
 }
 static void leave(app_context_t *ctx)
 {
     state_t *s = ctx->state;
-    if (s->plot) app_ui_plot_refresh(s->plot, &s->image); /* The shared canvas goes to the next app. */
-    portENTER_CRITICAL(&s_lock); s_status.phase = (dino_phase_t)255; portEXIT_CRITICAL(&s_lock);
+    if (s->plot) app_ui_canvas_refresh(s->plot); /* The shared canvas goes to the next app. */
+    app_critical_enter(); s_status.phase = (dino_phase_t)255; app_critical_exit();
 }
 static void event(app_context_t *ctx, const app_event_t *e)
 {
@@ -198,16 +196,10 @@ static lv_obj_t *pill(lv_obj_t *parent, int x, int y, int w, int h, uint32_t rgb
 static void build(state_t *s, lv_obj_t *root)
 {
     s->top = app_ui_rect(root, 0, 0, APP_WIDTH, CANVAS_Y, DAY.top, 0);
-    s->image.header.magic = LV_IMAGE_HEADER_MAGIC;
-    s->image.header.cf = LV_COLOR_FORMAT_RGB565;
-    s->image.header.w = APP_CANVAS_W; s->image.header.h = APP_CANVAS_H; s->image.header.stride = APP_CANVAS_W * 2;
-    s->image.data_size = APP_CANVAS_W * APP_CANVAS_H * 2; s->image.data = (const uint8_t *)app_ui_pixels();
-    s->plot = lv_image_create(root);
-    lv_obj_set_pos(s->plot, 0, CANVAS_Y);
-    lv_image_set_src(s->plot, &s->image);
+    s->plot = app_ui_canvas(root, 0, CANVAS_Y, APP_CANVAS_W, APP_CANVAS_H);
     s->bottom = app_ui_rect(root, 0, CANVAS_Y + APP_CANVAS_H, APP_WIDTH, APP_HEIGHT - CANVAS_Y - APP_CANVAS_H, DAY.dirt, 0);
     s->top_rgb = DAY.top; s->dirt_rgb = DAY.dirt;
-    s->hold = app_ui_rect(root, 0, 0, 0, 2, APP_COLOR_ACCENT, 0); /* the hold towards the exit */
+    s->hold = app_ui_hold_bar(root, 0, APP_COLOR_ACCENT); /* the hold towards the exit */
     app_ui_hide(s->hold, true);
     s->hud = pill(root, 44, 10, 113, 15, 0x0B1630, 130);
     s->best = app_ui_label(s->hud, &aihook_font_12, 4, 1, 66, 14, LV_LABEL_LONG_MODE_CLIP);
@@ -263,22 +255,20 @@ static void render(app_context_t *ctx)
         app_ui_text(s->hint, exit_hint ? "按住2秒退出" : "按键重来");
     }
     draw_scene(app_ui_pixels(), &v, &t, (unsigned)ctx->now_ms);
-    app_ui_plot_refresh(s->plot, &s->image);
+    app_ui_canvas_refresh(s->plot);
 }
 static bool command(const char *line)
 {
-    if (!strcmp(line, "robot dino start")) {
-        (void)app_transport_write(app_runtime_open("dino") ? "OK dino queued" : "ERR dino queue full");
+    if (app_command_is(line, "robot dino start")) {
+        (void)app_command_reply(app_command_open("dino") ? "OK dino queued" : "ERR dino queue full");
         return true;
     }
-    if (!strcmp(line, "robot dino stop")) { (void)app_runtime_menu(); return true; }
-    if (strcmp(line, "robot dino status")) return false;
+    if (app_command_is(line, "robot dino stop")) { (void)app_command_menu(); return true; }
+    if (!app_command_is(line, "robot dino status")) return false;
     dino_view_t v;
-    portENTER_CRITICAL(&s_lock); v = s_status; portEXIT_CRITICAL(&s_lock);
-    char reply[120];
-    snprintf(reply, sizeof reply, "phase=%u score=%u best=%u speed=%u obstacles=%u", (unsigned)v.phase, v.score, v.best,
-        v.speed_pps, v.count);
-    (void)app_transport_write(reply);
+    app_shared_copy(v, s_status);
+    (void)app_command_replyf("phase=%u score=%u best=%u speed=%u obstacles=%u", (unsigned)v.phase, v.score, v.best,
+            v.speed_pps, v.count);
     return true;
 }
 static void icon(void *parent, int x, int y, bool selected)

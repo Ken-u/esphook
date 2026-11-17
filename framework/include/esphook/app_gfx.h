@@ -6,6 +6,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
+#include "app_math.h"
 #include "app_ui.h"
 
 static inline uint16_t gfx_rgb565(uint32_t rgb)
@@ -21,18 +22,9 @@ static inline uint32_t gfx_mix(uint32_t a, uint32_t b, unsigned t)
     uint32_t bl = ((a & 0xFF) * (256U - t) + (b & 0xFF) * t) >> 8;
     return r << 16 | g << 8 | bl;
 }
-static inline uint32_t gfx_hash(uint32_t z)
-{
-    z += 0x9e3779b9U; z ^= z >> 16; z *= 0x85ebca6bU; z ^= z >> 13; z *= 0xc2b2ae35U;
-    return z ^ (z >> 16);
-}
-/* Sine with a 256 step period and an amplitude of 256, from integer maths only (a parabola, within ~6%): swaying
- * plants, floating bubbles and wobbles that do not need a precise sine and must not drag in the soft FPU. */
-static inline int gfx_sin256(unsigned phase)
-{
-    const int x = (int)(phase & 127U), v = x * (128 - x) / 16;
-    return (phase & 128U) ? -v : v;
-}
+/* Aliases of the pure-maths kit (app_math.h), kept so scene code can stay in the gfx_ namespace. */
+static inline uint32_t gfx_hash(uint32_t z) { return app_hash32(z); }
+static inline int gfx_sin256(unsigned phase) { return app_sin256(phase); }
 static inline void gfx_plot(uint16_t *px, int x, int y, uint16_t c)
 {
     if ((unsigned)x < (unsigned)APP_CANVAS_W && (unsigned)y < (unsigned)APP_CANVAS_H) px[y * APP_CANVAS_W + x] = c;
@@ -109,18 +101,7 @@ static inline void gfx_disc(uint16_t *px, int cx, int cy, int r, uint16_t c)
         for (int x = -r; x <= r; ++x)
             if (x * x + y * y <= r * r + r / 2) gfx_plot(px, cx + x, cy + y, c);
 }
-/* Integer square root (rounded down); the device has no FPU, so scene code uses this instead of sqrtf. */
-static inline uint32_t gfx_isqrt(uint32_t v)
-{
-    uint32_t root = 0, bit = 1U << 30;
-    while (bit > v) bit >>= 2;
-    while (bit) {
-        if (v >= root + bit) { v -= root + bit; root = (root >> 1) + bit; }
-        else root >>= 1;
-        bit >>= 2;
-    }
-    return root;
-}
+static inline uint32_t gfx_isqrt(uint32_t v) { return app_isqrt(v); }
 /* One pixel thick circle outline of radius r, blended with the 0xRRGGBB color at `alpha` (256 = solid). */
 static inline void gfx_ring(uint16_t *px, int cx, int cy, int r, uint32_t rgb, unsigned alpha)
 {

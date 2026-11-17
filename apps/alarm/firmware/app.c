@@ -3,7 +3,8 @@
 #include "esphook/app_haptic.h"
 #include "esphook/app_services.h"
 #include "esphook/app_ui.h"
-#include "freertos/FreeRTOS.h"
+#include "esphook/app_command.h"
+#include "esphook/app_sync.h"
 #include "alarm_core.h"
 #include <stddef.h>
 #include <stdio.h>
@@ -35,8 +36,7 @@ static const char *const ROW_NAMES[ROWS] = {"闹钟", "闹钟时间", "重复", 
 
 typedef struct {
     haptic_t haptic;
-    lv_obj_t *plot, *band, *line, *hold, *date, *atext, *big, *sub, *hint, *sel, *name[VISIBLE], *value[VISIBLE];
-    lv_image_dsc_t image;
+    lv_obj_t *plot, *band, *hold, *date, *atext, *big, *sub, *hint, *sel, *name[VISIBLE], *value[VISIBLE];
     uint64_t ring_ms, next_ms, beat_ms, toast_until;
     uint32_t drawn_key, text_key;
     unsigned ring_id;                                /* the registry entry being answered */
@@ -46,7 +46,6 @@ typedef struct {
 _Static_assert(sizeof(state_t) <= APP_STATE_CAPACITY, "alarm state too large");
 typedef struct { bool active; uint8_t view, kind; uint32_t fired, chimes, frames; } status_t;
 static status_t s_status;
-static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 /* The settings and the registry ids belong to the UI task alone (init, tick and events all run there). */
 static al_config_t s_cfg;
 static unsigned s_alarm_id, s_chime_id;
@@ -274,13 +273,7 @@ static void draw_ring(uint16_t *px, const state_t *s, const app_time_t *t, uint6
 /* ---- app ------------------------------------------------------------------------------------------------------- */
 static void build(state_t *s, lv_obj_t *root)
 {
-    s->image.header.magic = LV_IMAGE_HEADER_MAGIC;
-    s->image.header.cf = LV_COLOR_FORMAT_RGB565;
-    s->image.header.w = APP_CANVAS_W; s->image.header.h = APP_CANVAS_H; s->image.header.stride = APP_CANVAS_W * 2;
-    s->image.data_size = APP_CANVAS_W * APP_CANVAS_H * 2; s->image.data = (const uint8_t *)app_ui_pixels();
-    s->plot = lv_image_create(root);
-    lv_obj_set_pos(s->plot, 0, 0);
-    lv_image_set_src(s->plot, &s->image);
+    s->plot = app_ui_canvas(root, 0, 0, APP_CANVAS_W, APP_CANVAS_H);
     s->sel = app_ui_rect(root, 3, 2, 150, ROW_H, 0x24345E, 4);
     for (unsigned i = 0; i < VISIBLE; ++i) {
         s->name[i] = app_ui_label(root, &aihook_font_12, 9, 2 + (int)i * ROW_H + 1, 78, 14, LV_LABEL_LONG_MODE_CLIP);
@@ -299,22 +292,21 @@ static void build(state_t *s, lv_obj_t *root)
     s->sub = app_ui_label(root, &aihook_font_12, 0, 2, APP_WIDTH, 14, LV_LABEL_LONG_MODE_CLIP);
     app_ui_center(s->sub);
     lv_obj_set_style_text_color(s->sub, app_ui_color(0xA8BCEB), LV_PART_MAIN);
-    s->band = app_ui_rect(root, 0, BAND_Y, APP_WIDTH, APP_HEIGHT - BAND_Y, 0x070B18, 0);
-    s->line = app_ui_rect(root, 0, BAND_Y, APP_WIDTH, 1, 0x3A4A7A, 0);
+    s->band = app_ui_band(root, 0x070B18, 0x3A4A7A);
     s->hint = app_ui_label(s->band, &aihook_font_12, 0, 2, APP_WIDTH, 14, LV_LABEL_LONG_MODE_CLIP);
     app_ui_center(s->hint);
     lv_obj_set_style_text_color(s->hint, app_ui_color(0xC8D4F2), LV_PART_MAIN);
-    s->hold = app_ui_rect(root, 0, BAND_Y, 0, 2, APP_COLOR_ACCENT, 0);
+    s->hold = app_ui_hold_bar(root, BAND_Y, APP_COLOR_ACCENT);
     app_ui_hide(s->hold, true);
     s->drawn_key = s->text_key = 0xFFFFFFFFU;
 }
 static void publish(const state_t *s, bool active, bool frame, int fired, int chimes)
 {
-    portENTER_CRITICAL(&s_lock);
+    app_critical_enter();
     s_status.active = active; s_status.view = s->view; s_status.kind = s->view == V_RING ? s->kind : AL_NONE;
     s_status.fired += (uint32_t)fired; s_status.chimes += (uint32_t)chimes;
     if (frame) ++s_status.frames;
-    portEXIT_CRITICAL(&s_lock);
+    app_critical_exit();
 }
 static void toast(state_t *s, uint64_t now, const char *text)
 {
@@ -328,14 +320,14 @@ static void enter(app_context_t *ctx)
     haptic_init(&s->haptic);
     build(s, ctx->root);
     s->view = V_CLOCK;
-    portENTER_CRITICAL(&s_lock); s_status.active = true; portEXIT_CRITICAL(&s_lock); /* the counters live on across entries */
+    app_critical_enter(); s_status.active = true; app_critical_exit(); /* the counters live on across entries */
     publish(s, true, false, 0, 0);
 }
 static void leave(app_context_t *ctx)
 {
     state_t *s = ctx->state;
-    if (s->plot) app_ui_plot_refresh(s->plot, &s->image); /* the shared canvas goes to the next app */
-    portENTER_CRITICAL(&s_lock); s_status.active = false; s_status.view = V_CLOCK; s_status.kind = AL_NONE; portEXIT_CRITICAL(&s_lock);
+    if (s->plot) app_ui_canvas_refresh(s->plot); /* the shared canvas goes to the next app */
+    app_critical_enter(); s_status.active = false; s_status.view = V_CLOCK; s_status.kind = AL_NONE; app_critical_exit();
 }
 /* APP_EVENT_ALARM: the entry `id` is ringing and this app is on screen. */
 static void start_ring(app_context_t *ctx, state_t *s, unsigned id)
@@ -588,25 +580,22 @@ static void render(app_context_t *ctx)
         else if (s->view == V_MENU) draw_menu(px, s->top_row, s->sel_row);
         else if (s->view == V_EDIT) draw_edit(px, s, now);
         else draw_ring(px, s, &t, now);
-        app_ui_plot_refresh(s->plot, &s->image);
+        app_ui_canvas_refresh(s->plot);
     }
     app_ui_hold_line(s->hold, app_hold_ms(ctx), true, 0);
     publish(s, true, true, 0, 0);
 }
 static bool command(const char *line)
 {
-    if (strcmp(line, "robot alarm status")) return false;
+    if (!app_command_is(line, "robot alarm status")) return false;
     status_t v;
     app_time_t t;
-    portENTER_CRITICAL(&s_lock); v = s_status; portEXIT_CRITICAL(&s_lock);
+    app_shared_copy(v, s_status);
     app_time_read(&t);
-    char reply[240];
-    snprintf(reply, sizeof reply,
-             "active=%u view=%u ring=%u valid=%u alarm=%u time=%02u:%02u repeat=%u chime=%u range=%u servo=%u fired=%lu chimes=%lu frames=%lu aid=%u cid=%u",
-             v.active ? 1U : 0U, v.view, v.kind, t.valid ? 1U : 0U, s_cfg.alarm_on, s_cfg.hour, s_cfg.minute, s_cfg.repeat,
-             s_cfg.chime_on, s_cfg.range, s_cfg.servo_on, (unsigned long)v.fired, (unsigned long)v.chimes, (unsigned long)v.frames,
-             s_alarm_id, s_chime_id);
-    (void)app_transport_write(reply);
+    (void)app_command_replyf("active=%u view=%u ring=%u valid=%u alarm=%u time=%02u:%02u repeat=%u chime=%u range=%u servo=%u fired=%lu chimes=%lu frames=%lu aid=%u cid=%u",
+            v.active ? 1U : 0U, v.view, v.kind, t.valid ? 1U : 0U, s_cfg.alarm_on, s_cfg.hour, s_cfg.minute, s_cfg.repeat,
+            s_cfg.chime_on, s_cfg.range, s_cfg.servo_on, (unsigned long)v.fired, (unsigned long)v.chimes, (unsigned long)v.frames,
+            s_alarm_id, s_chime_id);
     return true;
 }
 static void icon(void *parent, int x, int y, bool selected)

@@ -1,22 +1,7 @@
 #include "racing_core.h"
 #include <string.h>
-
-static int absi(int v) { return v < 0 ? -v : v; }
-static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
-static uint32_t rnd(rc_t *r)
-{
-    r->rng ^= r->rng << 13;
-    r->rng ^= r->rng >> 17;
-    r->rng ^= r->rng << 5;
-    return r->rng;
-}
-static int rr(rc_t *r, int lo, int hi) { return lo + (int)(rnd(r) % (uint32_t)(hi - lo + 1)); }
-static uint32_t mix(uint32_t z)
-{
-    z += 0x9E3779B9U; z ^= z >> 16; z *= 0x85EBCA6BU; z ^= z >> 13; z *= 0xC2B2AE35U;
-    return z ^ (z >> 16);
-}
-static uint32_t sat_add(uint32_t v, uint32_t d) { return v + d > RC_AGE_MAX ? RC_AGE_MAX : v + d; }
+#include "esphook/app_math.h"
+#include "esphook/app_rand.h"
 
 int rc_difficulty(int32_t pos_mm)
 {
@@ -30,7 +15,7 @@ static int node_value(const rc_t *r, uint32_t n)
 {
     static const int8_t table[10] = {0, 0, 1, -1, 2, -2, 3, -3, 1, -1};
     const int amp = 60 + rc_difficulty((int32_t)(n * (uint32_t)NODE_MM + 400000U)) * 40 / 256;
-    return table[mix(r->track_seed + n * 0x9E3779B1U) % 10U] * amp;
+    return table[app_hash32(r->track_seed + n * 0x9E3779B1U) % 10U] * amp;
 }
 int rc_curve_at(const rc_t *r, int32_t pos_mm)
 {
@@ -51,10 +36,10 @@ void rc_init(rc_t *r, uint32_t seed)
 {
     memset(r, 0, sizeof *r);
     r->rng = seed ? seed : 0xBADC0DE5U;
-    r->track_seed = mix(r->rng);
+    r->track_seed = app_hash32(r->rng);
     r->phase = RC_TITLE;
     r->time_ms = RC_START_TIME_MS;
-    r->cp_age_ms = r->crash_age_ms = r->nitro_age_ms = r->over_age_ms = RC_AGE_MAX;
+    r->cp_age_ms = r->crash_age_ms = r->nitro_age_ms = r->over_age_ms = APP_AGE_MAX;
 }
 void rc_start(rc_t *r)
 {
@@ -66,7 +51,7 @@ void rc_start(rc_t *r)
     r->next_cp_mm = RC_CHECKPOINT_MM;
     r->spawn_wait = 150;
 }
-void rc_steer(rc_t *r, int steer) { r->steer = clampi(steer, -256, 256); }
+void rc_steer(rc_t *r, int steer) { r->steer = app_clamp(steer, -256, 256); }
 void rc_throttle(rc_t *r, bool down) { r->throttle = down ? 1U : 0U; }
 bool rc_nitro(rc_t *r)
 {
@@ -95,12 +80,12 @@ static void spawn_car(rc_t *r)
     for (unsigned i = 0; i < RC_CARS; ++i) {
         if (r->car[i].alive) continue;
         const int d = rc_difficulty(r->pos_mm);
-        const int px = lanes[rr(r, 0, 2)] + rr(r, -70, 70);
-        const int32_t pos = r->pos_mm + rr(r, 380000, 520000);
+        const int px = lanes[app_rand_range(&r->rng, 0, 2)] + app_rand_range(&r->rng, -70, 70);
+        const int32_t pos = r->pos_mm + app_rand_range(&r->rng, 380000, 520000);
         for (unsigned k = 0; k < RC_CARS; ++k) /* not on top of another car */
-            if (r->car[k].alive && absi(r->car[k].px - px) < 700 && r->car[k].pos_mm - pos < 40000 && pos - r->car[k].pos_mm < 40000) return;
-        r->car[i] = (rc_car_t){.pos_mm = pos, .px = (int16_t)px, .speed = (int16_t)(rr(r, 55, 105) + d * 40 / 256), .alive = 1,
-                               .color = (uint8_t)rr(r, 0, 5)};
+            if (r->car[k].alive && app_abs(r->car[k].px - px) < 700 && r->car[k].pos_mm - pos < 40000 && pos - r->car[k].pos_mm < 40000) return;
+        r->car[i] = (rc_car_t){.pos_mm = pos, .px = (int16_t)px, .speed = (int16_t)(app_rand_range(&r->rng, 55, 105) + d * 40 / 256), .alive = 1,
+                               .color = (uint8_t)app_rand_range(&r->rng, 0, 5)};
         return;
     }
 }
@@ -127,7 +112,7 @@ static void move_cars(rc_t *r, bool racing)
             c->passed = 1;
             ++r->overtakes;
         }
-        if (racing && dpos >= 0 && dpos < RC_CAR_LONG_MM && absi(rc_px(r) - c->px) < RC_CAR_WIDE) {
+        if (racing && dpos >= 0 && dpos < RC_CAR_LONG_MM && app_abs(rc_px(r) - c->px) < RC_CAR_WIDE) {
             const int keep = c->speed - 15 > 30 ? c->speed - 15 : 30;
             crash(r, keep);
             c->pos_mm = r->pos_mm + RC_CAR_LONG_MM; /* the other car is knocked ahead */
@@ -151,7 +136,7 @@ static void drive(rc_t *r, bool racing)
     } else {
         v -= (128 + v * 4 / 100) / 50 + (v > top ? 13 : 0);
     }
-    r->offroad = absi(rc_px(r)) > RC_ROAD_EDGE;
+    r->offroad = app_abs(rc_px(r)) > RC_ROAD_EDGE;
     if (r->offroad && v > 45 * 16) v -= 70 * 16 / 50 + 6; /* the verge drags the car down */
     r->speed16 = v < 0 ? 0 : v;
 
@@ -164,7 +149,7 @@ static void drive(rc_t *r, bool racing)
     const int push = -(rc_curve_at(r, r->pos_mm) * kmh * kmh) * 16 / 1500000; /* the bend throws the car outwards */
     r->px16 += eff * grip * 192 / 25600 + push;
     if (r->stun_ms > 0) r->stun_ms -= (int)RC_STEP_MS;
-    if (absi(r->px16) > RC_WALL * 16) { /* the barrier */
+    if (app_abs(r->px16) > RC_WALL * 16) { /* the barrier */
         r->px16 = r->px16 > 0 ? RC_ROAD_EDGE * 16 : -RC_ROAD_EDGE * 16; /* thrown back onto the edge of the road */
         crash(r, kmh / 2 > 25 ? kmh / 2 : 25);
         r->stun_ms = 500;
@@ -173,10 +158,10 @@ static void drive(rc_t *r, bool racing)
 static void step(rc_t *r)
 {
     r->clock_ms += RC_STEP_MS;
-    r->cp_age_ms = sat_add(r->cp_age_ms, RC_STEP_MS);
-    r->crash_age_ms = sat_add(r->crash_age_ms, RC_STEP_MS);
-    r->nitro_age_ms = sat_add(r->nitro_age_ms, RC_STEP_MS);
-    if (r->phase == RC_OVER) { r->over_age_ms = sat_add(r->over_age_ms, RC_STEP_MS); return; }
+    r->cp_age_ms = app_age_add(r->cp_age_ms, RC_STEP_MS);
+    r->crash_age_ms = app_age_add(r->crash_age_ms, RC_STEP_MS);
+    r->nitro_age_ms = app_age_add(r->nitro_age_ms, RC_STEP_MS);
+    if (r->phase == RC_OVER) { r->over_age_ms = app_age_add(r->over_age_ms, RC_STEP_MS); return; }
     if (r->phase == RC_COUNT) {
         r->count_ms += RC_STEP_MS;
         if (r->count_ms >= RC_COUNT_MS) r->phase = RC_RACE;
@@ -220,15 +205,10 @@ static void step(rc_t *r)
     if (r->spawn_wait) --r->spawn_wait;
     else {
         if (cars_alive(r) < 3U + (unsigned)(d * 3 / 256)) spawn_car(r);
-        r->spawn_wait = (uint16_t)(50 - d * 25 / 256 + rr(r, 0, 40));
+        r->spawn_wait = (uint16_t)(50 - d * 25 / 256 + app_rand_range(&r->rng, 0, 40));
     }
 }
 void rc_advance(rc_t *r, uint32_t dt_ms)
 {
-    if (dt_ms > RC_MAX_ADVANCE_MS) dt_ms = RC_MAX_ADVANCE_MS;
-    r->carry_ms += dt_ms;
-    while (r->carry_ms >= RC_STEP_MS) {
-        r->carry_ms -= RC_STEP_MS;
-        step(r);
-    }
+    for (unsigned n = app_step_take(&r->carry_ms, dt_ms, RC_STEP_MS, RC_MAX_ADVANCE_MS); n; --n) step(r);
 }

@@ -2,7 +2,8 @@
 #include "esphook/app_gfx.h"
 #include "esphook/app_services.h"
 #include "esphook/app_ui.h"
-#include "freertos/FreeRTOS.h"
+#include "esphook/app_command.h"
+#include "esphook/app_sync.h"
 #include "jump_core.h"
 #include <stddef.h>
 #include <stdio.h>
@@ -20,7 +21,6 @@
 typedef struct {
     jp_t core;
     lv_obj_t *plot, *band, *score, *best, *combo, *hint, *panel, *title, *sub, *pop;
-    lv_image_dsc_t image;
     uint64_t last_ms;
     int32_t cam_x16, cam_y16; /* where the floor origin is on the screen, in sixteenths of a pixel */
     uint32_t shown_key, drop_ms;
@@ -31,7 +31,6 @@ _Static_assert(sizeof(state_t) <= APP_STATE_CAPACITY, "jump state too large");
 _Static_assert(offsetof(state_t, core) == 0, "tests pose the game through the core at the start of the state");
 typedef struct { bool active; uint8_t phase, cur, combo; uint32_t score, best, jumps, perfects, frames; } status_t;
 static status_t s_status;
-static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 
 static uint16_t c565(uint32_t rgb) { return gfx_rgb565(rgb); }
 static int fdiv16(int v) { return (v >= 0 ? v : v - 15) / 16; }
@@ -183,13 +182,7 @@ static lv_obj_t *pill(lv_obj_t *parent, int x, int y, int w, int h, uint32_t rgb
 }
 static void build(state_t *s, lv_obj_t *root)
 {
-    s->image.header.magic = LV_IMAGE_HEADER_MAGIC;
-    s->image.header.cf = LV_COLOR_FORMAT_RGB565;
-    s->image.header.w = APP_CANVAS_W; s->image.header.h = APP_CANVAS_H; s->image.header.stride = APP_CANVAS_W * 2;
-    s->image.data_size = APP_CANVAS_W * APP_CANVAS_H * 2; s->image.data = (const uint8_t *)app_ui_pixels();
-    s->plot = lv_image_create(root);
-    lv_obj_set_pos(s->plot, 0, 0);
-    lv_image_set_src(s->plot, &s->image);
+    s->plot = app_ui_canvas(root, 0, 0, APP_CANVAS_W, APP_CANVAS_H);
     s->score = app_ui_label(root, &aihook_font_16, 5, 1, 70, 20, LV_LABEL_LONG_MODE_CLIP);
     lv_obj_set_style_text_color(s->score, app_ui_color(0x3A2F96), LV_PART_MAIN);
     s->pop = app_ui_label(root, &aihook_font_12, 0, 0, 64, 14, LV_LABEL_LONG_MODE_CLIP);
@@ -201,7 +194,7 @@ static void build(state_t *s, lv_obj_t *root)
     app_ui_center(s->title); app_ui_center(s->sub);
     lv_obj_set_style_text_color(s->title, app_ui_color(0xFFD84A), LV_PART_MAIN);
     lv_obj_set_style_text_color(s->sub, app_ui_color(0xE4E0FF), LV_PART_MAIN);
-    s->band = app_ui_rect(root, 0, BAND_Y, APP_WIDTH, APP_HEIGHT - BAND_Y, 0x1E1848, 0);
+    s->band = app_ui_band(root, 0x1E1848, APP_UI_NO_RULE);
     s->best = app_ui_label(s->band, &aihook_font_12, 3, 2, 76, 14, LV_LABEL_LONG_MODE_CLIP);
     lv_obj_set_style_text_color(s->best, app_ui_color(0xE4E0FF), LV_PART_MAIN);
     s->combo = app_ui_label(s->band, &aihook_font_12, 80, 2, 77, 14, LV_LABEL_LONG_MODE_CLIP);
@@ -215,11 +208,11 @@ static void build(state_t *s, lv_obj_t *root)
 static void publish(const state_t *s, bool active, bool frame)
 {
     const jp_t *g = &s->core;
-    portENTER_CRITICAL(&s_lock);
+    app_critical_enter();
     s_status.active = active; s_status.phase = g->phase; s_status.cur = g->cur; s_status.combo = g->combo;
     s_status.score = g->score; s_status.best = g->best; s_status.jumps = g->jumps; s_status.perfects = g->perfects;
     if (frame) ++s_status.frames;
-    portEXIT_CRITICAL(&s_lock);
+    app_critical_exit();
 }
 static void enter(app_context_t *ctx)
 {
@@ -230,14 +223,14 @@ static void enter(app_context_t *ctx)
     int tx, ty;
     cam_target(s, &tx, &ty);
     s->cam_x16 = tx; s->cam_y16 = ty;
-    portENTER_CRITICAL(&s_lock); s_status = (status_t){0}; portEXIT_CRITICAL(&s_lock);
+    app_critical_enter(); s_status = (status_t){0}; app_critical_exit();
     publish(s, true, false);
 }
 static void leave(app_context_t *ctx)
 {
     state_t *s = ctx->state;
-    if (s->plot) app_ui_plot_refresh(s->plot, &s->image); /* The shared canvas goes to the next app. */
-    portENTER_CRITICAL(&s_lock); s_status.active = false; portEXIT_CRITICAL(&s_lock);
+    if (s->plot) app_ui_canvas_refresh(s->plot); /* The shared canvas goes to the next app. */
+    app_critical_enter(); s_status.active = false; app_critical_exit();
 }
 static void tick(app_context_t *ctx)
 {
@@ -334,19 +327,17 @@ static void render(app_context_t *ctx)
     if (!s->plot) build(s, ctx->root);
     sync_hud(s, ctx);
     draw_scene(app_ui_pixels(), s);
-    app_ui_plot_refresh(s->plot, &s->image);
+    app_ui_canvas_refresh(s->plot);
     publish(s, true, true);
 }
 static bool command(const char *line)
 {
-    if (strcmp(line, "robot jump status")) return false;
+    if (!app_command_is(line, "robot jump status")) return false;
     status_t v;
-    portENTER_CRITICAL(&s_lock); v = s_status; portEXIT_CRITICAL(&s_lock);
-    char reply[160];
-    snprintf(reply, sizeof reply, "active=%u phase=%u cur=%u combo=%u score=%lu best=%lu jumps=%lu perfects=%lu frames=%lu",
-             v.active ? 1U : 0U, v.phase, v.cur, v.combo, (unsigned long)v.score, (unsigned long)v.best,
-             (unsigned long)v.jumps, (unsigned long)v.perfects, (unsigned long)v.frames);
-    (void)app_transport_write(reply);
+    app_shared_copy(v, s_status);
+    (void)app_command_replyf("active=%u phase=%u cur=%u combo=%u score=%lu best=%lu jumps=%lu perfects=%lu frames=%lu",
+            v.active ? 1U : 0U, v.phase, v.cur, v.combo, (unsigned long)v.score, (unsigned long)v.best,
+            (unsigned long)v.jumps, (unsigned long)v.perfects, (unsigned long)v.frames);
     return true;
 }
 static void icon(void *parent, int x, int y, bool selected)
