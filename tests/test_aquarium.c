@@ -167,7 +167,7 @@ static void test_eating(void)
     for (unsigned i = 0; i < AQ_FISH; ++i) if (i != 2) a.fish[i].full = 5000;
     a.food[0] = (aq_food_t){.x = 90 * 256, .y = 30 * 256, .alive = 1};
     run(&a, 2000);
-    assert(a.eaten == 1 && !a.food[0].alive && a.since_eat_ms >= 0);
+    assert(a.eaten == 1 && !a.food[0].alive && a.since_eat_ms < 2000U);
     /* three pellets and the fish has had enough for a while */
     aq_init(&a, 4);
     f = &a.fish[2];
