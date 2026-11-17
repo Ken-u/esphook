@@ -57,6 +57,44 @@ static void rounds(void)
     v = view_at(&m, 5000);
     assert(v.count == 2U * MUYU_ROUND && v.rounds == 2);
 }
+static void mallet(void)
+{
+    assert(muyu_lift(0, MUYU_LIFT_REST) == MUYU_LIFT_REST); /* a swing starts where the mallet is */
+    int peak = 0, last = MUYU_LIFT_REST;
+    for (unsigned a = 0; a <= MUYU_KNOCK_MS + 50U; ++a) {
+        int l = muyu_lift(a, MUYU_LIFT_REST);
+        assert(l >= 0 && l <= MUYU_LIFT_REST + 40);
+        assert(l - last <= 12 && last - l <= 12); /* no jumps between milliseconds */
+        if (a < MUYU_SWING_MS) assert(l <= last); /* down all the way */
+        if (a >= MUYU_SWING_MS && a < MUYU_SWING_MS + MUYU_HOLD_MS) assert(l == 0); /* pressed into the fish */
+        if (a >= MUYU_SWING_MS + MUYU_HOLD_MS && a < MUYU_SWING_MS + MUYU_HOLD_MS + 60U) assert(l >= last); /* then up */
+        if (l > peak) peak = l;
+        last = l;
+    }
+    assert(muyu_lift(MUYU_SWING_MS, MUYU_LIFT_REST) == 0 && muyu_lift(MUYU_KNOCK_MS, 0) == MUYU_LIFT_REST);
+    assert(peak > MUYU_LIFT_REST && peak <= MUYU_LIFT_REST + 40); /* the rebound overshoots a little */
+    for (int from = 0; from <= 300; from += 7) { /* a swing that interrupts a rebound continues from there */
+        assert(muyu_lift(0, from) == from);
+        int before = from;
+        for (unsigned a = 1; a < MUYU_SWING_MS; ++a) { int l = muyu_lift(a, from); assert(l <= before && l >= 0); before = l; }
+    }
+    assert(muyu_lift(0, -50) == 0 && muyu_lift(0, 9000) == 300); /* clamped */
+
+    muyu_t m;
+    muyu_start(&m, 0);
+    assert(muyu_knock(&m, 1000));
+    muyu_view_t v = view_at(&m, 1030);
+    assert(v.since_knock_ms == 30 && v.impact_ms == MUYU_AGE_MAX && v.swing_from == MUYU_LIFT_REST); /* still in the air */
+    v = view_at(&m, 1000 + MUYU_SWING_MS + 25U);
+    assert(v.impact_ms == 25); /* effects are timed from the landing */
+    v = view_at(&m, 1000 + MUYU_KNOCK_MS + 500U);
+    assert(v.swing_from == MUYU_LIFT_REST && v.impact_ms == MUYU_KNOCK_MS + 500U - MUYU_SWING_MS);
+    assert(muyu_knock(&m, 3000) && muyu_knock(&m, 3000 + MUYU_SWING_MS + MUYU_HOLD_MS + 40U));
+    v = view_at(&m, 3000 + MUYU_SWING_MS + MUYU_HOLD_MS + 60U);
+    assert(v.since_knock_ms == 20 && v.swing_from == muyu_lift(MUYU_SWING_MS + MUYU_HOLD_MS + 40U, MUYU_LIFT_REST)); /* fast knocks chain */
+    assert(v.swing_from > 0 && v.swing_from < MUYU_LIFT_REST);
+    assert(v.impact_ms == MUYU_HOLD_MS + 60U); /* the first knock landed that long ago; the second is still swinging */
+}
 static void saturation(void)
 {
     muyu_t m;
@@ -144,6 +182,8 @@ static void stress(void)
         assert(v.age_ms[0] <= MUYU_AGE_MAX && v.age_ms[1] <= MUYU_AGE_MAX);
         assert(v.since_knock_ms <= v.age_ms[0] && v.since_knock_ms <= v.age_ms[1]);
         assert(v.count == 0U || v.shown[v.count & 1U]);
+        assert(v.swing_from >= 0 && v.swing_from <= 300 && v.impact_ms <= MUYU_AGE_MAX);
+        assert(v.impact_ms == MUYU_AGE_MAX || v.impact_ms + MUYU_SWING_MS >= v.since_knock_ms);
         last = v.count;
     }
 }
@@ -154,8 +194,9 @@ int main(void)
     rounds();
     saturation();
     auto_mode();
+    mallet();
     stalls();
     stress();
-    puts("muyu: knocks, 108-round marker, saturation, auto cadence independent of tick rate, stalls and stress passed");
+    puts("muyu: knocks, 108-round marker, saturation, auto cadence independent of tick rate, mallet timeline, stalls and stress passed");
     return 0;
 }

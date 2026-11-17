@@ -13,15 +13,21 @@
  * 160x64 canvas, the bottom 16 px a hint strip; the HUD and the floating text are small LVGL labels. */
 #define BAND_Y 64
 #define FISH_CX 72
-#define FISH_BOTTOM 55
+#define FISH_BOTTOM 57
 #define FISH_RX 29
-#define FISH_RY 17
-#define STRIKE_X 95
-#define STRIKE_Y 24
-#define REST_X 123
-#define REST_Y 27
+#define FISH_RY 16
+#define FISH_CY (FISH_BOTTOM - FISH_RY)
+/* The mallet is held from the upper right: the head swings down onto the top of the fish on an arc around the hand
+ * at (PIVOT_X, PIVOT_Y). HEAD_HIT_Y is where the head rests on the unsquashed fish, HEAD_REST_Y where it is raised. */
+#define HEAD_X 82
+#define HEAD_REST_Y 8
+#define HEAD_HIT_Y 22
+#define HEAD_R 7
+#define PIVOT_X 110
+#define PIVOT_Y 14
+#define GRIP_EXTRA 8
 #define FLOAT_MS 700U
-#define FLOAT_RISE 14
+#define FLOAT_RISE 10
 
 typedef struct {
     muyu_t core;
@@ -47,16 +53,15 @@ static int sin256(unsigned phase)
     }
     return table[phase & 255U];
 }
-static int lerp(int a, int b, int t256) { return a + (b - a) * t256 / 256; }
 
 /* ---- scene ------------------------------------------------------------------------------------------------- */
 static void draw_backdrop(uint16_t *px, unsigned now, unsigned since_knock)
 {
     gfx_gradient(px, 0, BAND_Y, 0x120F26, 0x2B1626);
     unsigned glow = since_knock < 420U ? (420U - since_knock) * 22U / 420U : 0U; /* every knock lights the halo */
-    gfx_tint_ellipse(px, FISH_CX, 36, 66, 36, 0xFFC857, 8 + glow / 3U);
-    gfx_tint_ellipse(px, FISH_CX, 36, 48, 28, 0xFFC857, 10 + glow / 2U);
-    gfx_tint_ellipse(px, FISH_CX, 36, 32, 20, 0xFFC857, 10 + glow);
+    gfx_tint_ellipse(px, FISH_CX, 38, 66, 36, 0xFFC857, 8 + glow / 3U);
+    gfx_tint_ellipse(px, FISH_CX, 38, 48, 28, 0xFFC857, 10 + glow / 2U);
+    gfx_tint_ellipse(px, FISH_CX, 38, 32, 20, 0xFFC857, 10 + glow);
     for (unsigned i = 0; i < 12U; ++i) { /* golden motes drift upwards */
         uint32_t h = gfx_hash(i * 71U + 5U);
         unsigned speed = 5U + (h >> 8) % 9U, rise = (unsigned)(((uint64_t)now * speed / 1000U) + (h >> 14) % 70U);
@@ -93,9 +98,24 @@ static void draw_cushion(uint16_t *px)
         if (dy < -ry + 3) gfx_hline(px, cx - half, cx + half, y, trim);
     }
 }
+static void fish_dims(unsigned squash, int *rx, int *ry)
+{
+    *ry = FISH_RY - (int)(FISH_RY * squash * 22U / 25600U); /* pressed flat by up to 3 px ... */
+    *rx = FISH_RX + (int)(FISH_RX * squash * 8U / 25600U);  /* ... and a little wider */
+}
+/* Row of the fish's upper edge in column x (the mallet head rests on it). */
+static int fish_top(int x, unsigned squash)
+{
+    int rx, ry, dx = x - FISH_CX;
+    fish_dims(squash, &rx, &ry);
+    if (dx < 0) dx = -dx;
+    if (dx >= rx) return FISH_BOTTOM - ry;
+    return FISH_BOTTOM - ry - ry * (int)gfx_isqrt((uint32_t)(rx * rx - dx * dx)) / rx;
+}
 static void draw_fish(uint16_t *px, unsigned squash)
 {
-    const int ry = FISH_RY - (int)(FISH_RY * squash * 18U / 25600U), rx = FISH_RX + (int)(FISH_RX * squash * 10U / 25600U);
+    int rx, ry;
+    fish_dims(squash, &rx, &ry);
     const int cy = FISH_BOTTOM - ry;
     gfx_tint_ellipse(px, FISH_CX, FISH_BOTTOM - 1, rx + 4, 5, 0x000000, 90); /* shadow on the cushion */
     gfx_disc(px, FISH_CX + 24, cy - ry * 3 / 4, 4, gfx_rgb565(FISH_RIM)); /* the little handle */
@@ -128,46 +148,98 @@ static void draw_fish(uint16_t *px, unsigned squash)
         gfx_plot(px, FISH_CX + 9 + i * 5, cy - 6 + i * 2, gfx_rgb565(FISH_DARK));
     }
 }
-static void draw_mallet(uint16_t *px, unsigned age, unsigned now)
+static int lerp(int a, int b, int t256) { return a + (b - a) * t256 / 256; }
+/* Head position of the mallet `age` ms after the latest knock. After the landing the head keeps resting on the fish
+ * while the fish is pressed in and springs back, so it is pushed up by it instead of hovering. */
+static void head_at(const muyu_view_t *v, unsigned age, unsigned now, unsigned squash, int *hx, int *hy)
 {
-    int hx, hy;
-    if (age < 60U) { hx = lerp(REST_X + 4, STRIKE_X, (int)(age * 256U / 60U)); hy = lerp(REST_Y - 12, STRIKE_Y, (int)(age * 256U / 60U)); }
-    else if (age < 260U) {
-        int t = (int)((age - 60U) * 256U / 200U);
-        t = 256 - (256 - t) * (256 - t) / 256; /* eases out */
-        hx = lerp(STRIKE_X, REST_X, t); hy = lerp(STRIKE_Y, REST_Y, t);
-    } else { hx = REST_X; hy = REST_Y + sin256(now / 17U) / 128; }
-    gfx_line2(px, hx + 1, hy, hx + 25, hy - 32, gfx_rgb565(0x7A4A22));
-    gfx_line2(px, hx, hy, hx + 24, hy - 32, gfx_rgb565(0xE0B27A));
-    gfx_disc(px, hx, hy, 5, gfx_rgb565(0x6E3A18));
-    gfx_disc(px, hx, hy, 4, gfx_rgb565(0xB06A33));
-    gfx_disc(px, hx - 1, hy - 1, 2, gfx_rgb565(0xD99256));
+    int y = lerp(HEAD_HIT_Y, HEAD_REST_Y, muyu_lift(age, v->swing_from));
+    if (age >= MUYU_SWING_MS) {
+        int contact = fish_top(HEAD_X, squash) - 5;
+        if (contact > y) y = contact;
+    }
+    if (age >= MUYU_KNOCK_MS) y += sin256(now / 17U) / 200; /* idles with the faintest sway */
+    *hx = HEAD_X;
+    *hy = y;
 }
+/* The stick runs from the hand (a red wrapped grip) to the head; ghost > 0 draws a faint copy for motion blur. */
+static void draw_mallet_at(uint16_t *px, int hx, int hy, unsigned ghost)
+{
+    int dx = PIVOT_X - hx, dy = PIVOT_Y - hy, len = (int)gfx_isqrt((uint32_t)(dx * dx + dy * dy));
+    if (len < 1) len = 1;
+    const int gx = PIVOT_X + dx * GRIP_EXTRA / len, gy = PIVOT_Y + dy * GRIP_EXTRA / len; /* far end of the grip */
+    if (ghost) {
+        for (int i = 0; i <= 40; ++i) gfx_tint(px, hx + (gx - hx) * i / 40, hy + (gy - hy) * i / 40, 2, 2, 0xE0B27A, ghost / 2U);
+        gfx_tint_ellipse(px, hx, hy, HEAD_R, HEAD_R, 0xD99256, ghost);
+        return;
+    }
+    gfx_line2(px, hx, hy + 2, gx, gy + 2, gfx_rgb565(0x5C3716)); /* shade under the stick */
+    gfx_line2(px, hx, hy, gx, gy, gfx_rgb565(0xDDAA6C));
+    gfx_line(px, hx, hy + 2, gx, gy + 2, gfx_rgb565(0xC48C4C));
+    gfx_line(px, hx, hy - 1, gx, gy - 1, gfx_rgb565(0xF3D39A));  /* lit top edge */
+    const int ax = PIVOT_X - dx * 6 / len, ay = PIVOT_Y - dy * 6 / len; /* where the grip starts, 6 px short of the hand */
+    gfx_line2(px, ax, ay, gx, gy, gfx_rgb565(0xB3262F));                 /* the wrapped grip */
+    gfx_line2(px, PIVOT_X - dx * 8 / len, PIVOT_Y - dy * 8 / len, ax, ay, gfx_rgb565(0xF0C24A)); /* a gold ferrule */
+    gfx_disc(px, hx, hy, HEAD_R, gfx_rgb565(0x5A2D12));
+    gfx_disc(px, hx, hy, HEAD_R - 1, gfx_rgb565(0xB36B34));
+    gfx_disc(px, hx - 2, hy - 2, 3, gfx_rgb565(0xD99256));
+    gfx_disc(px, hx - 3, hy - 3, 1, gfx_rgb565(0xF6CE98));
+}
+static void draw_mallet(uint16_t *px, const muyu_view_t *v, unsigned now, unsigned squash)
+{
+    const unsigned age = v->since_knock_ms;
+    int hx, hy;
+    if (age < MUYU_SWING_MS) { /* the swing is only two or three frames: a trail shows where it came from */
+        for (unsigned k = 2; k >= 1; --k) {
+            if (age < k * 22U) continue;
+            head_at(v, age - k * 22U, now, squash, &hx, &hy);
+            draw_mallet_at(px, hx, hy, k == 2 ? 70U : 110U);
+        }
+    }
+    head_at(v, age, now, squash, &hx, &hy);
+    draw_mallet_at(px, hx, hy, 0);
+}
+/* Everything that happens on the landing, `age` ms after it. */
 static void draw_impact(uint16_t *px, unsigned age)
 {
-    static const int dirs[8][2] = {{1, -2}, {2, -1}, {2, 1}, {1, 2}, {-1, 2}, {-2, 1}, {-2, -1}, {-1, -2}};
+    static const int dirs[6][2] = {{-3, 0}, {-2, -2}, {-1, -3}, {1, -3}, {2, -2}, {3, 0}};
+    const int sx = HEAD_X, sy = fish_top(HEAD_X, 0);
     for (unsigned i = 0; i < 2U; ++i) { /* two ripples running out from the fish */
         if (age < i * 90U || age - i * 90U > 480U) continue;
         unsigned a = age - i * 90U;
-        gfx_ring(px, FISH_CX, 38, 22 + (int)(a * 52U / 480U), 0xFFD54A, 150U * (480U - a) / 480U);
+        gfx_ring(px, FISH_CX, FISH_CY, 22 + (int)(a * 52U / 480U), 0xFFD54A, 150U * (480U - a) / 480U);
     }
     if (age < 400U)
-        for (int i = 0; i < 8; ++i) { /* sparks fly from where the mallet landed */
-            int d = 3 + (int)age / 13;
+        for (int i = 0; i < 6; ++i) { /* sparks fly off the contact point */
+            int d = 6 + (int)age / 9;
             unsigned alpha = 240U * (400U - age) / 400U;
-            gfx_tint(px, STRIKE_X + dirs[i][0] * d / 2 - 1, STRIKE_Y + 3 + dirs[i][1] * d / 2, 2, 2, 0xFFE08A, alpha);
+            gfx_tint(px, sx + dirs[i][0] * d / 2 - 1, sy + dirs[i][1] * d / 2 - 1, 2, 2, 0xFFE08A, alpha);
         }
+}
+/* The flash of the blow, drawn over the head: a short starburst for the first few frames. */
+static void draw_flash(uint16_t *px, unsigned age)
+{
+    if (age >= 90U) return;
+    const int cx = HEAD_X, cy = fish_top(HEAD_X, 0) - 1;
+    const unsigned alpha = 255U * (90U - age) / 90U;
+    for (int k = 8; k <= 12; ++k) {
+        int d = k * 7 / 10;
+        gfx_tint_plot(px, cx - k, cy, 0xFFF3C4, alpha); gfx_tint_plot(px, cx + k, cy, 0xFFF3C4, alpha);
+        gfx_tint_plot(px, cx - d, cy - d, 0xFFF3C4, alpha); gfx_tint_plot(px, cx + d, cy - d, 0xFFF3C4, alpha);
+        if (k < 11) gfx_tint_plot(px, cx, cy - k - 2, 0xFFF3C4, alpha);
+    }
 }
 static void draw_scene(uint16_t *px, const muyu_view_t *v, unsigned now)
 {
-    unsigned age = v->since_knock_ms;
-    unsigned squash = age < 40U ? age * 256U / 40U : age < 240U ? (240U - age) * 256U / 200U : 0U;
-    draw_backdrop(px, now, age);
+    const unsigned landed = v->impact_ms;
+    unsigned squash = landed < 30U ? landed * 256U / 30U : landed < MUYU_HOLD_MS ? 256U : landed < 260U ? (260U - landed) * 256U / 190U : 0U;
+    draw_backdrop(px, now, landed);
     draw_incense(px, now);
     draw_cushion(px);
     draw_fish(px, squash);
-    draw_impact(px, age);
-    draw_mallet(px, age, now);
+    draw_impact(px, landed);
+    draw_mallet(px, v, now, squash);
+    draw_flash(px, landed);
 }
 
 /* ---- app --------------------------------------------------------------------------------------------------- */
@@ -196,12 +268,12 @@ static void build(state_t *s, lv_obj_t *root)
     s->hud = pill(root, 3, 3, (int)s->hud_width, 16, 0x0B1630, 150);
     s->count = app_ui_label(s->hud, &aihook_font_12, 5, 1, 90, 14, LV_LABEL_LONG_MODE_CLIP);
     lv_obj_set_style_text_color(s->count, app_ui_color(GOLD), LV_PART_MAIN);
-    s->tag = pill(root, 123, 3, 34, 16, 0x2E8B57, 230);
+    s->tag = pill(root, 125, 46, 34, 16, 0x2E8B57, 230);
     s->tag_text = app_ui_label(s->tag, &aihook_font_12, 0, 1, 34, 14, LV_LABEL_LONG_MODE_CLIP);
     app_ui_center(s->tag_text);
     app_ui_text(s->tag_text, "自动");
     for (unsigned i = 0; i < 2U; ++i) {
-        s->floating[i] = app_ui_label(root, &aihook_font_16, 58, 6, 80, 20, LV_LABEL_LONG_MODE_CLIP);
+        s->floating[i] = app_ui_label(root, &aihook_font_16, 88, 28, 80, 20, LV_LABEL_LONG_MODE_CLIP);
         app_ui_center(s->floating[i]);
         lv_obj_set_style_text_color(s->floating[i], app_ui_color(GOLD), LV_PART_MAIN);
         app_ui_hide(s->floating[i], true);
@@ -256,16 +328,19 @@ static void sync_hud(state_t *s, const muyu_view_t *v, unsigned hold_ms)
     int bar = hold_ms > 120U ? (int)(hold_ms > APP_CONFIRM_MS ? APP_CONFIRM_MS : hold_ms) * APP_WIDTH / (int)APP_CONFIRM_MS : 0;
     app_ui_hide(s->hold, bar == 0);
     if (bar) lv_obj_set_width(s->hold, bar);
-    for (unsigned i = 0; i < 2U; ++i) { /* the floating 功德+1: rises, then fades; two slots may overlap */
-        bool show = v->shown[i] && v->age_ms[i] < FLOAT_MS;
-        app_ui_hide(s->floating[i], !show);
-        if (!show) continue;
-        unsigned age = v->age_ms[i];
-        app_ui_text(s->floating[i], v->round[i] ? "功德圆满" : "功德+1");
-        lv_obj_set_y(s->floating[i], 6 - (int)(age * FLOAT_RISE / FLOAT_MS));
+    const unsigned latest = v->count & 1U; /* the slot of the newest knock */
+    for (unsigned i = 0; i < 2U; ++i) { /* the floating 功德+1: appears on the landing and rises while it fades */
+        bool show = v->shown[i] && v->age_ms[i] >= MUYU_SWING_MS && v->age_ms[i] - MUYU_SWING_MS < FLOAT_MS;
+        unsigned age = show ? v->age_ms[i] - MUYU_SWING_MS : 0U;
         unsigned opa = age < 350U ? 255U : 255U * (FLOAT_MS - age) / 350U;
-        if (v->shown[i ^ 1U] && v->age_ms[i ^ 1U] < age && v->age_ms[i ^ 1U] < 220U) /* a newer knock pushes this one out of the way */
-            opa = opa * (220U - v->age_ms[i ^ 1U]) / 220U;
+        if (show && i != latest && v->shown[latest] && v->age_ms[latest] >= MUYU_SWING_MS) { /* the next landing takes over quickly */
+            unsigned fresh = v->age_ms[latest] - MUYU_SWING_MS;
+            opa = fresh < 60U ? opa * (60U - fresh) / 60U : 0U;
+        }
+        app_ui_hide(s->floating[i], !show || opa == 0U);
+        if (!show || opa == 0U) continue;
+        app_ui_text(s->floating[i], v->round[i] ? "功德圆满" : "功德+1");
+        lv_obj_set_pos(s->floating[i], 88, 28 - (int)(age * FLOAT_RISE / FLOAT_MS));
         lv_obj_set_style_text_opa(s->floating[i], (lv_opa_t)opa, LV_PART_MAIN);
     }
 }

@@ -171,18 +171,22 @@ static void play_muyu(const char *out)
     assert(app_open(&manager.context,"muyu"));app_manager_commit(&manager);run(300);
     assert(game_status("muyu","robot muyu status","count=")==0 && game_status("muyu","robot muyu status","auto=")==0);
     assert(shows_text(lv_screen_active(),"功德 0") && !shows_text(lv_screen_active(),"功德+1"));dump(out,"muyu-idle");
-    event(APP_EVENT_DOWN);event(APP_EVENT_UP);dump(out,"muyu-strike"); /* about 20 ms after the knock: the mallet is landing */
-    assert(game_status("muyu","robot muyu status","count=")==1 && shows_text(lv_screen_active(),"功德 1") && shows_text(lv_screen_active(),"功德+1"));
-    run(70);dump(out,"muyu-impact");run(200);dump(out,"muyu-float");
+    event(APP_EVENT_DOWN);event(APP_EVENT_UP);run(35);dump(out,"muyu-strike"); /* the mallet is on its way down, a faint trail behind it */
+    assert(game_status("muyu","robot muyu status","count=")==1 && shows_text(lv_screen_active(),"功德 1") && !shows_text(lv_screen_active(),"功德+1")); /* the counter is instant, the label waits for the landing */
+    run(30);dump(out,"muyu-swing");run(55);dump(out,"muyu-impact"); /* ~120 ms: the head has just landed on the fish */
+    assert(shows_text(lv_screen_active(),"功德+1"));
+    run(200);dump(out,"muyu-float");
     run(500);assert(!shows_text(lv_screen_active(),"功德+1"));dump(out,"muyu-calm"); /* the label has risen and faded away */
+    event(APP_EVENT_DOWN);event(APP_EVENT_UP);run(130);event(APP_EVENT_DOWN);event(APP_EVENT_UP);run(45);dump(out,"muyu-chain"); /* a quick second knock starts from the rebound */
+    assert(game_status("muyu","robot muyu status","count=")==3);run(1000);
     for(unsigned i=0;i<4;++i) { event(APP_EVENT_DOWN);event(APP_EVENT_UP);run(400); }
-    assert(game_status("muyu","robot muyu status","count=")==5);
-    event(APP_EVENT_CONFIRM);assert(game_status("muyu","robot muyu status","auto=")==1 && shows_text(lv_screen_active(),"自动"));
-    run(2100);assert(game_status("muyu","robot muyu status","count=")==7);dump(out,"muyu-auto");
-    event(APP_EVENT_CONFIRM);assert(game_status("muyu","robot muyu status","auto=")==0);run(2100);
     assert(game_status("muyu","robot muyu status","count=")==7);
-    for(unsigned i=7;i<107;++i) { event(APP_EVENT_DOWN);event(APP_EVENT_UP); }
-    event(APP_EVENT_DOWN);event(APP_EVENT_UP);run(120);
+    event(APP_EVENT_CONFIRM);assert(game_status("muyu","robot muyu status","auto=")==1 && shows_text(lv_screen_active(),"自动"));
+    run(2100);assert(game_status("muyu","robot muyu status","count=")==9);dump(out,"muyu-auto");
+    event(APP_EVENT_CONFIRM);assert(game_status("muyu","robot muyu status","auto=")==0);run(2100);
+    assert(game_status("muyu","robot muyu status","count=")==9);
+    for(unsigned i=9;i<107;++i) { event(APP_EVENT_DOWN);event(APP_EVENT_UP); }
+    event(APP_EVENT_DOWN);event(APP_EVENT_UP);run(190); /* the 107th label has been taken over by the 108th */
     assert(game_status("muyu","robot muyu status","count=")==108 && game_status("muyu","robot muyu status","rounds=")==1);
     assert(shows_text(lv_screen_active(),"功德圆满") && shows_text(lv_screen_active(),"功德 108"));dump(out,"muyu-round");
     assert(game_status("muyu","robot muyu status","frames=")>100);
