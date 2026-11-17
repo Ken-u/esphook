@@ -818,7 +818,7 @@ static void play_miner(const char *out)
     run(MN_INTRO_MS);assert(MN_STATUS("phase=")==MN_PLAY);
     /* one that did not is over, and the best so far is kept */
     g->score=g->level_base;g->time_ms=40;run(160);
-    assert(MN_STATUS("phase=")==MN_OVER && shows_text(lv_screen_active(),"时间到") || mine()->new_best);dump(out,"miner-over");
+    assert((MN_STATUS("phase=")==MN_OVER && shows_text(lv_screen_active(),"时间到")) || mine()->new_best);dump(out,"miner-over");
     run(1000);event(APP_EVENT_DOWN);event(APP_EVENT_UP);run(60);
     assert(MN_STATUS("phase=")==MN_INTRO && MN_STATUS("level=")==1 && MN_STATUS("score=")==0 && MN_STATUS("best=")>0);
     assert(MN_STATUS("frames=")>100);
@@ -925,7 +925,7 @@ static void play_zombie(const char *out)
     zpose(3,near3);run(30);dump(out,"zombie-closeup");
     zb_z_t dead[]={zz(ZK_WALKER,0,360),zz(ZK_WALKER,90,700)};
     zpose(2,dead);zomb()->ammo=ZB_MAG;ztap();run(40);dump(out,"zombie-kill");
-    assert(ZB_STATUS("kills=")>=1 && ZB_STATUS("score=")>=100 && shows_text(lv_screen_active(),"100") || ZB_STATUS("score=")>=100);
+    assert(ZB_STATUS("kills=")>=1 && ZB_STATUS("score=")>=100);
     /* the ones off to the side light the edge of the screen */
     zb_z_t aside[]={zz(ZK_WALKER,900,500),zz(ZK_RUNNER,-850,800)};
     zpose(2,aside);run(40);dump(out,"zombie-edge");
