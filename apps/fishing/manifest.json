@@ -1,0 +1,9 @@
+{
+  "id": "fishing",
+  "order": "014",
+  "required": false,
+  "sources": [
+    "firmware/app.c",
+    "firmware/fishing_core.c"
+  ]
+}

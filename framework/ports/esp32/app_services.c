@@ -36,7 +36,7 @@ void app_servo_read(app_servo_t *out)
     out->available = s.servo_ready;
     out->armed = s.armed; out->following = s.following; out->fault = s.hardware_fault;
     out->angle_deg = s.angle_deg; out->target_deg = s.target_deg; out->tracking = s.state;
-    out->limit_deg = s.config.limit_deg;
+    out->limit_deg = s.config.limit_deg; out->speed_dps = s.config.speed_dps;
 }
 bool app_servo_request(app_context_t *ctx, app_servo_action_t action, int value)
 {

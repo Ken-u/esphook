@@ -14,7 +14,7 @@ typedef struct {
     bool available, armed, following, fault;
     float angle_deg, target_deg;
     robot_state_t tracking;
-    int limit_deg;
+    int limit_deg, speed_dps; /* speed_dps: the motion service's slew limit; 0 when unknown */
 } app_servo_t;
 typedef enum { APP_SERVO_ARM, APP_SERVO_DISARM, APP_SERVO_FOLLOW,
                APP_SERVO_CENTER, APP_SERVO_ANGLE } app_servo_action_t;

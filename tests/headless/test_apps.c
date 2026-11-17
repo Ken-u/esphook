@@ -5,6 +5,12 @@
 #ifdef ESPHOOK_TEST_STOCK
 #include "stock_transport.h"
 #endif
+#ifdef ESPHOOK_TEST_STARSHIP
+#include "starship_core.h"
+#endif
+#ifdef ESPHOOK_TEST_RACING
+#include "racing_core.h"
+#endif
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
@@ -25,8 +31,21 @@ bool app_transport_write(const char *s) { snprintf(output,sizeof output,"%s",s);
 bool app_runtime_is_active(const char *id) { return !strcmp(app_active_id(&manager.context),id); }
 bool app_runtime_open(const char *id) { return app_open(&manager.context,id); }
 bool app_runtime_menu(void) { app_menu(&manager.context);return true; }
-void app_radar_read(app_radar_t *r) { memset(r,0,sizeof *r);r->available=r->online=true;r->range_mm=6000;r->frame.targets[0]=(ld2450_target_t){.valid=true,.x_mm=1000,.y_mm=1500}; }
-void app_servo_read(app_servo_t *s) { memset(s,0,sizeof *s);s->available=true;s->tracking=ROBOT_IDLE; }
+/* The radar sees one person and the servo is a plain recorder: a game can be steered and its servo requests inspected. */
+static ld2450_target_t radar_target={.valid=true,.x_mm=1000,.y_mm=1500};
+static bool radar_online=true;
+void app_radar_read(app_radar_t *r) { memset(r,0,sizeof *r);r->available=true;r->online=radar_online;r->range_mm=6000;r->frame.targets[0]=radar_target; }
+static app_servo_t servo_state={.available=true,.tracking=ROBOT_IDLE,.limit_deg=30,.speed_dps=35};
+static struct { unsigned arm,disarm,angle; int last,lo,hi; } servo_log;
+void app_servo_read(app_servo_t *s) { *s=servo_state; }
+bool app_servo_request(app_context_t *c,app_servo_action_t a,int v)
+{
+    (void)c;
+    if(a==APP_SERVO_ARM) { ++servo_log.arm;servo_state.armed=true;return true; }
+    if(a==APP_SERVO_DISARM) { ++servo_log.disarm;servo_state.armed=false;return true; }
+    if(a!=APP_SERVO_ANGLE || !servo_state.armed || v>servo_state.limit_deg || v<-servo_state.limit_deg) return false;
+    ++servo_log.angle;servo_log.last=v;if(v<servo_log.lo) servo_log.lo=v;if(v>servo_log.hi) servo_log.hi=v;servo_state.angle_deg=(float)v;return true;
+}
 void app_hook_read(app_hook_t *h) { memset(h,0,sizeof *h);h->current=h->connected=true;h->clients=1;h->unread=2;strcpy(h->client,"Codex");strcpy(h->title,"任务已完成");strcpy(h->body,"长按回复继续"); }
 bool app_hook_reply(unsigned key) { return key<3; }
 void app_key_word(unsigned key,char *s,size_t n) { const char *words[]={"ok","continue","done"};snprintf(s,n,"%s",words[key%3]); }
@@ -110,6 +129,15 @@ static unsigned game_status(const char *id,const char *line,const char *key)
     }
     assert(!"unknown app");return 0;
 }
+/* True when a label with exactly this text is on screen (it and all its parents are not hidden). */
+static bool shows_text(lv_obj_t *obj,const char *text)
+{
+    if(lv_obj_has_flag(obj,LV_OBJ_FLAG_HIDDEN)) return false;
+    if(lv_obj_check_type(obj,&lv_label_class) && !strcmp(lv_label_get_text(obj),text)) return true;
+    for(uint32_t i=0;i<lv_obj_get_child_count(obj);++i) if(shows_text(lv_obj_get_child(obj,(int32_t)i),text)) return true;
+    return false;
+}
+static unsigned changed_pixels(const uint16_t *a,const uint16_t *b) { unsigned n=0;for(unsigned i=0;i<160*64;++i) n+=a[i]!=b[i];return n; }
 #ifdef ESPHOOK_TEST_BASKETBALL
 /* Shoots until it has seen a make and a miss, then lets the clock run out. Frames are for eyes only. */
 static void play_basketball(const char *out)
@@ -158,14 +186,6 @@ static void play_ski(const char *out)
 }
 #endif
 #ifdef ESPHOOK_TEST_MUYU
-/* True when a label with exactly this text is on screen (it and all its parents are not hidden). */
-static bool shows_text(lv_obj_t *obj,const char *text)
-{
-    if(lv_obj_has_flag(obj,LV_OBJ_FLAG_HIDDEN)) return false;
-    if(lv_obj_check_type(obj,&lv_label_class) && !strcmp(lv_label_get_text(obj),text)) return true;
-    for(uint32_t i=0;i<lv_obj_get_child_count(obj);++i) if(shows_text(lv_obj_get_child(obj,(int32_t)i),text)) return true;
-    return false;
-}
 static void play_muyu(const char *out)
 {
     assert(app_open(&manager.context,"muyu"));app_manager_commit(&manager);run(300);
@@ -193,8 +213,303 @@ static void play_muyu(const char *out)
     event(APP_EVENT_SHORT);assert(!strcmp(app_active_id(&manager.context),"muyu")); /* SHORT is the release of a knock: no navigation */
 }
 #endif
+#ifdef ESPHOOK_TEST_AQUARIUM
+static void play_aquarium(const char *out)
+{
+    assert(app_open(&manager.context,"aquarium"));app_manager_commit(&manager);run(400);
+    assert(game_status("aquarium","robot aquarium status","thrown=")==0 && shows_text(lv_screen_active(),"投食 0") && shows_text(lv_screen_active(),"进食 0"));
+    dump(out,"aquarium-idle");
+    static uint16_t previous[160*80];lv_refr_now(lv_display_get_default());memcpy(previous,framebuffer,sizeof previous);run(300);lv_refr_now(lv_display_get_default());
+    assert(changed_pixels(previous,framebuffer)>300); /* water, kelp and fish never stand still */
+    event(APP_EVENT_DOWN);event(APP_EVENT_UP);run(60);dump(out,"aquarium-drop"); /* the pinch leaves the fingers, ripples start */
+    assert(game_status("aquarium","robot aquarium status","thrown=")==1 && game_status("aquarium","robot aquarium status","food=")>=2 && shows_text(lv_screen_active(),"投食 1")); /* a hungry fish right below the hand may have taken one already */
+    run(250);dump(out,"aquarium-sinking");run(900);dump(out,"aquarium-chase");
+    for(unsigned i=0;i<3;++i) { run(900);event(APP_EVENT_DOWN);event(APP_EVENT_UP); }
+    run(3000);dump(out,"aquarium-feast");
+    run(4000);dump(out,"aquarium-later");
+    assert(game_status("aquarium","robot aquarium status","thrown=")==4 && game_status("aquarium","robot aquarium status","eaten=")>=2);
+    char text[32];snprintf(text,sizeof text,"进食 %u",game_status("aquarium","robot aquarium status","eaten="));assert(shows_text(lv_screen_active(),text));
+    assert(game_status("aquarium","robot aquarium status","frames=")>300);
+    event(APP_EVENT_SHORT);assert(!strcmp(app_active_id(&manager.context),"aquarium")); /* a press is a feeding, never navigation */
+}
+#endif
+#ifdef ESPHOOK_TEST_FISHING
+/* Plays one fight perfectly from the numbers in the status line (phase 4 is the fight, state 1 a pull on its way,
+ * state 2 a hold in progress). Returns the number of pulls answered. */
+static unsigned fishing_fight(const char *out,bool frames)
+{
+    unsigned answered=0;bool ring=false,hold=false,toast=false;
+    for(unsigned guard=0;guard<8000 && game_status("fishing","robot fishing status","phase=")==4;++guard) {
+        const unsigned state=game_status("fishing","robot fishing status","state=");
+        const int to=(int)game_status("fishing","robot fishing status","to=");
+        const unsigned kind=game_status("fishing","robot fishing status","kind=");
+        if(frames && state==1 && kind==0 && to<330 && to>250 && !ring) { dump(out,"fishing-ring");ring=true; }
+        if(state==2 && frames && !hold && to>200) { dump(out,"fishing-hold");hold=true; }
+        if(state==1 && to<=0) { event(APP_EVENT_DOWN);if(kind==0) { event(APP_EVENT_UP);++answered; } }
+        else if(state==2 && to<=0) { event(APP_EVENT_UP);++answered; }
+        else run(5);
+        if(frames && !toast && state==3 && shows_text(lv_screen_active(),"完美!")) { dump(out,"fishing-toast");toast=true; }
+    }
+    return answered;
+}
+static void fishing_hook(void)
+{
+    for(unsigned i=0;i<100 && game_status("fishing","robot fishing status","phase=")==5;++i) run(50); /* still landing the last one */
+    for(unsigned i=0;i<100 && game_status("fishing","robot fishing status","phase=")==7;++i) run(50);
+    const unsigned phase=game_status("fishing","robot fishing status","phase=");
+    if(phase==6) run(800);
+    if(phase==0 || phase==6) { event(APP_EVENT_DOWN);event(APP_EVENT_UP); }
+    for(unsigned i=0;i<200 && game_status("fishing","robot fishing status","phase=")!=3;++i) run(50);
+    assert(game_status("fishing","robot fishing status","phase=")==3);
+    event(APP_EVENT_DOWN);event(APP_EVENT_UP);assert(game_status("fishing","robot fishing status","phase=")==4);
+}
+static void play_fishing(const char *out)
+{
+    assert(app_open(&manager.context,"fishing"));app_manager_commit(&manager);run(300);
+    assert(game_status("fishing","robot fishing status","phase=")==0 && game_status("fishing","robot fishing status","servo=")==1);
+    assert(shows_text(lv_screen_active(),"按键抛竿 长按启用舵机") && shows_text(lv_screen_active(),"钓0"));dump(out,"fishing-idle");
+    event(APP_EVENT_DOWN);event(APP_EVENT_UP);run(300);
+    assert(game_status("fishing","robot fishing status","phase=")==1 && game_status("fishing","robot fishing status","casts=")==1);dump(out,"fishing-cast");
+    for(unsigned i=0;i<60 && game_status("fishing","robot fishing status","phase=")!=2;++i) run(50);
+    assert(game_status("fishing","robot fishing status","phase=")==2 && shows_text(lv_screen_active(),"等待鱼儿上钩…"));dump(out,"fishing-wait");
+    for(unsigned i=0;i<120 && game_status("fishing","robot fishing status","phase=")!=3;++i) run(50);
+    assert(game_status("fishing","robot fishing status","phase=")==3 && shows_text(lv_screen_active(),"咬钩了! 快按!"));run(120);dump(out,"fishing-bite");
+    assert(servo_log.arm==0 && servo_log.angle==0); /* nothing moves the servo until it has been enabled on purpose */
+    event(APP_EVENT_DOWN);event(APP_EVENT_UP);
+    assert(game_status("fishing","robot fishing status","phase=")==4);run(200);dump(out,"fishing-fight");
+    const unsigned need=game_status("fishing","robot fishing status","need=");
+    assert(fishing_fight(out,true)>=need);
+    const unsigned phase=game_status("fishing","robot fishing status","phase=");
+    assert(phase==5 || phase==6);run(300);dump(out,"fishing-land");run(1000);
+    assert(game_status("fishing","robot fishing status","phase=")==6 && game_status("fishing","robot fishing status","caught=")==1);
+    assert(shows_text(lv_screen_active(),"钓1") && shows_text(lv_screen_active(),"按键再钓一次"));dump(out,"fishing-result");
+    assert(servo_log.arm==0 && servo_log.angle==0);
+    /* a long hold enables the servo: from then on the pulls shake it, inside its limits */
+    run(800);event(APP_EVENT_DOWN);event(APP_EVENT_UP);event(APP_EVENT_CONFIRM);
+    assert(servo_log.arm==1 && servo_state.armed && game_status("fishing","robot fishing status","servo=")==2);
+    event(APP_EVENT_CONFIRM);assert(servo_log.arm==1); /* already enabled: no second request */
+    fishing_hook();
+    assert(shows_text(lv_screen_active(),"舵机"));
+    assert(fishing_fight(out,false)>=1);
+    assert(servo_log.angle>=4 && servo_log.hi>=2 && servo_log.lo<=-1 && servo_log.hi<=29 && servo_log.lo>=-29);
+    /* a fight that is not answered at all ends with the line broken and the fish gone */
+    fishing_hook();
+    for(unsigned i=0;i<400 && game_status("fishing","robot fishing status","phase=")==4;++i) run(50);
+    assert(game_status("fishing","robot fishing status","phase=")==7 && game_status("fishing","robot fishing status","lost=")>=1);
+    run(250);assert(shows_text(lv_screen_active(),"鱼跑了… 断线了"));dump(out,"fishing-lost");
+    assert(game_status("fishing","robot fishing status","frames=")>300);
+    servo_state.armed=false;
+    event(APP_EVENT_SHORT);assert(!strcmp(app_active_id(&manager.context),"fishing"));
+}
+#endif
+#ifdef ESPHOOK_TEST_STARSHIP
+#define SS_STATUS(k) game_status("starship","robot starship status",k)
+/* A real key edge through the framework's gesture layer (tap = SHORT, half a second = CONFIRM). */
+static void key(unsigned k,bool down) { app_manager_key(&manager,k,down,manager.context.now_ms);run(20); }
+static void tap(void) { key(0,true);run(100);key(0,false); }
+/* A person leaning: the radar sees them move there, not teleport. */
+static void lean_to(int x,unsigned ms)
+{
+    for(unsigned t=0;t<ms;t+=20) { int d=x-radar_target.x_mm;if(d>40) d=40;if(d<-40) d=-40;radar_target.x_mm=(int16_t)(radar_target.x_mm+d);run(20); }
+}
+static unsigned weave(unsigned ms,bool fire,bool frames,const char *out)
+{
+    /* The "player": leans left and right in front of the radar and holds the trigger. */
+    unsigned boom=SS_STATUS("kills="),hp=SS_STATUS("hp="),foe_frames=0;bool saw_foe=false;
+    for(unsigned t=0;t<ms && SS_STATUS("phase=")==1;t+=20) {
+        radar_target.x_mm=(int16_t)(1000+(int)(300*sin(t/1100.0)));
+        run(20);
+        if(!frames) continue;
+        if(SS_STATUS("kills=")>boom) { boom=SS_STATUS("kills=");dump(out,"starship-boom"); }
+        if(SS_STATUS("hp=")<hp) { hp=SS_STATUS("hp=");run(60);char name[24];snprintf(name,sizeof name,"starship-hit%u",hp);dump(out,name); }
+        if(SS_STATUS("foes=")>=1 && ++foe_frames==150 && !saw_foe) { saw_foe=true;dump(out,"starship-enemy"); }
+    }
+    (void)fire;
+    return SS_STATUS("kills=");
+}
+/* Poses a scene by writing into the game core (the first member of the app state) so close-ups can be looked at. */
+static void pose_starship(const char *out)
+{
+    for(unsigned i=0;i<4000 && SS_STATUS("phase=")!=3;++i) run(50); /* wait for the current game to end */
+    run(1000);tap();assert(SS_STATUS("phase=")==1);
+    ss_t *g=manager.context.state;
+    memset(g->obj,0,sizeof g->obj);memset(g->bolt,0,sizeof g->bolt);memset(g->shot,0,sizeof g->shot);
+    g->rock_wait=g->enemy_wait=60000;g->cam_x=g->target_x=0;
+    g->obj[0]=(ss_obj_t){.alive=1,.kind=SO_ENEMY,.x=-150,.x0=-150,.z=430,.pz=430,.r=95,.hp=2,.state=SE_HOLD,.fire=9,.seed=40,.age=100};
+    g->obj[1]=(ss_obj_t){.alive=1,.kind=SO_ASTEROID,.x=300,.z=300,.pz=300,.r=150,.hp=3,.seed=17,.age=30};
+    g->obj[2]=(ss_obj_t){.alive=1,.kind=SO_ASTEROID,.x=-420,.z=520,.pz=520,.r=100,.hp=1,.seed=130,.age=5};
+    g->obj[3]=(ss_obj_t){.alive=1,.kind=SO_ENEMY,.x=420,.x0=420,.z=900,.pz=900,.r=95,.hp=2,.state=SE_HOLD,.fire=200,.seed=90,.age=10};
+    g->bolt[0]=(ss_bolt_t){.x=0,.z=560,.alive=1};
+    g->shot[0]=(ss_shot_t){.x=-60,.z=820,.pz=770,.alive=1};
+    g->shot[1]=(ss_shot_t){.x=60,.z=1200,.pz=1148,.alive=1};
+    g->cooldown=SS_FIRE_STEPS;
+    run(40);dump(out,"starship-pose-near");
+    g->obj[0].z=g->obj[0].pz=190;g->obj[0].state=SE_DIVE;g->obj[0].x=60;g->obj[0].flash=3;
+    g->obj[1].z=g->obj[1].pz=190;g->obj[1].x=-260;g->obj[1].r=190;g->obj[0].hp=1;
+    g->bolt[0].z=300;g->bolt[0].x=-130;
+    memset(g->shot,0,sizeof g->shot);
+    run(40);dump(out,"starship-pose-close");
+    g->obj[0].z=g->obj[0].pz=1100;g->obj[0].state=SE_ENTER;
+    run(40);dump(out,"starship-pose-far");
+}
+static void play_starship(const char *out)
+{
+    servo_state.armed=false;memset(&servo_log,0,sizeof servo_log);radar_online=true;radar_target.x_mm=1000;
+    assert(app_open(&manager.context,"starship"));app_manager_commit(&manager);run(400);
+    assert(SS_STATUS("phase=")==0 && SS_STATUS("servo=")==1 && SS_STATUS("hp=")==3 && SS_STATUS("objs=")==0);
+    assert(shows_text(lv_screen_active(),"星际战机") && shows_text(lv_screen_active(),"按键出击 长按启用舵机"));dump(out,"starship-title");
+    tap();assert(SS_STATUS("phase=")==1 && shows_text(lv_screen_active(),"按住开火 雷达转向") && !shows_text(lv_screen_active(),"星际战机"));
+    /* the key is the gun: holding it for more than half a second is shooting, never the servo confirmation */
+    key(0,true);run(700);assert(SS_STATUS("shots=")>=3);dump(out,"starship-fire");key(0,false);
+    assert(servo_log.arm==0 && SS_STATUS("servo=")==1 && SS_STATUS("phase=")==1);
+    /* the radar: the first position is the centre, leaning 35 cm either way is full lock */
+    run(300);assert(abs((int)SS_STATUS("cam="))<60 && SS_STATUS("src=")==1);
+    lean_to(1350,900);assert((int)SS_STATUS("cam=")>800 && (int)SS_STATUS("steer=")>200);dump(out,"starship-right");
+    lean_to(650,1400);assert((int)SS_STATUS("cam=")<-800 && (int)SS_STATUS("steer=")<-200);dump(out,"starship-left");
+    lean_to(1000,1500);assert(abs((int)SS_STATUS("cam="))<150);
+    /* a pilot who weaves and shoots gets kills and takes hits; with the servo disabled nothing moves */
+    key(0,true);
+    assert(weave(60000,true,true,out)>=1);
+    key(0,false);
+    assert(servo_log.angle==0 && servo_log.arm==0);
+    /* a pilot who sits still does not last: three hits and the ship is gone */
+    for(unsigned i=0;i<4000 && SS_STATUS("phase=")==1;++i) { radar_target.x_mm=1000;run(50); }
+    assert(SS_STATUS("phase=")!=1 && SS_STATUS("hp=")==0);
+    run(600);dump(out,"starship-dying"); /* the blast fills the canopy */
+    for(unsigned i=0;i<100 && SS_STATUS("phase=")!=3;++i) run(50);
+    run(1000);
+    assert(SS_STATUS("phase=")==3 && shows_text(lv_screen_active(),"战机损毁") && shows_text(lv_screen_active(),"按键再战"));
+    char card[64];snprintf(card,sizeof card,"击落 %u 最高 %u",SS_STATUS("kills="),SS_STATUS("best="));assert(shows_text(lv_screen_active(),card));
+    dump(out,"starship-over");
+    assert(SS_STATUS("best=")>0 && SS_STATUS("best=")>=SS_STATUS("score="));
+    /* the half-second hold that enabled nothing in the game does enable the servo here, and only here */
+    const unsigned best=SS_STATUS("best=");
+    key(0,true);run(700);key(0,false);
+    assert(SS_STATUS("phase=")==3 && servo_log.arm==1 && SS_STATUS("servo=")==2);
+    tap();assert(SS_STATUS("phase=")==1 && SS_STATUS("hp=")==3 && SS_STATUS("score=")==0 && SS_STATUS("best=")==best);
+    assert(shows_text(lv_screen_active(),"按住开火 舵机已启用"));run(200);dump(out,"starship-armed");
+    /* every hit is a short, light shake of the servo around the centre, never past +-8 degrees */
+    unsigned shakes=0;
+    for(unsigned t=0;t<4000 && shakes<2 && SS_STATUS("phase=")==1;++t) {
+        const unsigned hp=SS_STATUS("hp="),before=servo_log.angle;
+        run(50);
+        if(SS_STATUS("hp=")<hp) { run(700);assert(servo_log.angle>before+1);++shakes; }
+    }
+    assert(shakes>=1 && servo_log.lo>=-8 && servo_log.hi<=8 && servo_log.hi>0 && servo_log.lo<0);
+    /* K2 and K3 steer when the radar sees nobody (and win while they are held) */
+    for(unsigned i=0;i<4000 && SS_STATUS("phase=")!=3;++i) run(50);
+    assert(SS_STATUS("phase=")==3);run(1000);tap();assert(SS_STATUS("phase=")==1);
+    radar_online=false;run(300);
+    key(2,true);run(1000);assert((int)SS_STATUS("cam=")>600 && SS_STATUS("src=")==2);key(2,false);
+    run(1200);assert(abs((int)SS_STATUS("cam="))<300 || SS_STATUS("phase=")!=1);
+    key(1,true);run(1000);assert((int)SS_STATUS("cam=")<-600 || SS_STATUS("phase=")!=1);key(1,false);
+    assert(!strcmp(app_active_id(&manager.context),"starship")); /* neither is navigation */
+    assert(SS_STATUS("frames=")>1000);
+    radar_online=true;
+    pose_starship(out);
+}
+#endif
+#ifdef ESPHOOK_TEST_RACING
+#define RC_STATUS(k) game_status("racing","robot racing status",k)
+#define RC_INT(k) ((int)RC_STATUS(k))
+static void rkey(unsigned k,bool down) { app_manager_key(&manager,k,down,manager.context.now_ms);run(20); }
+static void rlean(int x,unsigned ms)
+{
+    for(unsigned t=0;t<ms;t+=20) { int d=x-radar_target.x_mm;if(d>40) d=40;if(d<-40) d=-40;radar_target.x_mm=(int16_t)(radar_target.x_mm+d);run(20); }
+}
+/* A driver on the radar: leans the opposite way to the car's drift, holds the pedal down, uses the nitro when it is full. */
+static void rdrive(unsigned ms,bool frames,const char *out,bool *nitro_seen)
+{
+    unsigned crashes=RC_STATUS("crashes="),cps=RC_STATUS("cps="),speed_dump=0;
+    for(unsigned t=0;t<ms && RC_STATUS("phase=")==2;t+=20) {
+        const int px=RC_INT("px="),steer=(0-px)*256/220,lean=steer*350/256;
+        rlean(1000+(lean>350?350:lean<-350?-350:lean),20);
+        if(RC_STATUS("nitro=")>=1000 && !*nitro_seen) { /* double tap: down, up, down */
+            rkey(0,false);run(40);rkey(0,true);*nitro_seen=true;run(200); /* lift and put the pedal down again */
+            assert(RC_STATUS("nitro=")<1000);if(frames) dump(out,"racing-nitro");
+        }
+        if(!frames) continue;
+        if(RC_STATUS("crashes=")>crashes) { crashes=RC_STATUS("crashes=");run(60);dump(out,"racing-crash"); }
+        if(RC_STATUS("cps=")>cps) { cps=RC_STATUS("cps=");run(100);dump(out,"racing-checkpoint"); }
+        if(RC_STATUS("speed=")>150 && abs(RC_INT("steer="))>120 && !speed_dump) { speed_dump=1;dump(out,"racing-corner"); }
+    }
+}
+static void pose_racing(const char *out)
+{
+    for(unsigned i=0;i<4000 && RC_STATUS("phase=")!=4;++i) run(50);
+    run(1000);
+    rkey(0,true);run(100);rkey(0,false);assert(RC_STATUS("phase=")==1);
+    run(3000);assert(RC_STATUS("phase=")==2);
+    rc_t *r=manager.context.state;
+    int32_t at=400000;while(rc_curve_at(r,at)<230) at+=1000;
+    r->pos_mm=at-10000;r->speed16=170*16;r->spawn_wait=60000;r->throttle=1;r->time_ms=30000;r->next_cp_mm=at+160000;
+    memset(r->car,0,sizeof r->car);
+    r->car[0]=(rc_car_t){.pos_mm=r->pos_mm+22000,.px=-640,.speed=80,.alive=1,.color=0};
+    r->car[1]=(rc_car_t){.pos_mm=r->pos_mm+50000,.px=0,.speed=90,.alive=1,.color=1};
+    r->car[2]=(rc_car_t){.pos_mm=r->pos_mm+95000,.px=640,.speed=70,.alive=1,.color=2};
+    r->car[3]=(rc_car_t){.pos_mm=r->pos_mm+170000,.px=-640,.speed=90,.alive=1,.color=3};
+    run(40);dump(out,"racing-pose-bend");
+    r->nitro_ms=2000;r->nitro=700;r->speed16=250*16;
+    run(40);dump(out,"racing-pose-nitro");
+    r->nitro_ms=0;r->car[2].pos_mm=r->pos_mm+4600;r->car[2].px=rc_px(r);r->car[2].speed=60;
+    run(60);dump(out,"racing-pose-crash");
+}
+static void play_racing(const char *out)
+{
+    servo_state.armed=false;memset(&servo_log,0,sizeof servo_log);radar_online=true;radar_target.x_mm=1000;
+    assert(app_open(&manager.context,"racing"));app_manager_commit(&manager);run(400);
+    assert(RC_STATUS("phase=")==0 && RC_STATUS("servo=")==1 && RC_STATUS("time=")==45);
+    assert(shows_text(lv_screen_active(),"极速赛车") && shows_text(lv_screen_active(),"按键出发 长按启用舵机"));dump(out,"racing-title");
+    /* the half-second hold enables the servo, and does not start the race */
+    rkey(0,true);run(700);rkey(0,false);
+    assert(RC_STATUS("phase=")==0 && servo_log.arm==1 && RC_STATUS("servo=")==2);
+    rkey(0,true);run(100);rkey(0,false);
+    assert(RC_STATUS("phase=")==1 && shows_text(lv_screen_active(),"准备…"));run(300);dump(out,"racing-count3");
+    run(1000);dump(out,"racing-count2");
+    for(unsigned i=0;i<60 && RC_STATUS("phase=")!=2;++i) run(50);
+    assert(RC_STATUS("phase=")==2);run(100);dump(out,"racing-go");
+    assert(shows_text(lv_screen_active(),"按住加速 舵机已启用") && RC_STATUS("speed=")==0);
+    /* the key is the pedal; the radar is the wheel and the servo follows it */
+    rkey(0,true);run(2500);
+    assert(RC_STATUS("speed=")>=80 && RC_STATUS("dist=")>20 && RC_STATUS("phase=")==2);
+    rlean(1000,200);
+    rlean(1350,600);run(200);
+    assert(RC_INT("steer=")>150 && RC_INT("px=")>50 && servo_log.last>6 && servo_log.last<=14 && RC_STATUS("src=")==1);dump(out,"racing-right");
+    rlean(650,1000);run(300);
+    assert(RC_INT("steer=")<-150 && servo_log.last<-6 && servo_log.last>=-14);
+    rlean(1000,1500);
+    for(unsigned i=0;i<60;++i) { rlean(1000-(RC_INT("px=")>0?200:-200),20); } /* wheel back to the middle */
+    run(500);assert(abs(servo_log.last)<=14 && servo_log.hi<=14 && servo_log.lo>=-14);
+    /* race on: checkpoints, a crash with a shake, the nitro, and the clock */
+    bool nitro_seen=false;
+    rdrive(120000,true,out,&nitro_seen);
+    assert(nitro_seen);
+    /* run out of road, then of time */
+    rkey(0,false);
+    radar_target.x_mm=1000;
+    for(unsigned i=0;i<4000 && RC_STATUS("phase=")==2;++i) run(50);
+    assert(RC_STATUS("phase=")==3);assert(shows_text(lv_screen_active(),"时间到!"));
+    for(unsigned i=0;i<100 && RC_STATUS("phase=")!=4;++i) run(50);
+    run(1100);
+    assert(RC_STATUS("phase=")==4 && shows_text(lv_screen_active(),"时间到") && shows_text(lv_screen_active(),"按键再来"));
+    char card[64];snprintf(card,sizeof card,"里程 %u米 最高 %u",RC_STATUS("dist="),RC_STATUS("best="));assert(shows_text(lv_screen_active(),card));
+    assert(RC_STATUS("best=")>0 && RC_STATUS("best=")>=RC_STATUS("score="));dump(out,"racing-over");
+    rkey(0,true);run(100);rkey(0,false);
+    assert(RC_STATUS("phase=")==1 && RC_STATUS("time=")==45);
+    /* K2 and K3 steer when the radar sees nobody */
+    radar_online=false;
+    for(unsigned i=0;i<60 && RC_STATUS("phase=")!=2;++i) run(50);
+    rkey(0,true);run(2500);
+    rkey(2,true);run(900);assert(RC_INT("px=")>50 && RC_STATUS("src=")==2);rkey(2,false);
+    const int right=RC_INT("px=");rkey(1,true);run(1400);assert(RC_INT("px=")<right-50);rkey(1,false);
+    assert(!strcmp(app_active_id(&manager.context),"racing")); /* neither is navigation */
+    assert(RC_STATUS("frames=")>1000);
+    rkey(0,false);
+    radar_online=true;
+    pose_racing(out);
+}
+#endif
 #ifdef ESPHOOK_TEST_WEDDING
-static unsigned changed_pixels(const uint16_t *a,const uint16_t *b) { unsigned n=0;for(unsigned i=0;i<160*64;++i) n+=a[i]!=b[i];return n; }
 /* The banner scene is a pure function of the time since entry: sample it across both banners and a popper. */
 static void play_wedding(const char *out)
 {
@@ -261,6 +576,18 @@ int main(int argc,char **argv)
 #endif
 #ifdef ESPHOOK_TEST_WEDDING
     play_wedding(out);
+#endif
+#ifdef ESPHOOK_TEST_AQUARIUM
+    play_aquarium(out);
+#endif
+#ifdef ESPHOOK_TEST_FISHING
+    play_fishing(out);
+#endif
+#ifdef ESPHOOK_TEST_STARSHIP
+    play_starship(out);
+#endif
+#ifdef ESPHOOK_TEST_RACING
+    play_racing(out);
 #endif
     assert(app_open(&manager.context,"settings"));app_manager_commit(&manager);run(20);
     event(APP_EVENT_SHORT);event(APP_EVENT_SHORT);event(APP_EVENT_SHORT);event(APP_EVENT_CONFIRM);

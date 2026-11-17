@@ -1,0 +1,9 @@
+{
+  "id": "racing",
+  "order": "015",
+  "required": false,
+  "sources": [
+    "firmware/app.c",
+    "firmware/racing_core.c"
+  ]
+}

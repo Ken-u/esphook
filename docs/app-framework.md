@@ -63,7 +63,7 @@ const app_descriptor_t esphook_app_counter = {
 
 除 init 和 command 外，回调都由 UI 任务调用。导航 `app_open/menu/idle` 延迟到回调返回提交；不允许把 ctx 或事件临时指针留给后台任务。回调中不等待、联网或执行长计算；传输模型需要跨任务时独立同步，例如 stock_transport 的互斥锁。
 
-所有应用共用 2048 字节会话区，而不是每个应用预留一份。雷达、K 线、小恐龙、滑雪、投篮、新婚快乐和电子木鱼共用 160×64 的 20,480 字节像素缓冲（`APP_CANVAS_W/H`；雷达和 K 线只用其中 160×48），整屏重绘的游戏用 `app_gfx.h` 里的有裁剪绘图函数。共享画布每次使用都重绘，切出前清理图片缓存，参见雷达/股票的 on_leave。常驻股票上传暂存区仍在应用自己的 transport 中，只有完整数据才提交。
+所有应用共用 2048 字节会话区，而不是每个应用预留一份。雷达、K 线、小恐龙、滑雪、投篮、新婚快乐、电子木鱼、水族箱、钓鱼、星际战机和极速赛车共用 160×64 的 20,480 字节像素缓冲（`APP_CANVAS_W/H`；雷达和 K 线只用其中 160×48），整屏重绘的游戏用 `app_gfx.h` 里的有裁剪绘图函数。共享画布每次使用都重绘，切出前清理图片缓存，参见雷达/股票的 on_leave。常驻股票上传暂存区仍在应用自己的 transport 中，只有完整数据才提交。
 
 ## 注册与应用配置
 
@@ -99,7 +99,9 @@ USB 按住租期为 350ms，SDK 通过 hold/press/poll 每 100ms 续期；失联
 
 ## 硬件与 Hook 服务
 
-`app_radar_read` 返回三目标快照、在线状态、age、帧计数和显示范围，应用不接触 UART。`app_servo_read` 返回运动状态；`app_servo_request(ctx, action, value)` 排队给运动服务，支持 ARM / DISARM / FOLLOW / CENTER / ANGLE。首次调用申请当前应用的舵机租约；退出强制 disarm，队列满也可提交停止请求。未装机器人硬件时返回不可用，应用仍可运行屏幕部分。
+`app_radar_read` 返回三目标快照、在线状态、age、帧计数和显示范围，应用不接触 UART。`app_servo_read` 返回运动状态；`app_servo_request(ctx, action, value)` 排队给运动服务，支持 ARM / DISARM / FOLLOW / CENTER / ANGLE。首次调用申请当前应用的舵机租约；退出强制 disarm，队列满也可提交停止请求。未装机器人硬件时返回不可用，应用仍可运行屏幕部分。`app_servo_read` 还给出配置的限位 `limit_deg` 和限速 `speed_dps`。
+
+游戏想“摇一下舵机”或“把舵机当方向盘”，使用头文件 `framework/include/esphook/app_haptic.h`：它只通过公开舵机服务发 ANGLE 请求，按限位减 1° 钳幅度，按限速拉长半周期，两次请求至少间隔 60ms；舵机缺失、未启用或故障时一律静默。**框架不会自动启用舵机**：只有玩家在应用的待机/标题画面长按 500ms 确认后，应用才可调用 `haptic_arm()`。左右转向（雷达，或 K2/K3 两个键作后备）使用 `app_steer.h`：以开局时最近的人为中心，侧身约 35cm 满舵，目标丢失保持 1.2 秒再回中，另一个人经过不会抢控制权。两者都是对时间戳的纯函数，主机测试见 `scripts/test-haptic-steer.sh`。
 
 硬件策略由 app_hardware_policy 决定，auto 仅被动接收雷达 RX，screen 不启动外设，robot 才初始化 PWM/UART。app_hardware_info 提供实际运行/保存配置和各端口状态；NHY009 和屏幕均无读回，不能把初始化当作检测到实物。配置保存需重启生效，详见 [发布与兼容](release-kit.md)。
 
@@ -117,6 +119,10 @@ Hook 的 HTTP `/notify`、`/dismiss`、配对、鉴权和 device link 协议保�
 | 滑雪大冒险 | 横版下坡，单键起跳、空中按住连续翻转、翻圈加分；纯 C 规则，共享画布绘制，见 [robot-ski.md](robot-ski.md) |
 | 新婚快乐 | 默认待机：金色“新婚快乐/Happy Wedding”交替、彩带、礼花、彩纸，滚动祝福语可由 PC 消息改写，见 [robot-wedding.md](robot-wedding.md) |
 | 电子木鱼 | 按键敲击，功德+1，木槌/涟漪动画，满 108 下功德圆满，长按自动敲；纯 C 计数核心，见 [robot-muyu.md](robot-muyu.md) |
+| 水族箱 | 按键投一撮鱼食：鱼群追食、吃饱、气泡、水草、光柱；纯 C 模拟核心，见 [robot-aquarium.md](robot-aquarium.md) |
+| 钓鱼 | 抛竿、等鱼咬钩，按提示的时机/时长按键拉鱼，鱼越大需要的次数越多、舵机摇得越凶；纯 C 规则，见 [robot-fishing.md](robot-fishing.md) |
+| 星际战机 | 第一人称太空射击，雷达左右转向，按键开炮，被击中掉血并摇舵机，共 3 滴血，见 [robot-starship.md](robot-starship.md) |
+| 极速赛车 | 第一人称伪 3D 公路赛，按住加速，转弯时舵机跟着转，氮气定时充满，见 [robot-racing.md](robot-racing.md) |
 | 做 T | PC 行情/均线/交易/结算；设备端 RAM 数据、图表和按键协议 |
 | 雷达 | 三目标扇形调试图，服务快照 |
 | Hook | 通知展示、未读信息、选择回复词及确认回传 |
@@ -125,7 +131,7 @@ Hook 的 HTTP `/notify`、`/dismiss`、配对、鉴权和 device link 协议保�
 | 示例 | 点击计数、清零、动画、雷达状态和 PC 自定义标题 |
 | 启动器 | 隐藏的系统应用，代码图标、分页、选择动画和确认圆 |
 
-设置短按循环六页。硬件配置页长按编辑、短按切换、长按保存，再长按重启生效。待机页长按进入编辑，短按切换可选应用，长按保存；三击随时回菜单。固件版本取 ESP-IDF app descriptor，当前版本由 `version.txt` 管理。数量统计已编译的可见应用，默认 12 个，不含系统 launcher；不显示凭据或认证密钥。
+设置短按循环六页。硬件配置页长按编辑、短按切换、长按保存，再长按重启生效。待机页长按进入编辑，短按切换可选应用，长按保存；三击随时回菜单。固件版本取 ESP-IDF app descriptor，当前版本由 `version.txt` 管理。数量统计已编译的可见应用，默认 16 个，不含系统 launcher；不显示凭据或认证密钥。
 
 PC 的运行入口和协议见 [app-pc-protocol.md](app-pc-protocol.md)。旧投篮命令仍可用，start 排队打开新局，stop 回菜单，status 查询最近快照；`robot menu` 通用开菜单。
 
@@ -144,6 +150,11 @@ python3 apps/key_report/pc/test_bridge.py
 ./scripts/test-dino.sh
 ./scripts/test-ski.sh
 ./scripts/test-muyu.sh
+./scripts/test-haptic-steer.sh
+./scripts/test-aquarium.sh
+./scripts/test-fishing.sh
+./scripts/test-starship.sh
+./scripts/test-racing.sh
 ./scripts/test-robot-ui.sh
 python3 apps/stock/pc/test_stock_t.py
 python3 apps/hook/pc/test_hooks.py

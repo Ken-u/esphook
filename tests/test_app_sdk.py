@@ -139,8 +139,8 @@ class SdkTests(unittest.TestCase):
         link = object.__new__(AppLink)
         link.serial, link.sequence, link.events, link.pending, link.selected = ListAckSerial(frame), 0, deque(), bytearray(), False
         apps = link.catalog()
-        self.assertEqual([a["id"] for a in apps], ["basketball", "demo", "dino", "face", "hook", "key_report", "muyu", "radar", "settings", "ski", "stock", "wedding"])
-        self.assertEqual(apps[0]["title"], "投篮")
+        self.assertEqual([a["id"] for a in apps], ["aquarium", "basketball", "demo", "dino", "face", "fishing", "hook", "key_report", "muyu", "racing", "radar", "settings", "ski", "starship", "stock", "wedding"])
+        self.assertEqual(apps[0]["title"], "水族箱")
 
     def test_opening_the_port_never_resets_the_chip(self):
         # USB Serial/JTAG resets the chip on DTR low + RTS high. Clearing DTR first (the old

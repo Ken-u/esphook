@@ -26,6 +26,13 @@ static inline uint32_t gfx_hash(uint32_t z)
     z += 0x9e3779b9U; z ^= z >> 16; z *= 0x85ebca6bU; z ^= z >> 13; z *= 0xc2b2ae35U;
     return z ^ (z >> 16);
 }
+/* Sine with a 256 step period and an amplitude of 256, from integer maths only (a parabola, within ~6%): swaying
+ * plants, floating bubbles and wobbles that do not need a precise sine and must not drag in the soft FPU. */
+static inline int gfx_sin256(unsigned phase)
+{
+    const int x = (int)(phase & 127U), v = x * (128 - x) / 16;
+    return (phase & 128U) ? -v : v;
+}
 static inline void gfx_plot(uint16_t *px, int x, int y, uint16_t c)
 {
     if ((unsigned)x < (unsigned)APP_CANVAS_W && (unsigned)y < (unsigned)APP_CANVAS_H) px[y * APP_CANVAS_W + x] = c;
@@ -138,12 +145,42 @@ static inline void gfx_tint_ellipse(uint16_t *px, int cx, int cy, int rx, int ry
         gfx_tint(px, cx - half, cy + dy, half * 2 + 1, 1, rgb, alpha);
     }
 }
+/* Solid filled ellipse (radii rx, ry). */
+static inline void gfx_ellipse(uint16_t *px, int cx, int cy, int rx, int ry, uint16_t c)
+{
+    if (rx < 1 || ry < 1) return;
+    for (int dy = -ry; dy <= ry; ++dy) {
+        int half = rx * (int)gfx_isqrt((uint32_t)(ry * ry - dy * dy)) / ry;
+        gfx_rect(px, cx - half, cy + dy, half * 2 + 1, 1, c);
+    }
+}
 /* Filled triangle pointing up: apex at (cx, top), base `base_w` wide on row top + h - 1. */
 static inline void gfx_peak(uint16_t *px, int cx, int top, int base_w, int h, uint16_t c)
 {
     for (int row = 0; row < h; ++row) {
         int half = h > 1 ? (base_w * row) / (2 * (h - 1)) : 0;
         gfx_hline(px, cx - half, cx + half, top + row, c);
+    }
+}
+/* Solid filled triangle with any corner order (wings, fins, road edges). */
+static inline void gfx_tri(uint16_t *px, int x0, int y0, int x1, int y1, int x2, int y2, uint16_t c)
+{
+    int t;
+    if (y1 < y0) { t = y0; y0 = y1; y1 = t; t = x0; x0 = x1; x1 = t; }
+    if (y2 < y0) { t = y0; y0 = y2; y2 = t; t = x0; x0 = x2; x2 = t; }
+    if (y2 < y1) { t = y1; y1 = y2; y2 = t; t = x1; x1 = x2; x2 = t; }
+    if (y2 == y0) { /* flat: a single row */
+        int lo = x0 < x1 ? x0 : x1, hi = x0 > x1 ? x0 : x1;
+        lo = lo < x2 ? lo : x2;
+        hi = hi > x2 ? hi : x2;
+        gfx_hline(px, lo, hi, y0, c);
+        return;
+    }
+    for (int y = y0 < 0 ? 0 : y0; y <= y2 && y < APP_CANVAS_H; ++y) {
+        int a = x0 + (x2 - x0) * (y - y0) / (y2 - y0), b;
+        if (y < y1) b = y1 == y0 ? x1 : x0 + (x1 - x0) * (y - y0) / (y1 - y0);
+        else b = y2 == y1 ? x1 : x1 + (x2 - x1) * (y - y1) / (y2 - y1);
+        gfx_hline(px, a, b, y, c);
     }
 }
 /* Vertical gradient from `top` to `bottom` (0xRRGGBB) over rows y0..y1-1 with 4x4 ordered dithering, so the

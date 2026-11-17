@@ -1,0 +1,9 @@
+{
+  "id": "aquarium",
+  "order": "006",
+  "required": false,
+  "sources": [
+    "firmware/app.c",
+    "firmware/aquarium_core.c"
+  ]
+}
