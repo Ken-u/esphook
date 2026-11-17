@@ -58,7 +58,7 @@ static void test_vector_from_the_pc_codec(void)
 static void test_refusals(void)
 {
     static mirror_strip_t strip;
-    char line[1100], broken[1100];
+    char line[sizeof vector + 16U], broken[sizeof vector + 16U];
     assert(strlen(vector) < sizeof line);
     assert(mirror_parse_strip("", &strip) == MIRROR_ERR_ARGS);
     assert(mirror_parse_strip("mirror hello", &strip) == MIRROR_ERR_ARGS);
@@ -100,7 +100,7 @@ static void test_made_in_c_round_trip(void)
     static mirror_strip_t strip;
     static uint16_t canvas[MIRROR_W * MIRROR_H];
     uint8_t payload[MIRROR_PAYLOAD];
-    char line[1100];
+    char line[sizeof vector + 16U];
     mirror_test_payload(payload, 0xF800U, 0x001FU, 3U);
     mirror_test_line(line, sizeof line, 255U, 7U, payload);
     assert(line[0] && strlen(line) == strlen("mirror s 255 7 xxxx ") + MIRROR_B64);
@@ -149,7 +149,7 @@ static void test_the_ring(void)
 static void test_garbage_never_crashes(void)
 {
     static mirror_strip_t strip;
-    char line[1100];
+    char line[sizeof vector + 16U];
     unsigned accepted = 0;
     for (unsigned round = 0; round < 4000U; ++round) {
         snprintf(line, sizeof line, "%s", vector);

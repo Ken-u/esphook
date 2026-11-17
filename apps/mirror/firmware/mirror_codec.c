@@ -6,7 +6,7 @@ uint16_t mirror_crc16(const uint8_t *data, size_t len)
     uint16_t crc = 0xFFFFU;
     for (size_t i = 0; i < len; ++i) {
         crc = (uint16_t)(crc ^ ((uint16_t)data[i] << 8));
-        for (unsigned bit = 0; bit < 8U; ++bit) crc = (uint16_t)((crc & 0x8000U) ? (crc << 1) ^ 0x1021U : crc << 1);
+        for (unsigned bit = 0; bit < 8U; ++bit) crc = (uint16_t)((crc & 0x8000U) ? ((unsigned)crc << 1) ^ 0x1021U : (unsigned)crc << 1);
     }
     return crc;
 }

@@ -339,7 +339,7 @@ static void sync_hud(state_t *s, const app_context_t *ctx)
     if (pop) {
         if (g->pop_kind) snprintf(text, sizeof text, "炸药+1");
         else snprintf(text, sizeof text, "+%d", g->pop_value);
-        if (strcmp(text, s->shown_pop)) { snprintf(s->shown_pop, sizeof s->shown_pop, "%s", text); app_ui_text(s->pop, text); }
+        if (strcmp(text, s->shown_pop)) { snprintf(s->shown_pop, sizeof s->shown_pop, "%.*s", (int)sizeof s->shown_pop - 1, text); app_ui_text(s->pop, text); }
         lv_obj_set_pos(s->pop, 90, 14 - (int)(g->pop_ms / 80U));
         lv_obj_set_style_text_opa(s->pop, (lv_opa_t)(g->pop_ms < 700U ? 255U : 255U - (g->pop_ms - 700U) * 255U / 300U), LV_PART_MAIN);
     }

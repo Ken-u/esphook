@@ -318,7 +318,7 @@ static void sync_hud(state_t *s, const app_context_t *ctx)
     if (pop) {
         if (g->result == JP_PERFECT) snprintf(text, sizeof text, "完美+%d", g->popup);
         else snprintf(text, sizeof text, "+%d", g->popup);
-        if (strcmp(text, s->shown_pop)) { snprintf(s->shown_pop, sizeof s->shown_pop, "%s", text); app_ui_text(s->pop, text); }
+        if (strcmp(text, s->shown_pop)) { snprintf(s->shown_pop, sizeof s->shown_pop, "%.*s", (int)sizeof s->shown_pop - 1, text); app_ui_text(s->pop, text); }
         int x, feet, lift;
         pawn_screen(s, &x, &feet, &lift);
         const int base_y = scr_y(s, (int)g->pa16, (int)g->pb16) - 30 - (int)(g->popup_ms / 40U);
