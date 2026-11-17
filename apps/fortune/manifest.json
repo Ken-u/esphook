@@ -1,0 +1,9 @@
+{
+  "id": "fortune",
+  "order": "007",
+  "required": false,
+  "sources": [
+    "firmware/app.c",
+    "firmware/fortune_core.c"
+  ]
+}

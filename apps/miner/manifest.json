@@ -1,0 +1,1 @@
+{"id":"miner","order":"017","required":false,"sources":["firmware/app.c","firmware/miner_core.c"]}

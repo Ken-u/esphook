@@ -25,6 +25,9 @@ typedef struct {
  * saved one is gone; at most one app may set it, and `face` stays the fallback when none does. */
 enum { APP_HIDDEN = 1U, APP_STANDBY = 2U, APP_NOTIFICATIONS = 4U, APP_DEFAULT_STANDBY = 8U };
 
+/* What an app that is not on screen can ask of the framework (see app_descriptor.wake). */
+typedef enum { APP_WAKE_NONE = 0, APP_WAKE_IDLE, APP_WAKE_NOW } app_wake_t;
+
 /* All lifecycle/event/tick/render callbacks run on the UI task. command is the
  * only exception: called by the USB task; it must enqueue/copy and never use UI. */
 struct app_descriptor {
@@ -40,6 +43,13 @@ struct app_descriptor {
     void (*render)(app_context_t *);
     void (*icon)(void *parent, int x, int y, bool selected);
     bool (*command)(const char *line);
+    /* Optional, UI task: asked about every app that is not the active one a few times a second (never while it is
+     * the active app: it has its own on_tick). APP_WAKE_NOW makes the framework open this app whatever is on screen
+     * (an alarm); APP_WAKE_IDLE only while the device sits on its standby app (an hourly chime). The call is
+     * cheap and has no state of its own to touch: the app keeps its schedule in its own static data (loaded in
+     * init), and it sees the reason when it is entered. It cannot be given the context: the arena belongs to the
+     * app on screen. */
+    app_wake_t (*wake)(uint64_t now_ms);
 };
 struct app_context {
     app_manager_t *manager;

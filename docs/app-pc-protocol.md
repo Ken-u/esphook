@@ -10,6 +10,8 @@
 | 按键事件查看器 | `uv run --with pyserial python apps/key_report/pc/main.py` |
 | USB 键盘窗口 | `python run.py keys --config apps/key_report/pc/bindings.example.json` |
 | 实时键盘转发 | `uv run apps/key_report/pc/bridge.py`（默认空格 = K1，全局监听，按住即设备按住）或 `python run.py bridge` |
+| 设置设备时钟 | `python run.py time`（`--show` 只读）；`AppLink.set_time()` |
+| 副屏（电脑窗口投到小屏） | `python run.py mirror --window <名字>` 或 `--region x,y,w,h`；协议见下，说明见 [robot-mirror.md](robot-mirror.md) |
 | 通用 USB SDK | `framework/pc/esphook_sdk`，AppLink / UsbLink |
 
 没有 uv 时安装 pyserial 后用 Python 3。传 `--port` 指定串口，否则匹配唯一 Espressif USB；同一串口不要同时运行 monitor 和配套。demo / key_report / stock 支持 `--dry-run`，不会打开 USB。
@@ -50,6 +52,7 @@ finally:
 | keymap | 无 mapping 时读取；写入完整 `{"physical":[0,1,2],"usb":[0,1,2],"words":["ok","continue","done"]}`；同步保存 NVS |
 | hardware | 无 profile 时读取；可选 profile 为 auto/screen/robot，可选 reboot 布尔需同时带 profile |
 | message | 带 app 和 data 对象；data 序列化后 ≤128 UTF-8 字节，只送当前前台目标应用 |
+| time | 无 epoch 时读取；带 `epoch`（UTC 秒，2025 年及以后）和 `tz_min`（本地与 UTC 的分钟差，-720..840）时设置设备时钟。ACK 的 `time` 对象含 `valid`、`epoch`、`tz_min`，设置后立刻生效。设备没有电池时钟，闹钟每次上电都要校时 |
 
 返回 `{"v":1,"type":"app_ack","seq":2,"ok":true,"queued":true}`。seq 匹配请求；`queued` 只保证操作已入队，open 后使用 wait_active/status 验证进入。standby 保存结果通过后续 status 的 standby 确认，保存失败保留旧值并输出错误。message 若在消费前离开目标页面会被丢弃，不跨应用保留私有消息。
 
@@ -66,6 +69,10 @@ finally:
 SDK 过滤普通日志、合并分包，只接受匹配 seq 的 ACK，并在等待 ACK 时暂存事件。事件队列最多 256 项，消费者需及时 poll；过慢会丢弃最旧事件。错误/断开以异常报告，关闭端口后由应用自己的协议策略清理会话。
 
 大数据不要塞进通用 message。参考 stock 的 begin/bars/show：校验总数、偏移、行内容，上传到暂存区，完整后一次提交；数据只在 RAM，设置才写 NVS。使用 game v1 的股票上位机仍与本版兼容，具体字段见 [robot-stock-t.md](robot-stock-t.md)。
+
+## 应用自己的命令行：副屏
+
+通用 `app ` 通道之外，应用可以在 `command(line)` 里认领自己前缀的行（USB 任务调用，只校验、复制、入队）。副屏用 `mirror hello`、`mirror s <帧> <条> <crc16> <base64>`、`mirror bye`，每行回一行 `{"v":1,"type":"mirror_ack",...}`；字段和重试规则见 [robot-mirror.md](robot-mirror.md)。SDK 为这类协议提供两个小接口：`UsbLink.send_line(text)` 写一行原始文本（≤1024 字节，不能含换行），`UsbLink.wait_message(type, match, timeout)` 等下一条指定类型且满足 `match` 的 JSON（其间的按键事件仍进 `events`，超时返回 None）。这类协议要自己负责确认和重发，通用 SDK 不做。
 
 ## 回复长度与丢帧
 

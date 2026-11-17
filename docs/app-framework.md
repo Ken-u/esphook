@@ -23,6 +23,7 @@ idf.py build
 | `framework/core/app_manager.c` | 纯 C 生命周期、状态 arena、导航与渲染节拍 |
 | `framework/core/app_keys.c` | 实体/USB 输入合并、映射与 USB 租期取消 |
 | `framework/core/app_input.c` | 25ms 消抖、500ms 确认、800ms 三击、松手消费 |
+| `framework/core/app_time.c` | 墙上时钟换算（公历、星期、时区偏移）的纯函数，闹钟和幸运签用 |
 | `framework/include/esphook/app_ui.h` | LVGL 标签、矩形、图层、字体、确认圆与共享 RGB565 画布 |
 | `framework/include/esphook/app_gfx.h` | 画布软件绘图：线/圆/圆环/椭圆光晕/渐变（抖动）、半透明叠加、调色板点阵、整数开方、山脉/云/太阳，只在 UI 任务调用 |
 | `framework/include/esphook/app_services.h` | 雷达、舵机、Hook、显示协议、设备信息、时钟、随机数、PC 事件 |
@@ -58,12 +59,13 @@ const app_descriptor_t esphook_app_counter = {
 | `render(ctx)` | 根据 refresh_ms 和脏状态绘制；菜单 16ms、投篮 33ms、表情/做 T 40ms；帧率需实屏测量 |
 | `icon(parent,x,y,selected)` | 在提供的 28×28 区域画代码图标；不能保存 parent 地址或访问当前应用 state |
 | `command(line)` | 唯一从 USB 任务调用的回调；只解析并向自己的线程安全模型/队列写数据，禁止 LVGL 和读取 UI state |
+| `wake(now_ms)` | 可选；UI 任务，每秒几次询问**不在屏幕上**的应用要不要被打开：`APP_WAKE_NOW` 无论当前是什么都打开（闹钟），`APP_WAKE_IDLE` 只在设备停在待机应用时打开（整点报时）；见下面“唤醒、时钟与存储” |
 | `ctx->state` | 当前应用独占、按 max_align_t 对齐的 2048 字节 arena；state_size 超限拒绝启动；退出后地址内容失效 |
 | `ctx->root` | 框架拥有的 LVGL 根节点；应用不能删除 root，不能在 lv_screen_active 下另建应用节点 |
 
 除 init 和 command 外，回调都由 UI 任务调用。导航 `app_open/menu/idle` 延迟到回调返回提交；不允许把 ctx 或事件临时指针留给后台任务。回调中不等待、联网或执行长计算；传输模型需要跨任务时独立同步，例如 stock_transport 的互斥锁。
 
-所有应用共用 2048 字节会话区，而不是每个应用预留一份。雷达、K 线、小恐龙、滑雪、投篮、新婚快乐、电子木鱼、水族箱、钓鱼、星际战机和极速赛车共用 160×64 的 20,480 字节像素缓冲（`APP_CANVAS_W/H`；雷达和 K 线只用其中 160×48），整屏重绘的游戏用 `app_gfx.h` 里的有裁剪绘图函数。共享画布每次使用都重绘，切出前清理图片缓存，参见雷达/股票的 on_leave。常驻股票上传暂存区仍在应用自己的 transport 中，只有完整数据才提交。
+所有应用共用 2048 字节会话区，而不是每个应用预留一份。雷达、K 线、小恐龙、滑雪、投篮、新婚快乐、电子木鱼、水族箱、钓鱼、星际战机、极速赛车、黄金矿工、跳一跳、僵尸围城、幸运签、闹钟和副屏共用 160×64 的 20,480 字节像素缓冲（`APP_CANVAS_W/H`；雷达和 K 线只用其中 160×48），整屏重绘的游戏用 `app_gfx.h` 里的有裁剪绘图函数。共享画布每次使用都重绘，切出前清理图片缓存，参见雷达/股票的 on_leave。常驻股票上传暂存区仍在应用自己的 transport 中，只有完整数据才提交。
 
 ## 注册与应用配置
 
@@ -78,7 +80,7 @@ const app_descriptor_t esphook_app_counter = {
 | flags | 语义 |
 | --- | --- |
 | `APP_HIDDEN` | 系统应用，不占启动器、设置应用计数；launcher 使用此标记 |
-| `APP_STANDBY` | 可作为待机应用，当前有 wedding、face、hook、radar |
+| `APP_STANDBY` | 可作为待机应用，当前有 wedding、face、hook、radar、alarm |
 | `APP_DEFAULT_STANDBY` | 与 `APP_STANDBY` 一起使用：NVS 没有保存待机、或保存的应用已不存在时的默认待机，当前是 wedding；整个工程最多一个，没有则回退 face |
 | `APP_NOTIFICATIONS` | 待机收到通知时切到此应用，当前由 hook 使用；进行中的游戏、设置不会被抢占 |
 
@@ -91,7 +93,7 @@ GPIO6 内部上拉、按下接 GND，双边沿 ISR 只唤醒输入任务。通�
 - 800ms 内第三次有效按下优先回 launcher，第三次松手被消费。为保持即时短按，前两次可能已经执行当前应用动作。
 - 导航提交会消费正在按住的键，避免长按进入后松手触发新应用。
 - **可屏蔽三击**：靠连按玩的游戏（开炮、投喂、敲木鱼、跳跃）在 `on_enter` 里调用 `app_set_triple_exit(ctx, false)`，快速三次按下就只是三次普通按下，不会再回菜单；`app_triple_exit(ctx)` 查询当前状态。该开关在**每次切换应用时恢复为开启**，忘记调用不会让下一个应用失去三击，也不用在 `on_leave` 里还原。
-- **屏蔽后的出口**：长按 K1 达到指定时间回菜单，`app_set_exit_hold(ctx, ms)` 开启（1000..10000ms，0 关闭，默认关闭，同样随应用切换复位），`app_exit_hold_progress(ctx)` 给出已按住的毫秒数，`app_ui_hold_line()` 画 2px 进度线（有 500ms 确认时金色先填满，之后红色填到出口；无确认时 600ms 之前不显示，普通按键不闪）。应用仍会收到 DOWN，500ms 时仍有 CONFIRM；到时回菜单并消费这次按住，松手无动作。**只在这次按下本身不改变画面时开启**（例如标题/结束画面用 SHORT 开局、木鱼敲击、水族箱投喂），并避免按住了很久的战斗按键在结算画面一松就退出：应用要自己记下“这一按开始于游戏中”，这样的按住不开启出口。目前：星际战机、极速赛车、钓鱼只在平静画面开启（2 秒）；水族箱、木鱼、投篮、小恐龙随时开启（2 秒），滑雪 3 秒；投篮结算页任何短按仍直接回菜单。
+- **屏蔽后的出口**：长按 K1 达到指定时间回菜单，`app_set_exit_hold(ctx, ms)` 开启（1000..10000ms，0 关闭，默认关闭，同样随应用切换复位），`app_exit_hold_progress(ctx)` 给出已按住的毫秒数，`app_ui_hold_line()` 画 2px 进度线（有 500ms 确认时金色先填满，之后红色填到出口；无确认时 600ms 之前不显示，普通按键不闪）。应用仍会收到 DOWN，500ms 时仍有 CONFIRM；到时回菜单并消费这次按住，松手无动作。**只在这次按下本身不改变画面时开启**（例如标题/结束画面用 SHORT 开局、木鱼敲击、水族箱投喂），并避免按住了很久的战斗按键在结算画面一松就退出：应用要自己记下“这一按开始于游戏中”，这样的按住不开启出口。目前：星际战机、极速赛车、钓鱼、僵尸围城只在平静画面开启（2 秒）；水族箱、木鱼、投篮、小恐龙、黄金矿工随时开启（2 秒），滑雪 3 秒；投篮结算页任何短按仍直接回菜单。跳一跳靠计时按住而不是连按，**保留全局三击**，没有按住退出（蓄力要按住很久）；副屏、闹钟、幸运签也保留三击。
 - 待机应用中的 K1 短按统一开菜单；非待机入口打开同一应用时由应用处理短按。三击始终保留。
 - 启动器按注册表每页三个图标，短按循环选择，500ms 确认圆填满进入；10s 无输入回当前选定的待机应用。
 
@@ -111,6 +113,14 @@ USB 按住租期为 350ms，SDK 通过 hold/press/poll 每 100ms 续期；失联
 
 Hook 的 HTTP `/notify`、`/dismiss`、配对、鉴权和 device link 协议保留。两种硬件都会启动可选 device link；无配置时等待。通知模型只在 UI 任务修改，`app_hook_read` 给应用快照，`app_hook_reply` 复制 client/session/word/callback 后入后台队列，网络不阻塞 UI。回传被 device link 队列接受或 HTTP 返回 2xx 后才提交 dismiss；失败保留通知并输出错误，不把 queued 当作主机已执行。
 
+## 唤醒、时钟与存储
+
+**唤醒**：不在屏幕上的应用也能让设备打开它。descriptor 的可选回调 `wake(now_ms)` 由 UI 任务每 `APP_WAKE_POLL_MS`（250ms）问一次所有非活动应用，返回 `APP_WAKE_NOW`（无论当前是什么都打开：闹钟）或 `APP_WAKE_IDLE`（只在设备停在待机应用时打开：整点报时）。回调必须很便宜，不能碰 LVGL，也拿不到 ctx：arena 属于正在屏幕上的应用，所以应用把日程放在**自己的静态数据**里，在 `init()` 里加载，进入应用后再用 `app_time_read()` 判断“是为了什么被打开的”。`APP_WAKE_NOW` 会抢占菜单、设置乃至正在玩的游戏（所以只给闹钟这样的事），`APP_WAKE_IDLE` 在设备不是停在待机应用时一律让位。
+
+**墙上时钟**：设备没有电池时钟，`app_time_read(&t)` 返回本地时间（`valid`、`epoch`、`tz_min`、年月日、时分秒、星期），未校时 `valid` 为 false，应用必须处理这种情况。校时来源是 PC 的 USB `time` 操作（`AppLink.set_time()` / `python run.py time`）和联网后的 SNTP；`app_time_set()` 只由 USB 任务调用。换算在 `framework/core/app_time.c`，是纯函数，主机测试 `./scripts/test-app-time.sh`。
+
+**设置存储**：`app_storage_load/save(key, data, size)` 给每个应用几个字节的跨重启设置：key 是 1..15 个 `[a-z0-9_]`，size 至多 `APP_STORAGE_MAX`（64 字节），读取失败（没存过或大小不符）不改动调用者的缓冲区。写 flash 慢：只在玩家明确修改时保存，不要每帧写；数据格式要带版本号和范围校验（读到别人或旧版本的数据就用默认值，闹钟的 `al_config_valid()` 是例子）。
+
 ## 内置应用与设置
 
 | 应用 | 实现 |
@@ -125,6 +135,12 @@ Hook 的 HTTP `/notify`、`/dismiss`、配对、鉴权和 device link 协议保�
 | 钓鱼 | 抛竿、等鱼咬钩，按提示的时机/时长按键拉鱼，鱼越大需要的次数越多、舵机摇得越凶；纯 C 规则，见 [robot-fishing.md](robot-fishing.md) |
 | 星际战机 | 第一人称太空射击，雷达左右转向，按键开炮，被击中掉血并摇舵机，共 3 滴血，见 [robot-starship.md](robot-starship.md) |
 | 极速赛车 | 第一人称伪 3D 公路赛，按住加速，转弯时舵机跟着转，氮气定时充满，见 [robot-racing.md](robot-racing.md) |
+| 黄金矿工 | 单键放钩，钩金块/钻石/神秘袋，重物可以扔炸药，限时达到目标金额过关，最多 20 关；纯 C 核心，见 [robot-miner.md](robot-miner.md) |
+| 跳一跳 | 等距方块，按住蓄力、松开起跳，落中心加倍并连击；纯 C 核心，保留三击退出，见 [robot-jump.md](robot-jump.md) |
+| 僵尸围城 | 第一人称打僵尸，雷达（或 K2/K3）转向，按住开火，被咬掉血并轻摇舵机，3 滴血；纯 C 核心，见 [robot-zombie.md](robot-zombie.md) |
+| 幸运签 | 按住摇签筒、松手出签：事业/人际/家庭/学业/爱情里随机一个，大吉/中吉/小吉，幸运数和幸运色；纯 C 核心，见 [robot-fortune.md](robot-fortune.md) |
+| 闹钟 | 七段数码管时钟 + 闹钟 + 整点报时，到点由框架 `wake` 自动打开，可贪睡，设置里可开舵机提醒；需要 USB/Wi-Fi 校时，见 [robot-alarm.md](robot-alarm.md) |
+| 副屏 | 把电脑上的某个窗口或屏幕区域抓取后经 USB 投到小屏，条带 + 16 色调色板 + CRC，逐条确认，PC 端 `run.py mirror`；见 [robot-mirror.md](robot-mirror.md) |
 | 做 T | PC 行情/均线/交易/结算；设备端 RAM 数据、图表和按键协议 |
 | 雷达 | 三目标扇形调试图，服务快照 |
 | Hook | 通知展示、未读信息、选择回复词及确认回传 |
@@ -133,7 +149,7 @@ Hook 的 HTTP `/notify`、`/dismiss`、配对、鉴权和 device link 协议保�
 | 示例 | 点击计数、清零、动画、雷达状态和 PC 自定义标题 |
 | 启动器 | 隐藏的系统应用，代码图标、分页、选择动画和确认圆 |
 
-设置短按循环六页。硬件配置页长按编辑、短按切换、长按保存，再长按重启生效。待机页长按进入编辑，短按切换可选应用，长按保存；三击随时回菜单。固件版本取 ESP-IDF app descriptor，当前版本由 `version.txt` 管理。数量统计已编译的可见应用，默认 16 个，不含系统 launcher；不显示凭据或认证密钥。
+设置短按循环六页。硬件配置页长按编辑、短按切换、长按保存，再长按重启生效。待机页长按进入编辑，短按切换可选应用，长按保存；三击随时回菜单。固件版本取 ESP-IDF app descriptor，当前版本由 `version.txt` 管理。数量统计已编译的可见应用，默认 22 个，不含系统 launcher；不显示凭据或认证密钥。
 
 PC 的运行入口和协议见 [app-pc-protocol.md](app-pc-protocol.md)。旧投篮命令仍可用，start 排队打开新局，stop 回菜单，status 查询最近快照；`robot menu` 通用开菜单。
 
@@ -157,7 +173,15 @@ python3 apps/key_report/pc/test_bridge.py
 ./scripts/test-fishing.sh
 ./scripts/test-starship.sh
 ./scripts/test-racing.sh
+./scripts/test-app-time.sh
+./scripts/test-fortune.sh
+./scripts/test-alarm.sh
+./scripts/test-miner.sh
+./scripts/test-jump.sh
+./scripts/test-zombie.sh
+./scripts/test-mirror.sh
 ./scripts/test-robot-ui.sh
+python3 apps/mirror/pc/test_mirror.py   # 需要 Pillow
 python3 apps/stock/pc/test_stock_t.py
 python3 apps/hook/pc/test_hooks.py
 python3 apps/hook/pc/test_device_link.py
@@ -172,6 +196,6 @@ git clone --depth 1 --branch v9.5.0 https://github.com/lvgl/lvgl.git /tmp/esphoo
 LVGL_SOURCE_DIR=/tmp/esphook-lvgl ./scripts/test-app-ui.sh
 ```
 
-它使用现有 fontdata 和 64KB LVGL 堆，遍历所有 manifest 应用、重复切换、检查根节点释放、设置持久化回调与 PC 消息，并实际玩一遍投篮（出手、命中/未进、时间到结算）、小恐龙和滑雪（起跳/翻转、落地、结束、重开）、电子木鱼（敲击、浮字、自动、第 108 下）和新婚快乐（两种横幅、礼花、祝福语消息）；每次截图前检查屏幕上每个 label 的每个字都在固件字库里（缺字会显示成空白），并断言 LVGL 堆占用低于 80%（可设 `ESPHOOK_HEAP_REPORT=1` 打印各应用占用）。输出 PPM 屏幕帧。CI 上传这些帧，额外构建 ESP-IDF 5.5.4 默认通用配置与禁用机器人驱动的旧 Hook 配置。可选应用的完整硬件行为仍需要实机确认；主机 UI 测试不会驱动舵机，也不能证明实际 FPS。
+它使用现有 fontdata 和 64KB LVGL 堆，遍历所有 manifest 应用、重复切换、检查根节点释放、设置持久化回调与 PC 消息，并实际玩一遍投篮（出手、命中/未进、时间到结算）、小恐龙和滑雪（起跳/翻转、落地、结束、重开）、电子木鱼（敲击、浮字、自动、第 108 下）、新婚快乐（两种横幅、礼花、祝福语消息）、黄金矿工、跳一跳、僵尸围城、幸运签、闹钟（含框架 wake 打开应用）和副屏（用 USB 命令喂入条带、坏行、冻结、中断、断开）；每次截图前检查屏幕上每个 label 的每个字都在固件字库里（缺字会显示成空白），并断言 LVGL 堆占用低于 80%（可设 `ESPHOOK_HEAP_REPORT=1` 打印各应用占用）。输出 PPM 屏幕帧。CI 上传这些帧，额外构建 ESP-IDF 5.5.4 默认通用配置与禁用机器人驱动的旧 Hook 配置。可选应用的完整硬件行为仍需要实机确认；主机 UI 测试不会驱动舵机，也不能证明实际 FPS。
 
 `APP_UI_BUILD_DIR` / `APP_UI_FRAMES_DIR` 可覆盖无屏测试目录。CI 的固件尺寸检查沿用两个 OTA 槽；先看实际体积再决定是否取消 OTA。未新增固件图片或大型游戏依赖。

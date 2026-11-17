@@ -14,6 +14,10 @@ esp_err_t config_set_hardware_profile(app_hardware_profile_t profile);
 esp_err_t config_get_standby(char *out, size_t len);
 esp_err_t config_set_standby(const char *id);
 
+/* Small per-app settings (app_storage_*): `*len` is the buffer size in, the stored size out. Key 1..15 characters. */
+esp_err_t config_app_blob_get(const char *key, void *out, size_t *len);
+esp_err_t config_app_blob_set(const char *key, const void *data, size_t len);
+
 esp_err_t config_set_wifi(const char *ssid, const char *pass);
 esp_err_t config_get_wifi_ssid(char *out, size_t len);
 esp_err_t config_get_wifi_pass(char *out, size_t len);

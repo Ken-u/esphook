@@ -140,10 +140,28 @@ void app_manager_key(app_manager_t *m, unsigned key, bool down, uint64_t ms)
     if (key) action &= ~INPUT_MENU;
     dispatch(m, key, action, ms);
 }
+/* Apps that are not on screen may ask to be opened (an alarm). Asked a few times a second, never the active app. */
+static void poll_wake(app_manager_t *m, uint64_t ms)
+{
+    if (m->pending_set || (m->wake_ms && ms >= m->wake_ms && ms - m->wake_ms < APP_WAKE_POLL_MS)) return;
+    m->wake_ms = ms ? ms : 1U;
+    for (size_t i = 0; i < m->catalog_count; ++i) {
+        const app_descriptor_t *a = m->catalog[i];
+        if (!a->wake || a == m->context.app) continue;
+        const app_wake_t w = a->wake(ms);
+        if (w == APP_WAKE_NOW || (w == APP_WAKE_IDLE && m->idle)) {
+            m->activity_ms = ms; m->dirty = true;
+            request(&m->context, i, false);
+            return;
+        }
+    }
+}
 void app_manager_tick(app_manager_t *m, uint64_t ms)
 {
     if (!m->ready) return;
     m->context.now_ms = ms;
+    poll_wake(m, ms);
+    app_manager_commit(m);
     if (m->exit_hold_ms && m->input[0].down && !m->input[0].blocked && ms >= m->input[0].down_ms &&
         ms - m->input[0].down_ms >= m->exit_hold_ms) { /* held long enough: the deliberate exit of a game with no triple */
         m->activity_ms = ms; m->dirty = true;

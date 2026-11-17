@@ -1,0 +1,1 @@
+{"id":"alarm","order":"008","required":false,"sources":["firmware/app.c","firmware/alarm_core.c"]}

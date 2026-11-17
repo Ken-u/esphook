@@ -18,6 +18,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/time.h>
+#include <time.h>
 
 typedef struct { char client[24], session[48], word[16], callback[32]; } reply_t;
 static QueueHandle_t s_replies;
@@ -118,6 +120,41 @@ void app_device_info(app_device_info_t *out)
 }
 uint32_t app_random(void) { return esp_random(); }
 uint64_t app_clock_ms(void) { return (uint64_t)esp_timer_get_time() / 1000; }
+static volatile int s_tz_min = APP_TZ_DEFAULT_MIN;
+void app_time_read(app_time_t *out)
+{
+    const time_t now = time(NULL); /* set over USB (app_time_set) or by SNTP once Wi-Fi is up */
+    app_time_from_epoch(now > 0 ? (uint32_t)now : 0U, s_tz_min, out);
+}
+bool app_time_set(uint32_t epoch, int tz_min)
+{
+    if (epoch < APP_EPOCH_MIN || !app_time_tz_valid(tz_min)) return false;
+    const struct timeval tv = {.tv_sec = (time_t)epoch, .tv_usec = 0};
+    if (settimeofday(&tv, NULL) != 0) return false;
+    s_tz_min = tz_min;
+    return true;
+}
+static bool storage_key_ok(const char *key)
+{
+    size_t n = key ? strlen(key) : 0;
+    if (n < 1 || n > 15) return false;
+    for (size_t i = 0; i < n; ++i)
+        if (!((key[i] >= 'a' && key[i] <= 'z') || (key[i] >= '0' && key[i] <= '9') || key[i] == '_')) return false;
+    return true;
+}
+bool app_storage_load(const char *key, void *out, size_t size)
+{
+    if (!out || !size || size > APP_STORAGE_MAX || !storage_key_ok(key)) return false;
+    unsigned char buffer[APP_STORAGE_MAX]; size_t length = sizeof buffer;
+    if (config_app_blob_get(key, buffer, &length) != ESP_OK || length != size) return false;
+    memcpy(out, buffer, size);
+    return true;
+}
+bool app_storage_save(const char *key, const void *data, size_t size)
+{
+    if (!data || !size || size > APP_STORAGE_MAX || !storage_key_ok(key)) return false;
+    return config_app_blob_set(key, data, size) == ESP_OK;
+}
 bool app_transport_write(const char *line) { return cdc_write(line) == ESP_OK; }
 bool app_host_event(const app_context_t *ctx, const char *action, unsigned key, const char *text)
 {

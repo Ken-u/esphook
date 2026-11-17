@@ -10,7 +10,7 @@ ROOT=Path(__file__).resolve().parent
 def main(argv=None):
     argv=sys.argv[1:] if argv is None else argv
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument("command",choices=("flash","input","keys","bridge","demo","stock","hook","key-report","monitor","hardware","doctor"))
+    p.add_argument("command",choices=("flash","input","keys","bridge","demo","stock","hook","key-report","mirror","time","monitor","hardware","doctor"))
     if not argv or argv[0] in ("--help","-h"):
         p.print_help();return 0
     args=p.parse_args(argv[:1]);rest=argv[1:]
@@ -22,9 +22,12 @@ def main(argv=None):
     if args.command=="flash":
         from tools.flash import main as flash
         return flash(rest)
-    if "--help" not in rest and "-h" not in rest and "--dry-run" not in rest:
+    if "--help" not in rest and "-h" not in rest and ("--dry-run" not in rest or args.command=="mirror"):
         from tools.bootstrap import ensure
-        ensure()
+        if args.command=="mirror": # Pillow draws the picture, even for --dry-run; Quartz is how a single window is captured on macOS.
+            ensure(("pillow",),("pyobjc-framework-Quartz",) if sys.platform=="darwin" else ())
+        else:
+            ensure()
     if args.command=="input":
         from tools.input import main as input_main
         return input_main(rest)
@@ -35,7 +38,7 @@ def main(argv=None):
         from tools.hardware import main as hardware
         return hardware(rest)
     scripts={"keys":"apps/key_report/pc/controller.py","bridge":"apps/key_report/pc/bridge.py","demo":"apps/demo/pc/main.py","stock":"apps/stock/pc/stock_t.py",
-             "hook":"apps/hook/pc/esphookd.py","key-report":"apps/key_report/pc/main.py"}
+             "hook":"apps/hook/pc/esphookd.py","key-report":"apps/key_report/pc/main.py","mirror":"apps/mirror/pc/main.py","time":"apps/alarm/pc/main.py"}
     script=ROOT/scripts[args.command]
     sys.path.insert(0,str(script.parent));sys.argv=[str(script),*rest]
     runpy.run_path(str(script),run_name="__main__")

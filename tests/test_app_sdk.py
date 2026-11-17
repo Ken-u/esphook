@@ -92,6 +92,44 @@ class SdkTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):link.set_bindings(dict(space=1))
         link.release_keys();self.assertEqual(link.serial.sent["op"],"keys_release")
 
+    def test_clock_read_and_set(self):
+        link=self.link()
+        def answer(raw):
+            sent=json.loads(raw.split(b" ",1)[1]);link.serial.sent=sent
+            time_info=dict(valid="epoch" in sent,epoch=sent.get("epoch",0),tz_min=sent.get("tz_min",480))
+            link.serial.rx.extend(json.dumps(dict(v=1,type="app_ack",seq=sent["seq"],ok=True,time=time_info)).encode()+b"\n")
+        link.serial.write=answer
+        self.assertFalse(link.clock()["valid"]);self.assertEqual(link.serial.sent["op"],"time");self.assertNotIn("epoch",link.serial.sent)
+        info=link.set_time(1763366400,-300)
+        self.assertEqual((link.serial.sent["epoch"],link.serial.sent["tz_min"]),(1763366400,-300));self.assertTrue(info["valid"])
+        link.set_time();self.assertAlmostEqual(link.serial.sent["epoch"],__import__("time").time(),delta=5)
+        self.assertEqual(link.serial.sent["tz_min"]*60,__import__("time").localtime().tm_gmtoff)
+        for bad in ((1000,0),(1763366400,900),(1763366400.5,0),(5000000000,0)):
+            with self.assertRaises(ValueError):link.set_time(*bad)
+
+    def test_app_command_lines_and_waiting_for_a_reply(self):
+        link=self.link()
+        link.serial.write=lambda raw:link.serial.history.append(raw)
+        link.send_line("mirror hello")
+        self.assertEqual(link.serial.history[-1],b"mirror hello\n")
+        link.send_line("x"*1023)  # plus the newline: exactly the firmware's 1024-byte line
+        self.assertEqual(len(link.serial.history[-1]),1024)
+        for bad in ("x"*1024,"two\nlines","mirror s 1\n"):
+            with self.assertRaises(ValueError,msg=bad[:12]):link.send_line(bad)
+        self.assertEqual(len(link.serial.history),2,"a rejected line must not reach the wire")
+
+        reply=lambda **kw:json.dumps(dict(v=1,**kw)).encode()+b"\n"
+        link.serial.rx.extend(b"I (7) log noise\n"+reply(type="game_button",key=0,action="short")+reply(type="mirror_ack",ok=False,f=3)
+                              +reply(type="app_event",app="mirror",action="pause")+reply(type="mirror_ack",ok=True,f=4))
+        got=link.wait_message("mirror_ack",lambda m:m.get("f")==4,timeout=0.5)
+        self.assertEqual(got["f"],4)
+        self.assertEqual([e["type"] for e in link.events],["game_button","app_event"],"button and app events seen on the way are kept for poll()")
+        self.assertEqual([e.get("action") for e in link.poll(0.0)],["short","pause"])
+        link.serial.rx.clear()
+        link.serial.rx.extend(reply(type="mirror_ack",ok=True,f=9))
+        self.assertIsNone(link.wait_message("mirror_ack",lambda m:m.get("f")==1,timeout=0.05),"timing out returns None")
+        self.assertEqual(link.wait_message("mirror_ack",timeout=0.05),None,"a consumed message is not delivered twice")
+
     def test_hardware_profile_round_trip(self):
         link=self.link()
         self.assertEqual(link.hardware()["active"],"auto")
@@ -139,8 +177,8 @@ class SdkTests(unittest.TestCase):
         link = object.__new__(AppLink)
         link.serial, link.sequence, link.events, link.pending, link.selected = ListAckSerial(frame), 0, deque(), bytearray(), False
         apps = link.catalog()
-        self.assertEqual([a["id"] for a in apps], ["aquarium", "basketball", "demo", "dino", "face", "fishing", "hook", "key_report", "muyu", "racing", "radar", "settings", "ski", "starship", "stock", "wedding"])
-        self.assertEqual(apps[0]["title"], "水族箱")
+        self.assertEqual([a["id"] for a in apps], ["alarm", "aquarium", "basketball", "demo", "dino", "face", "fishing", "fortune", "hook", "jump", "key_report", "miner", "mirror", "muyu", "racing", "radar", "settings", "ski", "starship", "stock", "wedding", "zombie"])
+        self.assertEqual({a["id"]: a["title"] for a in apps}["aquarium"], "水族箱")
 
     def test_opening_the_port_never_resets_the_chip(self):
         # USB Serial/JTAG resets the chip on DTR low + RTS high. Clearing DTR first (the old

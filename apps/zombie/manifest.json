@@ -1,0 +1,1 @@
+{"id":"zombie","order":"019","required":false,"sources":["firmware/app.c","firmware/zombie_core.c"]}

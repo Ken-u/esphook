@@ -172,6 +172,14 @@ static void ack(const app_request_t *request, bool ok, bool queued)
         cJSON_AddNumberToObject(hardware,"heap_min",esp_get_minimum_free_heap_size());
         if(request->reboot) cJSON_AddBoolToObject(j,"rebooting",true);
     }
+    if(ok && request->op==APP_OP_TIME) {
+        /* The clock as the device now has it; valid is false until a PC or Wi-Fi has set it. */
+        app_time_t now;app_time_read(&now);
+        cJSON *clock=cJSON_AddObjectToObject(j,"time");
+        cJSON_AddBoolToObject(clock,"valid",now.valid);
+        cJSON_AddNumberToObject(clock,"epoch",now.valid?(double)now.epoch:0);
+        cJSON_AddNumberToObject(clock,"tz_min",now.valid?now.tz_min:APP_TZ_DEFAULT_MIN);
+    }
     if (ok && (request->op == APP_OP_STATUS || request->op == APP_OP_LIST)) {
         char active[24], standby[24];
         portENTER_CRITICAL(&s_lock); strcpy(active, s_active); strcpy(standby, s_standby); portEXIT_CRITICAL(&s_lock);
@@ -209,6 +217,8 @@ bool app_runtime_command(const char *line)
             } else if(r.op==APP_OP_KEYMAP && r.keymap_set) {
                 ok=config_set_input_keymap(&r.keymap)==ESP_OK;
                 if(ok) { portENTER_CRITICAL(&s_lock);s_map_reload=true;portEXIT_CRITICAL(&s_lock); }
+            } else if(r.op==APP_OP_TIME && r.time_set) {
+                ok=app_time_set(r.epoch,r.tz_min);
             } else if(r.op==APP_OP_HARDWARE && r.hardware_set) {
                 ok=app_hardware_set_profile(r.hardware_profile);
                 if(ok && r.reboot) { portENTER_CRITICAL(&s_lock);s_reboot_at=clock_ms()+500;portEXIT_CRITICAL(&s_lock); }

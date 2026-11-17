@@ -54,6 +54,24 @@ jobs:
         run: ./scripts/test-starship.sh
       - name: Test racing game
         run: ./scripts/test-racing.sh
+      - name: Test wall-clock maths
+        run: ./scripts/test-app-time.sh
+      - name: Test lucky slip game
+        run: ./scripts/test-fortune.sh
+      - name: Test alarm clock and hourly chime schedule
+        run: ./scripts/test-alarm.sh
+      - name: Test gold miner game
+        run: ./scripts/test-miner.sh
+      - name: Test jump game
+        run: ./scripts/test-jump.sh
+      - name: Test zombie shooter
+        run: ./scripts/test-zombie.sh
+      - name: Test screen mirror strip codec and ring
+        run: ./scripts/test-mirror.sh
+      - name: Install Pillow for the screen mirror PC tool
+        run: python3 -m pip install pillow
+      - name: Test screen mirror PC tool and protocol against the firmware parser
+        run: python3 apps/mirror/pc/test_mirror.py
       - name: Test universal hardware profiles and optional-driver failure handling
         run: ./scripts/test-hardware.sh
       - name: Install UI protocol test dependency
@@ -87,6 +105,7 @@ jobs:
           bash -n scripts/stock-t.sh
           ./scripts/stock-t.sh --demo --dry-run
           python3 apps/demo/pc/main.py --dry-run
+          python3 apps/alarm/pc/main.py --dry-run
           python3 apps/key_report/pc/main.py --dry-run
           python3 apps/key_report/pc/bridge.py --dry-run
           ./install.sh --help

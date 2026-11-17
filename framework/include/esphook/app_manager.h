@@ -1,11 +1,13 @@
 #pragma once
 #include "app.h"
 
+#define APP_WAKE_POLL_MS 250U /* how often the apps that are not on screen are asked whether they want to be opened */
+
 struct app_manager {
     const app_descriptor_t *const *catalog;
     size_t catalog_count, active, standby, selected, pending;
     bool idle, pending_idle, pending_set, ready, dirty, triple_blocked;
-    uint64_t activity_ms, rendered_ms;
+    uint64_t activity_ms, rendered_ms, wake_ms;
     unsigned exit_hold_ms;
     app_input_t input[3];
     app_platform_t platform;

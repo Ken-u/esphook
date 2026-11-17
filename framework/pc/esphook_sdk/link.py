@@ -79,6 +79,23 @@ class UsbLink(VirtualKeys):
                 return msg
         raise TimeoutError(f"ESP 未确认 {self.prefix} 协议；检查固件和串口")
 
+    def send_line(self, text):
+        """Writes one raw protocol line for an app's own command prefix (the firmware reads at most 1024 bytes a line)."""
+        raw = text.encode() + b"\n"
+        if len(raw) > 1024 or b"\n" in text.encode():
+            raise ValueError("a protocol line must be one line of at most 1024 bytes")
+        self.serial.write(raw)
+
+    def wait_message(self, msg_type, match=None, timeout=1.0):
+        """The next JSON message of `msg_type` (and, when given, accepted by `match`), or None after `timeout` seconds.
+        Other messages are dropped, but button events seen on the way are kept for poll()."""
+        for msg in self._read(time.monotonic() + timeout):
+            if msg.get("type") in ("game_button", "app_event"):
+                self.events.append(msg)
+            if msg.get("type") == msg_type and (match is None or match(msg)):
+                return msg
+        return None
+
     def poll(self, timeout=0.02):
         self._renew_keys()
         deadline = time.monotonic() + timeout
@@ -133,3 +150,18 @@ class AppLink(UsbLink):
 
     def menu(self):
         return self.request(dict(op="menu"))
+
+    def clock(self):
+        """The device's wall clock as {valid, epoch, tz_min}; valid is False until a PC or Wi-Fi has set it."""
+        return self.request(dict(op="time"))["time"]
+
+    def set_time(self, epoch=None, tz_min=None):
+        """Sets the device clock (it has no battery: the alarm clock needs this after every power cycle unless Wi-Fi
+        fetches the time). Defaults to this computer's time and its current UTC offset."""
+        if epoch is None:
+            epoch = int(time.time())
+        if tz_min is None:
+            tz_min = (time.localtime(epoch).tm_gmtoff or 0) // 60
+        if type(epoch) is not int or type(tz_min) is not int or not 1735689600 <= epoch <= 4294967295 or not -720 <= tz_min <= 840:
+            raise ValueError("epoch must be a UTC second count from 2025 on and tz_min an offset in -720..840 minutes")
+        return self.request(dict(op="time", epoch=epoch, tz_min=tz_min))["time"]

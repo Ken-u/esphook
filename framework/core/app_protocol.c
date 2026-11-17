@@ -62,7 +62,7 @@ bool app_protocol_parse(const char *json, size_t length, app_request_t *out)
     if (!cJSON_IsNumber(v) || v->valuedouble != 1 || !cJSON_IsNumber(seq) || !isfinite(seq->valuedouble) ||
         seq->valuedouble < 1 || seq->valuedouble > 2147483647 || floor(seq->valuedouble) != seq->valuedouble || !cJSON_IsString(op)) goto done;
     out->seq = (int)seq->valuedouble;
-    const char *names[] = {"list", "status", "open", "menu", "standby", "message", "key", "keys_release", "keymap", "hardware"};
+    const char *names[] = {"list", "status", "open", "menu", "standby", "message", "key", "keys_release", "keymap", "hardware", "time"};
     unsigned n = 0; for (; n < sizeof names/sizeof names[0] && strcmp(op->valuestring, names[n]); ++n) { }
     if (n == sizeof names/sizeof names[0]) goto done;
     out->op = (app_op_t)n;
@@ -95,6 +95,15 @@ bool app_protocol_parse(const char *json, size_t length, app_request_t *out)
         const cJSON *profile=cJSON_GetObjectItemCaseSensitive(j,"profile"), *reboot=cJSON_GetObjectItemCaseSensitive(j,"reboot");
         if(profile) { if(!cJSON_IsString(profile) || !app_hardware_profile_parse(profile->valuestring,&out->hardware_profile)) goto done;out->hardware_set=true; }
         if(reboot) { if(!cJSON_IsBool(reboot) || !profile) goto done;out->reboot=cJSON_IsTrue(reboot); }
+    }
+    if(n==APP_OP_TIME) {
+        const cJSON *epoch=cJSON_GetObjectItemCaseSensitive(j,"epoch"), *tz=cJSON_GetObjectItemCaseSensitive(j,"tz_min");
+        if(epoch || tz) { /* both or neither: a bare time request only reads the clock */
+            if(!cJSON_IsNumber(epoch) || !cJSON_IsNumber(tz) || !isfinite(epoch->valuedouble) || !isfinite(tz->valuedouble) ||
+               floor(epoch->valuedouble)!=epoch->valuedouble || floor(tz->valuedouble)!=tz->valuedouble ||
+               epoch->valuedouble<APP_EPOCH_MIN || epoch->valuedouble>4294967295.0 || !app_time_tz_valid((int)tz->valuedouble)) goto done;
+            out->time_set=true;out->epoch=(uint32_t)epoch->valuedouble;out->tz_min=(int)tz->valuedouble;
+        }
     }
     valid = true;
 done:

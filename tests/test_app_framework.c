@@ -47,6 +47,48 @@ static void protocol(void)
     for(unsigned i=0;i<sizeof bad_hardware/sizeof bad_hardware[0];++i) assert(!app_protocol_parse(bad_hardware[i],strlen(bad_hardware[i]),&r));
     char nested[100];memset(nested,'[',20);memset(nested+20,']',20);assert(!app_protocol_parse(nested,40,&r));
 }
+/* An app that is not on screen can ask to be opened: an alarm (always) or an hourly chime (only on the standby screen). */
+static app_wake_t wake_level;static unsigned wake_calls;
+static app_wake_t wake_cb(uint64_t ms) { (void)ms;++wake_calls;return wake_level; }
+static void wake(void)
+{
+    app_descriptor_t clock_app=DESC("clock",APP_STANDBY);clock_app.wake=wake_cb;
+    const app_descriptor_t *const catalog[]={&launcher,&game,&face,&clock_app};
+    app_platform_t platform={.scene_create=scene2,.scene_delete=destroy2};
+    app_manager_t w;assert(app_manager_init(&w,catalog,4,&platform,"face",0));active(&w,"face");assert(w.idle);
+    wake_level=APP_WAKE_NONE;wake_calls=0;
+    app_manager_tick(&w,1000);app_manager_tick(&w,1100);app_manager_tick(&w,1200);
+    assert(wake_calls==1);active(&w,"face"); /* asked a few times a second, not every tick */
+    app_manager_tick(&w,1000+APP_WAKE_POLL_MS-1);assert(wake_calls==1);
+    app_manager_tick(&w,1000+APP_WAKE_POLL_MS);assert(wake_calls==2);active(&w,"face");
+    wake_level=APP_WAKE_IDLE;app_manager_tick(&w,2000);active(&w,"clock"); /* idle: an hourly chime may open */
+    assert(!w.idle);
+    unsigned calls=wake_calls;app_manager_tick(&w,3000);app_manager_tick(&w,4000);assert(wake_calls==calls); /* never asked while on screen */
+    assert(app_open(&w.context,"game"));app_manager_commit(&w);active(&w,"game");
+    app_manager_tick(&w,5000);active(&w,"game"); /* a chime does not interrupt a game */
+    wake_level=APP_WAKE_NOW;app_manager_tick(&w,6000);active(&w,"clock"); /* an alarm does */
+    assert(app_open(&w.context,"launcher"));app_manager_commit(&w);active(&w,"launcher");
+    app_manager_tick(&w,7000);active(&w,"clock"); /* even over the menu */
+    wake_level=APP_WAKE_NONE;app_idle(&w.context);app_manager_commit(&w);active(&w,"face");assert(w.idle);
+    app_manager_tick(&w,8000);app_manager_tick(&w,9000);active(&w,"face");
+    app_descriptor_t none=DESC("plain",0); /* an app without wake costs nothing */
+    const app_descriptor_t *const plain[]={&launcher,&face,&none};
+    app_manager_t q;assert(app_manager_init(&q,plain,3,&platform,"face",0));app_manager_tick(&q,1000);active(&q,"face");
+}
+static void time_protocol(void)
+{
+    app_request_t r;
+    const char *read="{\"v\":1,\"seq\":5,\"op\":\"time\"}";assert(app_protocol_parse(read,strlen(read),&r) && r.op==APP_OP_TIME && !r.time_set); /* a bare request reads the clock */
+    const char *set="{\"v\":1,\"seq\":6,\"op\":\"time\",\"epoch\":1763366400,\"tz_min\":480}";
+    assert(app_protocol_parse(set,strlen(set),&r) && r.op==APP_OP_TIME && r.time_set && r.epoch==1763366400U && r.tz_min==480);
+    const char *west="{\"v\":1,\"seq\":6,\"op\":\"time\",\"epoch\":1763366400,\"tz_min\":-300}";
+    assert(app_protocol_parse(west,strlen(west),&r) && r.tz_min==-300);
+    const char *bad[]={"{\"v\":1,\"seq\":6,\"op\":\"time\",\"epoch\":1763366400}","{\"v\":1,\"seq\":6,\"op\":\"time\",\"tz_min\":480}",
+        "{\"v\":1,\"seq\":6,\"op\":\"time\",\"epoch\":1000,\"tz_min\":480}","{\"v\":1,\"seq\":6,\"op\":\"time\",\"epoch\":1763366400,\"tz_min\":900}",
+        "{\"v\":1,\"seq\":6,\"op\":\"time\",\"epoch\":1763366400.5,\"tz_min\":480}","{\"v\":1,\"seq\":6,\"op\":\"time\",\"epoch\":\"1763366400\",\"tz_min\":480}",
+        "{\"v\":1,\"seq\":6,\"op\":\"time\",\"epoch\":5000000000,\"tz_min\":480}"};
+    for(unsigned i=0;i<sizeof bad/sizeof bad[0];++i) assert(!app_protocol_parse(bad[i],strlen(bad[i]),&r));
+}
 int main(void)
 {
     app_manager_t m;app_platform_t p={.scene_create=scene,.scene_delete=destroy,.release_services=release,.save_standby=save};
@@ -110,5 +152,5 @@ int main(void)
     active(&booted,"wedding");assert(booted.idle && !strcmp(app_standby_id(&booted.context),"wedding"));
     key(&booted,true,100);key(&booted,false,150);active(&booted,"launcher");
     app_manager_tick(&booted,10150);active(&booted,"wedding"); /* the menu timeout returns to the default standby */
-    protocol();puts("app framework: lifecycle ownership, catalog, cadence, standby persistence, default standby, global input, deferred navigation and bounded protocol passed");
+    protocol();time_protocol();wake();puts("app framework: lifecycle ownership, catalog, cadence, standby persistence, default standby, global input, deferred navigation, wake-ups and bounded protocol passed");
 }

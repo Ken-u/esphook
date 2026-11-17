@@ -1,6 +1,7 @@
 #pragma once
 #include "app.h"
 #include "app_hardware.h"
+#include "app_time.h"
 #include "robot_follow.h"
 #include "robot_ui_protocol.h"
 
@@ -43,6 +44,16 @@ void app_key_word(unsigned key, char *out, size_t size);
 void app_device_info(app_device_info_t *out);
 uint32_t app_random(void);
 uint64_t app_clock_ms(void);
+/* Local wall-clock time; `valid` is false until the PC or Wi-Fi has set it (there is no battery clock). */
+void app_time_read(app_time_t *out);
+/* Sets the clock (UTC epoch and the local offset): the USB `time` op, called from the USB task. */
+bool app_time_set(uint32_t epoch, int tz_min);
+/* A few bytes of settings per app that survive a reboot: `key` is 1..15 characters of [a-z0-9_], `size` at most
+ * APP_STORAGE_MAX. Load fails (and leaves `out` alone) when nothing was saved under that key or the size differs.
+ * Flash writes are slow: save on a deliberate change, never every frame. */
+#define APP_STORAGE_MAX 64U
+bool app_storage_load(const char *key, void *out, size_t size);
+bool app_storage_save(const char *key, const void *data, size_t size);
 bool app_transport_write(const char *line);
 /* Bounded USB app_event; no credentials and no UI work in transport callbacks. */
 bool app_host_event(const app_context_t *ctx, const char *action, unsigned key, const char *text);

@@ -12,6 +12,7 @@
 #include "display_model.h"
 #include "display_view.h"
 #include "net_wifi.h"
+#include "net_time.h"
 #include "beeper.h"
 #include "events.h"
 #include "http_server.h"
@@ -33,6 +34,7 @@ static void on_wifi_state(int state, const char *ip)
     e.net_state = state;
     strncpy(e.ip, ip ? ip : "", sizeof e.ip - 1);
     xQueueSend(display_q, &e, 0);
+    if (state == 2) net_time_start(); /* the alarm clock wants the time whenever the network is up */
     if (state == 2 && !s_http_started) {
         http_start();
         s_http_started = true;

@@ -1,0 +1,1 @@
+{"id":"mirror","order":"025","required":false,"sources":["firmware/app.c","firmware/mirror_codec.c"]}

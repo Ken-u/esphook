@@ -14,12 +14,13 @@ add_executable(apps_headless test_apps.c ${ESPHOOK_APP_SOURCES}
     "${PROJECT_DIR}/framework/core/app_input.c"
     "${PROJECT_DIR}/framework/core/app_keys.c"
     "${PROJECT_DIR}/framework/core/app_hardware.c"
+    "${PROJECT_DIR}/framework/core/app_time.c"
     "${PROJECT_DIR}/framework/services/display_protocol.c"
     "${PROJECT_DIR}/framework/services/radar_plot.c"
     "${PROJECT_DIR}/framework/ports/esp32/app_ui.c"
     "${PROJECT_DIR}/main/aihook_font_12.c" "${PROJECT_DIR}/main/aihook_font_16.c")
 target_include_directories(apps_headless PRIVATE "${PROJECT_DIR}/framework/include" "${PROJECT_DIR}/framework/include/esphook"
-    "${PROJECT_DIR}/main" "${PROJECT_DIR}/tests/ui_stubs" ${ESPHOOK_APP_INCLUDES} ${CJSON_INCLUDE})
+    "${PROJECT_DIR}/main" "${PROJECT_DIR}/tests/ui_stubs" "${PROJECT_DIR}/tests" ${ESPHOOK_APP_INCLUDES} ${CJSON_INCLUDE})
 target_link_libraries(apps_headless PRIVATE lvgl ${CJSON_LIBRARY} m)
 target_compile_options(apps_headless PRIVATE -Wall -Wextra -Werror -g -fsanitize=address,undefined -fno-omit-frame-pointer)
 target_compile_definitions(apps_headless PRIVATE ESPHOOK_FONT_FILE="${PROJECT_DIR}/main/fontdata.bin")
@@ -52,6 +53,24 @@ if(ESPHOOK_APP_starship)
 endif()
 if(ESPHOOK_APP_racing)
     target_compile_definitions(apps_headless PRIVATE ESPHOOK_TEST_RACING)
+endif()
+if(ESPHOOK_APP_fortune)
+    target_compile_definitions(apps_headless PRIVATE ESPHOOK_TEST_FORTUNE)
+endif()
+if(ESPHOOK_APP_alarm)
+    target_compile_definitions(apps_headless PRIVATE ESPHOOK_TEST_ALARM)
+endif()
+if(ESPHOOK_APP_miner)
+    target_compile_definitions(apps_headless PRIVATE ESPHOOK_TEST_MINER)
+endif()
+if(ESPHOOK_APP_jump)
+    target_compile_definitions(apps_headless PRIVATE ESPHOOK_TEST_JUMP)
+endif()
+if(ESPHOOK_APP_zombie)
+    target_compile_definitions(apps_headless PRIVATE ESPHOOK_TEST_ZOMBIE)
+endif()
+if(ESPHOOK_APP_mirror)
+    target_compile_definitions(apps_headless PRIVATE ESPHOOK_TEST_MIRROR)
 endif()
 if(ESPHOOK_APP_demo)
     target_compile_definitions(apps_headless PRIVATE ESPHOOK_TEST_DEMO)
