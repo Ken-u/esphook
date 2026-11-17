@@ -71,6 +71,7 @@ void app_manager_commit(app_manager_t *m)
     m->pending_set = false;
     if (m->ready) {
         if (m->context.app->on_leave) m->context.app->on_leave(&m->context);
+        app_alarm_leaving(m->context.app->id); /* leaving an app answers the alarm that was ringing in it */
         if (m->platform.release_services) m->platform.release_services(m->context.app->id, m->platform.user);
         if (m->context.root && m->platform.scene_delete) m->platform.scene_delete(m->context.root, m->platform.user);
     }
@@ -140,28 +141,43 @@ void app_manager_key(app_manager_t *m, unsigned key, bool down, uint64_t ms)
     if (key) action &= ~INPUT_MENU;
     dispatch(m, key, action, ms);
 }
-/* Apps that are not on screen may ask to be opened (an alarm). Asked a few times a second, never the active app. */
-static void poll_wake(app_manager_t *m, uint64_t ms)
+/* The alarm registry (app_alarm.h) is looked at a few times a second. What starts opens its target app, whatever is on
+ * screen, and the target is told right after it has been entered (see announce_alarm). */
+static void poll_alarms(app_manager_t *m, uint64_t ms)
 {
-    if (m->pending_set || (m->wake_ms && ms >= m->wake_ms && ms - m->wake_ms < APP_WAKE_POLL_MS)) return;
-    m->wake_ms = ms ? ms : 1U;
-    for (size_t i = 0; i < m->catalog_count; ++i) {
-        const app_descriptor_t *a = m->catalog[i];
-        if (!a->wake || a == m->context.app) continue;
-        const app_wake_t w = a->wake(ms);
-        if (w == APP_WAKE_NOW || (w == APP_WAKE_IDLE && m->idle)) {
-            m->activity_ms = ms; m->dirty = true;
-            request(&m->context, i, false);
-            return;
-        }
-    }
+    if (m->pending_set || m->alarm_id || (m->alarm_ms && ms >= m->alarm_ms && ms - m->alarm_ms < APP_ALARM_POLL_MS)) return;
+    m->alarm_ms = ms ? ms : 1U;
+    app_time_t now = {0};
+    if (m->platform.time_read) m->platform.time_read(&now, m->platform.user);
+    unsigned id;
+    if (!app_alarm_poll(&now, ms, m->idle, &id)) return;
+    app_alarm_info_t info;
+    const size_t target = app_alarm_get(id, &info) ? find(m, info.target) : m->catalog_count;
+    if (target == m->catalog_count) { app_alarm_done(id); return; } /* its app is gone: nothing to open */
+    m->activity_ms = ms; m->dirty = true;
+    if (target != m->active) request(&m->context, target, false);
+    if (m->catalog[target]->on_event) m->alarm_id = id; /* an app that cannot be told is only opened: nothing to answer */
+    else app_alarm_done(id);
+}
+static void announce_alarm(app_manager_t *m, uint64_t ms)
+{
+    const unsigned id = m->alarm_id;
+    if (!id) return;
+    m->alarm_id = 0;
+    app_alarm_info_t info;
+    if (!app_alarm_get(id, &info) || strcmp(info.target, m->context.app->id)) { app_alarm_done(id); return; }
+    app_event_t e = {.kind = APP_EVENT_ALARM, .key = id, .ms = ms, .text = info.label};
+    m->context.now_ms = ms; m->dirty = true;
+    m->context.app->on_event(&m->context, &e);
+    app_manager_commit(m);
 }
 void app_manager_tick(app_manager_t *m, uint64_t ms)
 {
     if (!m->ready) return;
     m->context.now_ms = ms;
-    poll_wake(m, ms);
+    poll_alarms(m, ms);
     app_manager_commit(m);
+    announce_alarm(m, ms);
     if (m->exit_hold_ms && m->input[0].down && !m->input[0].blocked && ms >= m->input[0].down_ms &&
         ms - m->input[0].down_ms >= m->exit_hold_ms) { /* held long enough: the deliberate exit of a game with no triple */
         m->activity_ms = ms; m->dirty = true;

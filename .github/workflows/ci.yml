@@ -58,7 +58,9 @@ jobs:
         run: ./scripts/test-app-time.sh
       - name: Test lucky slip game
         run: ./scripts/test-fortune.sh
-      - name: Test alarm clock and hourly chime schedule
+      - name: Test framework alarm registry
+        run: ./scripts/test-app-alarm.sh
+      - name: Test alarm clock app settings and entries
         run: ./scripts/test-alarm.sh
       - name: Test gold miner game
         run: ./scripts/test-miner.sh

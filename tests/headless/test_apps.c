@@ -49,6 +49,7 @@ uint64_t app_clock_ms(void) { return manager.context.now_ms; }
 uint32_t app_random(void) { return 24; }
 /* The wall clock is a plain variable and the settings store a few RAM slots: a test sets the time and reads what an app saved. */
 static struct { bool set;uint32_t epoch;int tz;uint64_t base_ms; } fake_clock;
+static void read_time(app_time_t *out,void *user) { (void)user;app_time_read(out); }
 void app_time_read(app_time_t *t)
 {
     memset(t,0,sizeof *t);
@@ -673,7 +674,7 @@ static void idle_screen(void) { app_idle(&manager.context);app_manager_commit(&m
 static void play_alarm(const char *out)
 {
     const app_descriptor_t *self=NULL;for(size_t i=0;i<esphook_app_count;++i) if(!strcmp(esphook_apps[i]->id,"alarm")) self=esphook_apps[i];
-    assert(self && self->wake && (self->flags&APP_STANDBY));
+    assert(self && (self->flags&APP_STANDBY));
     /* nothing rings, and nothing is saved, on a fresh device with no clock */
     fake_clock.set=false;memset(&servo_log,0,sizeof servo_log);servo_state.armed=false;
     assert(app_open(&manager.context,"alarm"));app_manager_commit(&manager);run(300);
@@ -707,9 +708,10 @@ static void play_alarm(const char *out)
     event(APP_EVENT_CONFIRM);assert(AL_STATUS("alarm=")==1 && shows_text(lv_screen_active(),"闹钟已开启 10:10"));
     /* the settings survive a reboot: init() loads them again, and refuses a blob that is not ours */
     assert(self->init() && AL_STATUS("alarm=")==1 && AL_STATUS("chime=")==1 && AL_STATUS("servo=")==1);
+    {unsigned ids[APP_ALARM_SLOTS];assert(app_alarm_list("alarm",ids,APP_ALARM_SLOTS)==2);} /* a second init() starts over: no entry twice */
     {al_config_t bad={.version=99};assert(app_storage_save("alarm",&bad,sizeof bad));assert(self->init() && AL_STATUS("alarm=")==0 && AL_STATUS("chime=")==0 && AL_STATUS("servo=")==0);
      al_config_t c;al_defaults(&c);c.alarm_on=1;c.hour=10;c.minute=10;c.repeat=AL_WEEKDAYS;c.chime_on=1;c.range=AL_RANGE_OFFICE;c.servo_on=1;assert(app_storage_save("alarm",&c,sizeof c));assert(self->init() && AL_STATUS("alarm=")==1);}
-    /* the alarm rings over another app: wake opens it, and the servo reminder arms and shakes */
+    /* the alarm rings over another app: the framework opens it, and the servo reminder arms and shakes */
     assert(app_open(&manager.context,"settings"));app_manager_commit(&manager);run(60);
     set_clock(0,10,9,50);run(3000);assert(!on_alarm() && AL_STATUS("fired=")==0);
     memset(&servo_log,0,sizeof servo_log);servo_state.armed=false;
@@ -717,11 +719,11 @@ static void play_alarm(const char *out)
     run(200);dump(out,"alarm-ring-a");run(160);dump(out,"alarm-ring-b");run(2000);dump(out,"alarm-ring-c");
     assert(shows_text(lv_screen_active(),"闹钟") && shows_text(lv_screen_active(),"短按稍后提醒 长按关闭"));
     assert(servo_log.arm==1 && servo_log.angle>=3 && servo_log.hi>=8 && servo_log.lo<=-4 && servo_log.hi<=29 && servo_log.lo>=-29); /* a shake inside the limits */
-    /* a short press snoozes it for five minutes */
+    /* a short press snoozes it for five minutes (the framework counts them on its own uptime clock, not the wall clock) */
     event(APP_EVENT_SHORT);assert(!on_alarm() && !strcmp(app_active_id(&manager.context),app_standby_id(&manager.context)));
     run(5000);assert(!on_alarm());
-    set_clock(0,10,14,50);run(5000);assert(!on_alarm()); /* the snooze is 300 s from the press (10:10:1x), so not yet */
-    run(25000);assert(on_alarm() && AL_STATUS("view=")==3 && AL_STATUS("fired=")==2);
+    run(280000);assert(!on_alarm()); /* 285 s from the press: not yet */
+    run(20000);assert(on_alarm() && AL_STATUS("view=")==3 && AL_STATUS("fired=")==2);
     /* holding the key switches this ring off for good */
     event(APP_EVENT_CONFIRM);assert(!on_alarm());
     run(30000);assert(!on_alarm() && AL_STATUS("fired=")==2);
@@ -729,7 +731,7 @@ static void play_alarm(const char *out)
     set_clock(5,10,9,55);run(15000);assert(!on_alarm() && AL_STATUS("fired=")==2);
     set_clock(7,10,9,55);run(8000);assert(on_alarm() && AL_STATUS("fired=")==3);
     run(60000);assert(!on_alarm() && AL_STATUS("fired=")==3); /* unanswered for a minute: it snoozes by itself */
-    set_clock(7,10,20,0);run(500);assert(on_alarm() && AL_STATUS("fired=")==4);event(APP_EVENT_CONFIRM);
+    run(300000);assert(on_alarm() && AL_STATUS("fired=")==4);event(APP_EVENT_CONFIRM);
     /* the hourly chime opens only over the standby screen, only in its first seconds, and only inside the hours set */
     assert(app_open(&manager.context,"settings"));app_manager_commit(&manager);run(60);
     set_clock(7,11,59,57);run(20000);assert(!on_alarm() && AL_STATUS("chimes=")==0); /* not on the standby screen: the hour passes in silence */
@@ -746,6 +748,22 @@ static void play_alarm(const char *out)
     set_clock(7,13,0,30);assert(app_open(&manager.context,"alarm"));app_manager_commit(&manager);run(500);
     assert(AL_STATUS("view=")==0 && AL_STATUS("chimes=")==3); /* opening the app half a minute after the hour is silent */
     assert(mash_leaves("alarm")); /* the global triple-click exit stays on */
+    /* the same ring screen serves any app that registers an alarm with this one as the target; the servo is not moved for it */
+    assert(app_open(&manager.context,"settings"));app_manager_commit(&manager);run(60);
+    memset(&servo_log,0,sizeof servo_log);servo_state.armed=false;
+    const unsigned fired=(unsigned)AL_STATUS("fired=");
+    const unsigned foreign=app_alarm_add(&(app_alarm_spec_t){.owner="demo",.target="alarm",.label="提醒",.kind=APP_ALARM_AFTER,.after_s=2,.enabled=true,.tag=AL_TAG_ALARM});
+    assert(foreign);run(1500);assert(!on_alarm());run(1500);
+    assert(on_alarm() && AL_STATUS("view=")==3 && AL_STATUS("fired=")==fired+1U && shows_text(lv_screen_active(),"提醒") && shows_text(lv_screen_active(),"按键关闭"));
+    run(300);dump(out,"alarm-foreign");assert(servo_log.arm==0);
+    {app_alarm_info_t info;assert(app_alarm_get(foreign,&info) && info.state==APP_ALARM_RINGING && al_kind_of(&info)==AL_NONE);}
+    event(APP_EVENT_SHORT);assert(!on_alarm() && !app_alarm_get(foreign,&(app_alarm_info_t){0})); /* a key answers it, and a one-shot is gone */
+    /* an alarm that nobody answers does not block the next one, and leaving the app answers it */
+    const unsigned first=app_alarm_add(&(app_alarm_spec_t){.owner="demo",.target="alarm",.label="提醒",.kind=APP_ALARM_AFTER,.after_s=1,.enabled=true});
+    run(1500);assert(on_alarm() && first);
+    assert(app_open(&manager.context,"settings"));app_manager_commit(&manager);run(60);assert(!app_alarm_get(first,&(app_alarm_info_t){0}));
+    assert(app_alarm_cancel_owner("demo")==0 && app_alarm_add(&(app_alarm_spec_t){.owner="demo",.target="nowhere",.kind=APP_ALARM_AFTER,.after_s=1,.enabled=true}));
+    run(1500);assert(!on_alarm() && app_alarm_cancel_owner("demo")==0); /* a target that does not exist is dropped without a trace */
 }
 #endif
 #ifdef ESPHOOK_TEST_MINER
@@ -1151,7 +1169,7 @@ int main(int argc,char **argv)
     lv_init();lv_display_t *d=lv_display_create(160,80);lv_display_set_color_format(d,LV_COLOR_FORMAT_RGB565);
     lv_display_set_buffers(d,draw_buffer,NULL,sizeof draw_buffer,LV_DISPLAY_RENDER_MODE_PARTIAL);lv_display_set_flush_cb(d,flush);
     for(size_t i=0;i<esphook_app_count;++i) if(esphook_apps[i]->init) assert(esphook_apps[i]->init());
-    app_platform_t p={.scene_create=scene,.scene_delete=destroy,.save_standby=save};ui=robot_ui_default();
+    app_platform_t p={.scene_create=scene,.scene_delete=destroy,.save_standby=save,.time_read=read_time};ui=robot_ui_default();
     assert(app_manager_init(&manager,esphook_apps,esphook_app_count,&p,app_manager_default_standby(esphook_apps,esphook_app_count,"face"),0));run(100);
 #ifdef ESPHOOK_TEST_STOCK
     stock_data();

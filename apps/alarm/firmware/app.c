@@ -9,10 +9,12 @@
 #include <stdio.h>
 #include <string.h>
 
-/* 闹钟 / 整点报时: a seven-segment clock that also rings. The alarm and the hourly chime are scheduled in static data
- * (loaded in init) and announced to the framework through `wake`, so they open this app over whatever is on screen
- * (an alarm) or over the standby screen (a chime). Settings are one key: short press = next, 500 ms hold = change.
- * The servo shakes to remind only when the player switched that on, and only through the public servo service. */
+/* 闹钟 / 整点报时: a seven-segment clock that also rings. The scheduling is the framework's (app_alarm.h): this app
+ * registers its alarm and its hourly chime as two entries, and the framework opens it over whatever is on screen (an
+ * alarm) or over the standby screen (a chime) and tells it with APP_EVENT_ALARM. All it does then is show the ring and
+ * answer it (snooze, done). The same ring screen shows alarms that other apps registered with this one as the target.
+ * Settings are one key: short press = next, 500 ms hold = change. The servo shakes to remind only when the player
+ * switched that on, only for this app's own entries, and only through the public servo service. */
 #define BAND_Y 64
 #define KEY "alarm"
 #define ROWS 7U
@@ -37,37 +39,43 @@ typedef struct {
     lv_image_dsc_t image;
     uint64_t ring_ms, next_ms, beat_ms, toast_until;
     uint32_t drawn_key, text_key;
-    uint8_t view, kind, sel_row, top_row, field, hour, m10, m1, beat, armed;
-    char toast[28];
+    unsigned ring_id;                                /* the registry entry being answered */
+    uint8_t view, kind, sel_row, top_row, field, hour, m10, m1, beat, armed, snoozable;
+    char toast[28], label[APP_ALARM_LABEL_MAX + 1];
 } state_t;
 _Static_assert(sizeof(state_t) <= APP_STATE_CAPACITY, "alarm state too large");
 typedef struct { bool active; uint8_t view, kind; uint32_t fired, chimes, frames; } status_t;
 static status_t s_status;
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
-/* The schedule belongs to the UI task alone (wake, tick and events all run there). */
+/* The settings and the registry ids belong to the UI task alone (init, tick and events all run there). */
 static al_config_t s_cfg;
-static al_sched_t s_sched;
+static unsigned s_alarm_id, s_chime_id;
 
 static uint16_t c565(uint32_t rgb) { return gfx_rgb565(rgb); }
-static void save(void) { (void)app_storage_save(KEY, &s_cfg, sizeof s_cfg); }
+/* Tells the framework what the settings now are. Saying the same thing again is harmless: a ring or snooze under way is
+ * only ended by a real change. A refused entry (no free slot) leaves its id at 0. */
+static void sync_alarms(void)
+{
+    app_alarm_spec_t spec;
+    al_alarm_spec(&s_cfg, &spec);
+    if (!s_alarm_id || !app_alarm_update(s_alarm_id, &spec)) s_alarm_id = app_alarm_add(&spec);
+    al_chime_spec(&s_cfg, &spec);
+    if (!s_chime_id || !app_alarm_update(s_chime_id, &spec)) s_chime_id = app_alarm_add(&spec);
+}
+static void save(void)
+{
+    (void)app_storage_save(KEY, &s_cfg, sizeof s_cfg);
+    sync_alarms();
+}
 static bool init(void)
 {
     al_config_t c;
     if (app_storage_load(KEY, &c, sizeof c) && al_config_valid(&c)) s_cfg = c;
     else al_defaults(&s_cfg);
-    memset(&s_sched, 0, sizeof s_sched);
+    (void)app_alarm_cancel_owner("alarm"); /* the registry is RAM: start from a clean slate, also when init runs again */
+    s_alarm_id = s_chime_id = 0;
+    sync_alarms();
     return true;
-}
-static app_wake_t wake(uint64_t now_ms)
-{
-    (void)now_ms;
-    app_time_t t;
-    app_time_read(&t);
-    switch (al_due(&s_cfg, &s_sched, &t)) {
-    case AL_ALARM: return APP_WAKE_NOW;
-    case AL_CHIME: return APP_WAKE_IDLE;
-    default: return APP_WAKE_NONE;
-    }
 }
 
 /* ---- seven segments -------------------------------------------------------------------------------------------- */
@@ -329,27 +337,32 @@ static void leave(app_context_t *ctx)
     if (s->plot) app_ui_plot_refresh(s->plot, &s->image); /* the shared canvas goes to the next app */
     portENTER_CRITICAL(&s_lock); s_status.active = false; s_status.view = V_CLOCK; s_status.kind = AL_NONE; portEXIT_CRITICAL(&s_lock);
 }
-static void start_ring(app_context_t *ctx, state_t *s, al_kind_t kind, const app_time_t *t)
+/* APP_EVENT_ALARM: the entry `id` is ringing and this app is on screen. */
+static void start_ring(app_context_t *ctx, state_t *s, unsigned id)
 {
-    if (al_fire(&s_cfg, &s_sched, kind, t)) save();
-    s->view = V_RING; s->kind = (uint8_t)kind; s->ring_ms = ctx->now_ms; s->beat = 0; s->beat_ms = 0;
-    s->next_ms = ctx->now_ms + (kind == AL_CHIME ? 350U : 0U);
+    app_alarm_info_t info;
+    if (!app_alarm_get(id, &info) || info.state != APP_ALARM_RINGING) return;
+    const al_kind_t own = al_kind_of(&info);
+    if (own == AL_ALARM && !info.enabled && s_cfg.alarm_on) { s_cfg.alarm_on = 0; save(); } /* a once-alarm: the framework switched it off */
+    if (own == AL_ALARM && info.minute == 0U && s_chime_id) (void)app_alarm_skip(s_chime_id); /* the hour is the alarm's: no chime on top */
+    s->ring_id = id;
+    s->kind = own == AL_CHIME ? AL_CHIME : AL_ALARM;
+    s->snoozable = info.max_snoozes > 0U;
+    snprintf(s->label, sizeof s->label, "%s", info.label[0] ? info.label : "闹钟");
+    s->view = V_RING; s->ring_ms = ctx->now_ms; s->beat = 0; s->beat_ms = 0;
+    s->next_ms = ctx->now_ms + (own == AL_CHIME ? 350U : 0U);
     s->drawn_key = s->text_key = 0xFFFFFFFFU;
     app_set_exit_hold(ctx, 0);
     haptic_init(&s->haptic);
-    /* The player switched the servo reminder on in this app's settings: that is the confirmation to arm it. */
-    s->armed = s_cfg.servo_on && haptic_state() == HAPTIC_READY && haptic_arm(ctx, &s->haptic);
-    publish(s, true, false, kind == AL_ALARM, kind == AL_CHIME);
+    /* The player switched the servo reminder on in this app's settings: that is the confirmation to arm it, for this
+     * app's own entries. Another app's alarm does not get to move the servo through this one. */
+    s->armed = own != AL_NONE && s_cfg.servo_on && haptic_state() == HAPTIC_READY && haptic_arm(ctx, &s->haptic);
+    publish(s, true, false, s->kind == AL_ALARM, s->kind == AL_CHIME);
 }
 static void finish_ring(app_context_t *ctx, bool snooze)
 {
     state_t *s = ctx->state;
-    app_time_t t;
-    app_time_read(&t);
-    if (s->kind == AL_ALARM) {
-        if (snooze) (void)al_snooze(&s_sched, &t);
-        else al_dismiss(&s_sched);
-    }
+    if (!(snooze && s->snoozable && app_alarm_snooze(s->ring_id))) app_alarm_done(s->ring_id); /* out of snoozes: over */
     s->view = V_CLOCK;
     app_idle(ctx);
 }
@@ -379,11 +392,10 @@ static void tick_ring(app_context_t *ctx, state_t *s, const app_time_t *t)
 static void tick(app_context_t *ctx)
 {
     state_t *s = ctx->state;
+    if (s->view != V_RING) return;
     app_time_t t;
     app_time_read(&t);
-    if (s->view == V_RING) { tick_ring(ctx, s, &t); return; }
-    const al_kind_t due = al_due(&s_cfg, &s_sched, &t);
-    if (due != AL_NONE) start_ring(ctx, s, due, &t);
+    tick_ring(ctx, s, &t);
 }
 static void begin_edit(state_t *s)
 {
@@ -397,7 +409,6 @@ static void menu_action(state_t *s, uint64_t now)
     switch (s->sel_row) {
     case ROW_ALARM:
         s_cfg.alarm_on = !s_cfg.alarm_on;
-        if (!s_cfg.alarm_on) al_dismiss(&s_sched);
         save();
         break;
     case ROW_TIME: begin_edit(s); return;
@@ -417,7 +428,7 @@ static void menu_action(state_t *s, uint64_t now)
     if (s->sel_row == ROW_ALARM) {
         app_time_t t;
         app_time_read(&t);
-        snprintf(text, sizeof text, "%s", s_cfg.alarm_on ? (t.valid ? "闹钟已开启" : "已开启 但还没校时") : "闹钟已关闭");
+        snprintf(text, sizeof text, "%s", !s_cfg.alarm_on ? "闹钟已关闭" : !s_alarm_id ? "闹钟登记失败" : t.valid ? "闹钟已开启" : "已开启 但还没校时");
         toast(s, now, text);
     }
     s->drawn_key = s->text_key = 0xFFFFFFFFU;
@@ -425,6 +436,7 @@ static void menu_action(state_t *s, uint64_t now)
 static void event(app_context_t *ctx, const app_event_t *e)
 {
     state_t *s = ctx->state;
+    if (e->kind == APP_EVENT_ALARM) { start_ring(ctx, s, e->key); return; } /* key is the registry id here, not a key number */
     if (e->key != 0 || (e->kind != APP_EVENT_SHORT && e->kind != APP_EVENT_CONFIRM)) return;
     const uint64_t now = ctx->now_ms;
     const bool confirm = e->kind == APP_EVENT_CONFIRM;
@@ -437,10 +449,10 @@ static void event(app_context_t *ctx, const app_event_t *e)
     case V_CLOCK:
         if (confirm) {
             s_cfg.alarm_on = !s_cfg.alarm_on;
-            if (!s_cfg.alarm_on) al_dismiss(&s_sched);
             save();
             char text[28];
-            if (s_cfg.alarm_on) snprintf(text, sizeof text, "闹钟已开启 %02u:%02u", s_cfg.hour, s_cfg.minute);
+            if (s_cfg.alarm_on && !s_alarm_id) snprintf(text, sizeof text, "闹钟登记失败");
+            else if (s_cfg.alarm_on) snprintf(text, sizeof text, "闹钟已开启 %02u:%02u", s_cfg.hour, s_cfg.minute);
             else snprintf(text, sizeof text, "闹钟已关闭");
             toast(s, now, text);
         } else { s->view = V_MENU; s->sel_row = 0; s->top_row = 0; }
@@ -461,7 +473,6 @@ static void event(app_context_t *ctx, const app_event_t *e)
         } else if (s->field < 2U) ++s->field;
         else {
             s_cfg.hour = s->hour; s_cfg.minute = (uint8_t)(s->m10 * 10U + s->m1); s_cfg.alarm_on = 1;
-            al_dismiss(&s_sched);
             save();
             char text[28];
             snprintf(text, sizeof text, "闹钟 %02u:%02u 已开启", s_cfg.hour, s_cfg.minute);
@@ -478,7 +489,8 @@ static void sync_clock_text(state_t *s, const app_time_t *t, uint64_t now)
 {
     const unsigned slot = (unsigned)((now / HINT_SLOT_MS) % 3U);
     const bool toasting = now < s->toast_until;
-    const int until = al_minutes_until(&s_cfg, t);
+    const int32_t secs = s_alarm_id ? app_alarm_seconds_until(s_alarm_id, t, now) : -1;
+    const int until = secs > 0 ? (int)((secs + 59) / 60) : -1; /* minutes to the next ring (a snooze counts), -1 when off */
     uint32_t key = mix(mix(mix(mix((uint32_t)(t->valid ? t->day + t->month * 40 : 0), slot), (uint32_t)toasting), (uint32_t)(until + 1)),
                        (uint32_t)t->valid);
     key = mix(mix(mix(mix(key, s_cfg.alarm_on), s_cfg.chime_on), (uint32_t)s_cfg.repeat << 8 | s_cfg.range), (uint32_t)s_cfg.hour << 8 | s_cfg.minute);
@@ -549,8 +561,8 @@ static void sync_views(state_t *s, const app_time_t *t, uint64_t now)
     } else {
         if (s->text_key != 0x77U) {
             s->text_key = 0x77U;
-            app_ui_text(s->big, s->kind == AL_ALARM ? "闹钟" : "整点报时");
-            if (s->kind == AL_ALARM) app_ui_text(s->hint, "短按稍后提醒 长按关闭");
+            app_ui_text(s->big, s->label);
+            if (s->kind == AL_ALARM) app_ui_text(s->hint, s->snoozable ? "短按稍后提醒 长按关闭" : "按键关闭");
             else { snprintf(text, sizeof text, "%d点整 按键关闭", t->hour); app_ui_text(s->hint, text); }
         }
     }
@@ -588,11 +600,12 @@ static bool command(const char *line)
     app_time_t t;
     portENTER_CRITICAL(&s_lock); v = s_status; portEXIT_CRITICAL(&s_lock);
     app_time_read(&t);
-    char reply[200];
+    char reply[240];
     snprintf(reply, sizeof reply,
-             "active=%u view=%u ring=%u valid=%u alarm=%u time=%02u:%02u repeat=%u chime=%u range=%u servo=%u fired=%lu chimes=%lu frames=%lu",
+             "active=%u view=%u ring=%u valid=%u alarm=%u time=%02u:%02u repeat=%u chime=%u range=%u servo=%u fired=%lu chimes=%lu frames=%lu aid=%u cid=%u",
              v.active ? 1U : 0U, v.view, v.kind, t.valid ? 1U : 0U, s_cfg.alarm_on, s_cfg.hour, s_cfg.minute, s_cfg.repeat,
-             s_cfg.chime_on, s_cfg.range, s_cfg.servo_on, (unsigned long)v.fired, (unsigned long)v.chimes, (unsigned long)v.frames);
+             s_cfg.chime_on, s_cfg.range, s_cfg.servo_on, (unsigned long)v.fired, (unsigned long)v.chimes, (unsigned long)v.frames,
+             s_alarm_id, s_chime_id);
     (void)app_transport_write(reply);
     return true;
 }
@@ -610,4 +623,4 @@ static void icon(void *parent, int x, int y, bool selected)
 }
 const app_descriptor_t esphook_app_alarm = {.api_version = APP_API_VERSION, .id = "alarm", .title = "闹钟",
     .flags = APP_STANDBY, .refresh_ms = 50, .state_size = sizeof(state_t), .init = init, .on_enter = enter, .on_leave = leave,
-    .on_event = event, .on_tick = tick, .render = render, .icon = icon, .command = command, .wake = wake};
+    .on_event = event, .on_tick = tick, .render = render, .icon = icon, .command = command};

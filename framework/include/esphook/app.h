@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "app_input.h"
+#include "app_time.h"
 
 #define APP_API_VERSION 1U
 #define APP_STATE_CAPACITY 2048U
@@ -13,8 +14,11 @@
 typedef struct app_manager app_manager_t;
 typedef struct app_context app_context_t;
 typedef struct app_descriptor app_descriptor_t;
+/* APP_EVENT_ALARM: an entry of the alarm registry (app_alarm.h) that names this app is due. `key` is the entry id and
+ * `text` its label; the app has just been opened for it (or was already on screen) and answers with
+ * app_alarm_done() or app_alarm_snooze(). */
 typedef enum { APP_EVENT_DOWN, APP_EVENT_UP, APP_EVENT_SHORT, APP_EVENT_CONFIRM,
-               APP_EVENT_MESSAGE, APP_EVENT_NOTIFY, APP_EVENT_NETWORK, APP_EVENT_CANCEL } app_event_kind_t;
+               APP_EVENT_MESSAGE, APP_EVENT_NOTIFY, APP_EVENT_NETWORK, APP_EVENT_CANCEL, APP_EVENT_ALARM } app_event_kind_t;
 typedef struct {
     app_event_kind_t kind;
     unsigned key;
@@ -24,9 +28,6 @@ typedef struct {
 /* APP_DEFAULT_STANDBY (together with APP_STANDBY) makes an app the standby used when none is saved in NVS or the
  * saved one is gone; at most one app may set it, and `face` stays the fallback when none does. */
 enum { APP_HIDDEN = 1U, APP_STANDBY = 2U, APP_NOTIFICATIONS = 4U, APP_DEFAULT_STANDBY = 8U };
-
-/* What an app that is not on screen can ask of the framework (see app_descriptor.wake). */
-typedef enum { APP_WAKE_NONE = 0, APP_WAKE_IDLE, APP_WAKE_NOW } app_wake_t;
 
 /* All lifecycle/event/tick/render callbacks run on the UI task. command is the
  * only exception: called by the USB task; it must enqueue/copy and never use UI. */
@@ -43,13 +44,6 @@ struct app_descriptor {
     void (*render)(app_context_t *);
     void (*icon)(void *parent, int x, int y, bool selected);
     bool (*command)(const char *line);
-    /* Optional, UI task: asked about every app that is not the active one a few times a second (never while it is
-     * the active app: it has its own on_tick). APP_WAKE_NOW makes the framework open this app whatever is on screen
-     * (an alarm); APP_WAKE_IDLE only while the device sits on its standby app (an hourly chime). The call is
-     * cheap and has no state of its own to touch: the app keeps its schedule in its own static data (loaded in
-     * init), and it sees the reason when it is entered. It cannot be given the context: the arena belongs to the
-     * app on screen. */
-    app_wake_t (*wake)(uint64_t now_ms);
 };
 struct app_context {
     app_manager_t *manager;
@@ -64,6 +58,8 @@ typedef struct {
     void (*scene_delete)(void *root, void *user);
     void (*release_services)(const char *id, void *user);
     bool (*save_standby)(const char *id, void *user);
+    /* The wall clock for the alarm registry; without it only "in N seconds" entries can fire. */
+    void (*time_read)(app_time_t *out, void *user);
     void *user;
 } app_platform_t;
 

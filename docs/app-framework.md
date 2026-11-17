@@ -24,6 +24,7 @@ idf.py build
 | `framework/core/app_keys.c` | 实体/USB 输入合并、映射与 USB 租期取消 |
 | `framework/core/app_input.c` | 25ms 消抖、500ms 确认、800ms 三击、松手消费 |
 | `framework/core/app_time.c` | 墙上时钟换算（公历、星期、时区偏移）的纯函数，闹钟和幸运签用 |
+| `framework/core/app_alarm.c` | 全局闹钟注册表：任何应用登记“到点打开哪个应用并通知它”，框架负责判定、排队、贪睡与唤醒；见“闹钟 API” |
 | `framework/include/esphook/app_ui.h` | LVGL 标签、矩形、图层、字体、确认圆与共享 RGB565 画布 |
 | `framework/include/esphook/app_gfx.h` | 画布软件绘图：线/圆/圆环/椭圆光晕/渐变（抖动）、半透明叠加、调色板点阵、整数开方、山脉/云/太阳，只在 UI 任务调用 |
 | `framework/include/esphook/app_services.h` | 雷达、舵机、Hook、显示协议、设备信息、时钟、随机数、PC 事件 |
@@ -54,12 +55,11 @@ const app_descriptor_t esphook_app_counter = {
 | `init()` | 每次启动调用一次，USB 接收前初始化；此时没有 LVGL，不能建控件；可分配应用的常驻传输资源 |
 | `on_enter(ctx)` | 新会话；state 已清零，root 已创建；在 root 下建控件 |
 | `on_leave(ctx)` | 释放应用资源、图片缓存等；随后框架释放服务租约、删除 root 及动画、清零 state |
-| `on_event(ctx, e)` | DOWN / UP / SHORT / CONFIRM / CANCEL / MESSAGE / NOTIFY / NETWORK；text 只在回调期间有效 |
+| `on_event(ctx, e)` | DOWN / UP / SHORT / CONFIRM / CANCEL / MESSAGE / NOTIFY / NETWORK / ALARM；text 只在回调期间有效；ALARM 的 key 是闹钟条目 id、text 是 label，见“闹钟 API” |
 | `on_tick(ctx)` | 每个 UI 循环约 5ms 调用，推进非阻塞逻辑；用 now_ms 算时间，不按帧计时 |
 | `render(ctx)` | 根据 refresh_ms 和脏状态绘制；菜单 16ms、投篮 33ms、表情/做 T 40ms；帧率需实屏测量 |
 | `icon(parent,x,y,selected)` | 在提供的 28×28 区域画代码图标；不能保存 parent 地址或访问当前应用 state |
 | `command(line)` | 唯一从 USB 任务调用的回调；只解析并向自己的线程安全模型/队列写数据，禁止 LVGL 和读取 UI state |
-| `wake(now_ms)` | 可选；UI 任务，每秒几次询问**不在屏幕上**的应用要不要被打开：`APP_WAKE_NOW` 无论当前是什么都打开（闹钟），`APP_WAKE_IDLE` 只在设备停在待机应用时打开（整点报时）；见下面“唤醒、时钟与存储” |
 | `ctx->state` | 当前应用独占、按 max_align_t 对齐的 2048 字节 arena；state_size 超限拒绝启动；退出后地址内容失效 |
 | `ctx->root` | 框架拥有的 LVGL 根节点；应用不能删除 root，不能在 lv_screen_active 下另建应用节点 |
 
@@ -115,11 +115,64 @@ Hook 的 HTTP `/notify`、`/dismiss`、配对、鉴权和 device link 协议保�
 
 ## 唤醒、时钟与存储
 
-**唤醒**：不在屏幕上的应用也能让设备打开它。descriptor 的可选回调 `wake(now_ms)` 由 UI 任务每 `APP_WAKE_POLL_MS`（250ms）问一次所有非活动应用，返回 `APP_WAKE_NOW`（无论当前是什么都打开：闹钟）或 `APP_WAKE_IDLE`（只在设备停在待机应用时打开：整点报时）。回调必须很便宜，不能碰 LVGL，也拿不到 ctx：arena 属于正在屏幕上的应用，所以应用把日程放在**自己的静态数据**里，在 `init()` 里加载，进入应用后再用 `app_time_read()` 判断“是为了什么被打开的”。`APP_WAKE_NOW` 会抢占菜单、设置乃至正在玩的游戏（所以只给闹钟这样的事），`APP_WAKE_IDLE` 在设备不是停在待机应用时一律让位。
+**唤醒走闹钟 API**：不在屏幕上的应用也能让设备打开它，办法是在框架的全局闹钟注册表里登记一条，见下面的“闹钟 API”。descriptor 没有 `wake` 回调了（也就没有哪个应用自己去轮询时钟）。
 
 **墙上时钟**：设备没有电池时钟，`app_time_read(&t)` 返回本地时间（`valid`、`epoch`、`tz_min`、年月日、时分秒、星期），未校时 `valid` 为 false，应用必须处理这种情况。校时来源是 PC 的 USB `time` 操作（`AppLink.set_time()` / `python run.py time`）和联网后的 SNTP；`app_time_set()` 只由 USB 任务调用。换算在 `framework/core/app_time.c`，是纯函数，主机测试 `./scripts/test-app-time.sh`。
 
 **设置存储**：`app_storage_load/save(key, data, size)` 给每个应用几个字节的跨重启设置：key 是 1..15 个 `[a-z0-9_]`，size 至多 `APP_STORAGE_MAX`（64 字节），读取失败（没存过或大小不符）不改动调用者的缓冲区。写 flash 慢：只在玩家明确修改时保存，不要每帧写；数据格式要带版本号和范围校验（读到别人或旧版本的数据就用默认值，闹钟的 `al_config_valid()` 是例子）。
+
+## 闹钟 API（全局注册 + 唤醒）
+
+`framework/include/esphook/app_alarm.h`。**日程属于框架，应用只登记条目、显示界面、回答响铃**：闹钟应用自己也是这样用的，它只剩界面和两条条目（闹钟、整点报时）。游戏和其他应用可以用同一套接口做定时提醒（水族箱 30 分钟没喂鱼、钓鱼冷却结束、每天固定时间的签到……），不需要自己的轮询，也不需要往中央运行器里加任何特判。
+
+**登记**：`app_alarm_add(&spec)` 返回条目 id（1..255，失败为 0：参数不合法或 `APP_ALARM_SLOTS`=8 个槽用完）。`app_alarm_spec_t`：
+
+| 字段 | 含义 |
+| --- | --- |
+| `owner` | 登记者，应用 id（`[a-z0-9_]`，≤23 字符）；只有登记者能 `update` |
+| `target` | 到点要打开的应用，缺省等于 `owner`；可以指向别的应用（例如 `"alarm"`，借用它的响铃画面） |
+| `label` | ≤15 字节，随 `APP_EVENT_ALARM` 的 `text` 送给目标，字要在字库里 |
+| `kind` | `APP_ALARM_CLOCK`：每个匹配的本地时间（`minute` + `hour_mask` + `day_mask`，如 `APP_ALARM_EVERY_DAY`/`APP_ALARM_WEEKDAYS`/`APP_ALARM_EVERY_HOUR`），需要已校时；`APP_ALARM_AT`：绝对时刻 `epoch`，需要已校时；`APP_ALARM_AFTER`：登记后 `after_s` 秒，按设备运行时间计，**不需要校时** |
+| `enabled` / `once` | 开关；`once` 的 CLOCK 条目响过就自己关掉（所有者要同步自己的设置） |
+| `idle_only` | 只在设备停在待机应用时才响（整点报时），别的画面上不打扰，也不补响 |
+| `window_s` | 到点后多久之内还算数（默认 60，CLOCK 至多 60，整点报时 15）；之后算错过，`app_alarm_stats` 计 missed，不补响 |
+| `max_snoozes` / `snooze_s` | 最多贪睡几次（0 = 不可贪睡）、每次多久（默认 300 秒，按运行时间计，不受改时间影响） |
+| `tag` | 应用自己用的标记，登记两条以上时用来区分是哪一条 |
+
+**唤醒**：UI 任务每 `APP_ALARM_POLL_MS`（250ms）看一次（时钟来自 `app_platform_t.time_read`，不提供时只有 AFTER 条目和贪睡到点的条目会响），有条目到点就打开 `target`：无论当前是菜单、设置还是正在玩的游戏都会被打开（只有 `idle_only` 条目让位）；目标已经在屏幕上就不重新进入；目标不在编目里就悄悄丢弃。目标**完成进入**之后，框架给它发 `APP_EVENT_ALARM`（`key` = 条目 id，`text` = label）；没有 `on_event` 的目标只会被打开，条目随即结束。一次只响一条，其余排队等它结束。
+
+**回答**：`app_alarm_snooze(id)`（到 `snooze_s` 后再响一次；没有次数了返回 false 且这次响铃结束）、`app_alarm_done(id)`（结束：CLOCK 条目等下一次，AT/AFTER 条目消失）。**离开目标应用等于 done**，120 秒没人回答也自动结束（`stats.timeouts`）。`app_alarm_skip(id)` 让一条 CLOCK 条目放弃此刻这一分钟（整点正好有闹钟，就让整点报时让路）。
+
+**其他**：`app_alarm_update(id, &spec)` 说同样的话什么也不改变（所以可以在任何编辑后把全部设置再推一遍；正在响或贪睡的不会被打断），真的改了才结束响铃/贪睡；`app_alarm_cancel(id)` / `app_alarm_cancel_owner(owner)`；`app_alarm_get/list` 读回；`app_alarm_seconds_until(id, &now, ctx->now_ms)` 给“还有多久”的提示；`app_alarm_stats` 给 fired/missed/timeouts。
+
+**约束**：
+- 注册表只在 UI 任务和 `init()` 里调用（没有锁）。**USB `command` 回调不能直接碰它**，要像其他 UI 状态一样先复制入队，由 UI 任务处理。
+- 注册表在 RAM 里，重启即空：应用在 `init()` 里从自己的 `app_storage` 重新登记（`init()` 要能重复调用：先 `app_alarm_cancel_owner(自己的 id)`），id 跨重启不稳定。
+- 闹钟只负责“打开 + 通知”，**不会自己动舵机**：舵机仍然只能由玩家明确启用（闹钟应用的“舵机提醒”持久开关只作用于它自己的两条条目，不作用于别人借用它的闹钟）。
+- 要响铃的是目标应用：它收到 `APP_EVENT_ALARM` 后画自己的界面，用 `app_idle(ctx)` 回待机，自己设定是否贪睡；不想自己做界面就把 `target` 设成 `"alarm"`，用它的铃铛画面（label 当标题，`max_snoozes` 为 0 时提示“按键关闭”）。
+
+```c
+/* 水族箱：30 分钟没人喂鱼就提醒；init() 里登记，可重复调用 */
+static unsigned s_feed;
+static bool init(void)
+{
+    (void)app_alarm_cancel_owner("aquarium");
+    app_alarm_spec_t spec = {.owner = "aquarium", .label = "该喂鱼了", .kind = APP_ALARM_AFTER,
+                             .after_s = 1800, .enabled = true, .max_snoozes = 2, .snooze_s = 600};
+    s_feed = app_alarm_add(&spec);
+    return true;
+}
+/* on_event：被打开之后收到通知，画自己的界面，按键回答 */
+if (e->kind == APP_EVENT_ALARM) { show_hungry(ctx, e->text); return; }
+if (e->kind == APP_EVENT_SHORT && ringing) { (void)app_alarm_snooze(s_feed); app_idle(ctx); }
+
+/* 借用闹钟应用的响铃画面：其他应用的一次性提醒 */
+app_alarm_spec_t once = {.owner = "fishing", .target = "alarm", .label = "鱼汛到了",
+                         .kind = APP_ALARM_AFTER, .after_s = 120, .enabled = true};
+(void)app_alarm_add(&once);
+```
+
+主机测试：`./scripts/test-app-alarm.sh`（注册表本身：校验、槽位与所有者、各类条目、窗口与错过、贪睡、待机限定、排队、超时、离开）、`tests/test_app_framework.c`（经管理器真实打开应用并通知）、`./scripts/test-alarm.sh` 与无屏 UI 测试（闹钟应用、其他应用登记的闹钟）。
 
 ## 内置应用与设置
 
@@ -139,7 +192,7 @@ Hook 的 HTTP `/notify`、`/dismiss`、配对、鉴权和 device link 协议保�
 | 跳一跳 | 等距方块，按住蓄力、松开起跳，落中心加倍并连击；纯 C 核心，保留三击退出，见 [robot-jump.md](robot-jump.md) |
 | 僵尸围城 | 第一人称打僵尸，雷达（或 K2/K3）转向，按住开火，被咬掉血并轻摇舵机，3 滴血；纯 C 核心，见 [robot-zombie.md](robot-zombie.md) |
 | 幸运签 | 按住摇签筒、松手出签：事业/人际/家庭/学业/爱情里随机一个，大吉/中吉/小吉，幸运数和幸运色；纯 C 核心，见 [robot-fortune.md](robot-fortune.md) |
-| 闹钟 | 七段数码管时钟 + 闹钟 + 整点报时，到点由框架 `wake` 自动打开，可贪睡，设置里可开舵机提醒；需要 USB/Wi-Fi 校时，见 [robot-alarm.md](robot-alarm.md) |
+| 闹钟 | 七段数码管时钟 + 闹钟 + 整点报时；日程在框架的闹钟注册表里（其他应用也能登记），本应用只提供界面并回答响铃，可贪睡，设置里可开舵机提醒；需要 USB/Wi-Fi 校时，见 [robot-alarm.md](robot-alarm.md) |
 | 副屏 | 把电脑上的某个窗口或屏幕区域抓取后经 USB 投到小屏，条带 + 16 色调色板 + CRC，逐条确认，PC 端 `run.py mirror`；见 [robot-mirror.md](robot-mirror.md) |
 | 做 T | PC 行情/均线/交易/结算；设备端 RAM 数据、图表和按键协议 |
 | 雷达 | 三目标扇形调试图，服务快照 |
@@ -175,6 +228,7 @@ python3 apps/key_report/pc/test_bridge.py
 ./scripts/test-racing.sh
 ./scripts/test-app-time.sh
 ./scripts/test-fortune.sh
+./scripts/test-app-alarm.sh
 ./scripts/test-alarm.sh
 ./scripts/test-miner.sh
 ./scripts/test-jump.sh
@@ -196,6 +250,6 @@ git clone --depth 1 --branch v9.5.0 https://github.com/lvgl/lvgl.git /tmp/esphoo
 LVGL_SOURCE_DIR=/tmp/esphook-lvgl ./scripts/test-app-ui.sh
 ```
 
-它使用现有 fontdata 和 64KB LVGL 堆，遍历所有 manifest 应用、重复切换、检查根节点释放、设置持久化回调与 PC 消息，并实际玩一遍投篮（出手、命中/未进、时间到结算）、小恐龙和滑雪（起跳/翻转、落地、结束、重开）、电子木鱼（敲击、浮字、自动、第 108 下）、新婚快乐（两种横幅、礼花、祝福语消息）、黄金矿工、跳一跳、僵尸围城、幸运签、闹钟（含框架 wake 打开应用）和副屏（用 USB 命令喂入条带、坏行、冻结、中断、断开）；每次截图前检查屏幕上每个 label 的每个字都在固件字库里（缺字会显示成空白），并断言 LVGL 堆占用低于 80%（可设 `ESPHOOK_HEAP_REPORT=1` 打印各应用占用）。输出 PPM 屏幕帧。CI 上传这些帧，额外构建 ESP-IDF 5.5.4 默认通用配置与禁用机器人驱动的旧 Hook 配置。可选应用的完整硬件行为仍需要实机确认；主机 UI 测试不会驱动舵机，也不能证明实际 FPS。
+它使用现有 fontdata 和 64KB LVGL 堆，遍历所有 manifest 应用、重复切换、检查根节点释放、设置持久化回调与 PC 消息，并实际玩一遍投篮（出手、命中/未进、时间到结算）、小恐龙和滑雪（起跳/翻转、落地、结束、重开）、电子木鱼（敲击、浮字、自动、第 108 下）、新婚快乐（两种横幅、礼花、祝福语消息）、黄金矿工、跳一跳、僵尸围城、幸运签、闹钟（含框架闹钟注册表打开应用、其他应用登记的闹钟）和副屏（用 USB 命令喂入条带、坏行、冻结、中断、断开）；每次截图前检查屏幕上每个 label 的每个字都在固件字库里（缺字会显示成空白），并断言 LVGL 堆占用低于 80%（可设 `ESPHOOK_HEAP_REPORT=1` 打印各应用占用）。输出 PPM 屏幕帧。CI 上传这些帧，额外构建 ESP-IDF 5.5.4 默认通用配置与禁用机器人驱动的旧 Hook 配置。可选应用的完整硬件行为仍需要实机确认；主机 UI 测试不会驱动舵机，也不能证明实际 FPS。
 
 `APP_UI_BUILD_DIR` / `APP_UI_FRAMES_DIR` 可覆盖无屏测试目录。CI 的固件尺寸检查沿用两个 OTA 槽；先看实际体积再决定是否取消 OTA。未新增固件图片或大型游戏依赖。

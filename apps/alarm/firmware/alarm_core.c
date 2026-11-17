@@ -44,61 +44,41 @@ unsigned al_beats(unsigned hour)
     const unsigned h = hour % 12U;
     return h ? h : 12U;
 }
-uint32_t al_minute_key(const app_time_t *t)
+void al_alarm_spec(const al_config_t *c, app_alarm_spec_t *out)
 {
-    const int64_t local = (int64_t)t->epoch + (int64_t)t->tz_min * 60;
-    return local > 0 ? (uint32_t)(local / 60) + 1U : 1U;
+    memset(out, 0, sizeof *out);
+    out->owner = "alarm";
+    out->label = "闹钟";
+    out->kind = APP_ALARM_CLOCK;
+    out->enabled = c->alarm_on != 0U;
+    out->once = c->repeat == AL_ONCE;
+    out->minute = c->minute;
+    out->hour_mask = 1UL << (c->hour % 24U);
+    for (unsigned day = 0; day < 7U; ++day)
+        if (al_repeat_has(c->repeat, day)) out->day_mask = (uint8_t)(out->day_mask | (1U << day));
+    out->window_s = AL_ALARM_WINDOW_S;
+    out->max_snoozes = AL_MAX_SNOOZES;
+    out->snooze_s = AL_SNOOZE_S;
+    out->tag = AL_TAG_ALARM;
 }
-al_kind_t al_due(const al_config_t *c, const al_sched_t *s, const app_time_t *t)
+void al_chime_spec(const al_config_t *c, app_alarm_spec_t *out)
 {
-    if (!t->valid) return AL_NONE;
-    const uint32_t key = al_minute_key(t);
-    if (s->snooze_epoch && t->epoch >= s->snooze_epoch) return AL_ALARM;
-    if (c->alarm_on && t->hour == c->hour && t->minute == c->minute && al_repeat_has(c->repeat, (unsigned)t->weekday) &&
-        s->alarm_key != key)
-        return AL_ALARM;
-    if (c->chime_on && t->minute == 0U && t->second < (int)AL_CHIME_WINDOW_S && al_range_has(c->range, (unsigned)t->hour) &&
-        s->chime_key != key)
-        return AL_CHIME;
-    return AL_NONE;
+    memset(out, 0, sizeof *out);
+    out->owner = "alarm";
+    out->label = "整点报时";
+    out->kind = APP_ALARM_CLOCK;
+    out->enabled = c->chime_on != 0U;
+    out->idle_only = true;
+    out->minute = 0;
+    for (unsigned hour = 0; hour < 24U; ++hour)
+        if (al_range_has(c->range, hour)) out->hour_mask |= 1UL << hour;
+    if (!out->hour_mask) out->hour_mask = APP_ALARM_EVERY_HOUR; /* a range of nothing cannot happen; the entry must still be valid */
+    out->day_mask = APP_ALARM_EVERY_DAY;
+    out->window_s = AL_CHIME_WINDOW_S;
+    out->tag = AL_TAG_CHIME;
 }
-bool al_fire(al_config_t *c, al_sched_t *s, al_kind_t kind, const app_time_t *t)
+al_kind_t al_kind_of(const app_alarm_info_t *info)
 {
-    bool changed = false;
-    const uint32_t key = al_minute_key(t);
-    if (kind == AL_ALARM) {
-        if (s->snooze_epoch && t->epoch >= s->snooze_epoch) s->snooze_epoch = 0; /* the snooze has run out: this is it */
-        else if (c->alarm_on && t->hour == c->hour && t->minute == c->minute) {
-            s->alarm_key = key;
-            s->snoozes = 0;
-            s->snooze_epoch = 0;
-            if (c->repeat == AL_ONCE) { c->alarm_on = 0; changed = true; }
-        }
-    }
-    if (t->minute == 0U) s->chime_key = key; /* an alarm on the hour has the hour to itself: no chime on top of it */
-    if (kind == AL_CHIME) s->chime_key = key;
-    return changed;
-}
-bool al_snooze(al_sched_t *s, const app_time_t *t)
-{
-    if (s->snoozes >= AL_MAX_SNOOZES || !t->valid) { al_dismiss(s); return false; }
-    ++s->snoozes;
-    s->snooze_epoch = t->epoch + AL_SNOOZE_S;
-    return true;
-}
-void al_dismiss(al_sched_t *s)
-{
-    s->snooze_epoch = 0;
-    s->snoozes = 0;
-}
-int al_minutes_until(const al_config_t *c, const app_time_t *t)
-{
-    if (!t->valid || !c->alarm_on) return -1;
-    const int now = (int)t->hour * 60 + (int)t->minute, at = (int)c->hour * 60 + (int)c->minute;
-    for (int day = 0; day <= 7; ++day) {
-        if (!al_repeat_has(c->repeat, ((unsigned)t->weekday + (unsigned)day) % 7U)) continue;
-        const int wait = day * 1440 + at - now;
-        if (wait > 0) return wait;
-    }
-    return -1;
+    if (!info || strcmp(info->owner, "alarm")) return AL_NONE;
+    return info->tag == AL_TAG_ALARM ? AL_ALARM : info->tag == AL_TAG_CHIME ? AL_CHIME : AL_NONE;
 }

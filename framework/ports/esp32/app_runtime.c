@@ -31,6 +31,7 @@ extern void app_services_release(const char *id, void *user);
 static void *scene_create(void *user) { (void)user; return app_ui_layer(lv_screen_active()); }
 static void scene_delete(void *root, void *user) { (void)user; lv_obj_delete(root); }
 static bool save_standby(const char *id, void *user) { (void)user; return config_set_standby(id) == ESP_OK; }
+static void read_time(app_time_t *out, void *user) { (void)user; app_time_read(out); }
 static uint64_t clock_ms(void) { return (uint64_t)esp_timer_get_time() / 1000; }
 static void key_edge(void *user,unsigned key,bool down,bool cancel,uint64_t ms)
 {
@@ -82,7 +83,7 @@ static void boot(uint64_t now)
         !(find_app(standby)->flags & APP_STANDBY))
         snprintf(standby, sizeof standby, "%s", app_manager_default_standby(esphook_apps, esphook_app_count, "face"));
     app_platform_t platform = {.scene_create = scene_create, .scene_delete = scene_delete,
-        .release_services = app_services_release, .save_standby = save_standby};
+        .release_services = app_services_release, .save_standby = save_standby, .time_read = read_time};
     ESP_ERROR_CHECK(app_manager_init(&s_manager, esphook_apps, esphook_app_count, &platform, standby, now) ? ESP_OK : ESP_ERR_INVALID_STATE);
     app_keymap_t map;(void)config_get_input_keymap(&map);
     app_key_router_init(&s_keys,&map,key_edge,&s_manager);

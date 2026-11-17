@@ -1,5 +1,6 @@
 #include "app_manager.h"
 #include "app_protocol.h"
+#include "app_alarm.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -47,33 +48,92 @@ static void protocol(void)
     for(unsigned i=0;i<sizeof bad_hardware/sizeof bad_hardware[0];++i) assert(!app_protocol_parse(bad_hardware[i],strlen(bad_hardware[i]),&r));
     char nested[100];memset(nested,'[',20);memset(nested+20,']',20);assert(!app_protocol_parse(nested,40,&r));
 }
-/* An app that is not on screen can ask to be opened: an alarm (always) or an hourly chime (only on the standby screen). */
-static app_wake_t wake_level;static unsigned wake_calls;
-static app_wake_t wake_cb(uint64_t ms) { (void)ms;++wake_calls;return wake_level; }
-static void wake(void)
+/* The alarm registry opens apps by itself: an alarm over anything, a chime only over the standby screen, and the
+ * target is told (APP_EVENT_ALARM) right after it has been entered. */
+static app_time_t fake_now;
+static unsigned fake_time_reads;
+static void read_fake_time(app_time_t *out,void *u) { (void)u;++fake_time_reads;*out=fake_now; }
+static unsigned alarms_seen,alarm_key;static char alarm_text[24];static const char *alarm_app_at_event;static bool alarm_answer_done;
+static void alarm_event(app_context_t *c,const app_event_t *e)
 {
-    app_descriptor_t clock_app=DESC("clock",APP_STANDBY);clock_app.wake=wake_cb;
-    const app_descriptor_t *const catalog[]={&launcher,&game,&face,&clock_app};
-    app_platform_t platform={.scene_create=scene2,.scene_delete=destroy2};
-    app_manager_t w;assert(app_manager_init(&w,catalog,4,&platform,"face",0));active(&w,"face");assert(w.idle);
-    wake_level=APP_WAKE_NONE;wake_calls=0;
-    app_manager_tick(&w,1000);app_manager_tick(&w,1100);app_manager_tick(&w,1200);
-    assert(wake_calls==1);active(&w,"face"); /* asked a few times a second, not every tick */
-    app_manager_tick(&w,1000+APP_WAKE_POLL_MS-1);assert(wake_calls==1);
-    app_manager_tick(&w,1000+APP_WAKE_POLL_MS);assert(wake_calls==2);active(&w,"face");
-    wake_level=APP_WAKE_IDLE;app_manager_tick(&w,2000);active(&w,"clock"); /* idle: an hourly chime may open */
-    assert(!w.idle);
-    unsigned calls=wake_calls;app_manager_tick(&w,3000);app_manager_tick(&w,4000);assert(wake_calls==calls); /* never asked while on screen */
+    if(e->kind==APP_EVENT_ALARM) { ++alarms_seen;alarm_key=e->key;snprintf(alarm_text,sizeof alarm_text,"%s",e->text);alarm_app_at_event=c->app->id;
+        if(alarm_answer_done) app_alarm_done(e->key); }
+}
+static void clock_at(unsigned hour,unsigned minute,unsigned second) { app_time_from_epoch(1763308800U+hour*3600U+minute*60U+second,480,&fake_now); }
+static void alarms(void)
+{
+    app_alarm_reset();
+    app_descriptor_t clock_app=DESC("clock",APP_STANDBY);clock_app.on_event=alarm_event;
+    app_descriptor_t mute=DESC("mute",0);mute.on_event=NULL; /* an app that cannot be told anything */
+    const app_descriptor_t *const catalog[]={&launcher,&game,&face,&clock_app,&mute};
+    app_platform_t platform={.scene_create=scene2,.scene_delete=destroy2,.time_read=read_fake_time};
+    app_manager_t w;assert(app_manager_init(&w,catalog,5,&platform,"face",0));active(&w,"face");assert(w.idle);
+    memset(&fake_now,0,sizeof fake_now);fake_time_reads=0;alarms_seen=0;alarm_answer_done=false;
+    const unsigned chime=app_alarm_add(&(app_alarm_spec_t){.owner="clock",.kind=APP_ALARM_CLOCK,.enabled=true,.idle_only=true,.window_s=15,
+        .minute=0,.day_mask=APP_ALARM_EVERY_DAY,.hour_mask=APP_ALARM_EVERY_HOUR,.label="整点"});
+    /* it is looked at a few times a second, not on every tick, and costs nothing while nothing is registered for it */
+    app_manager_tick(&w,1000);app_manager_tick(&w,1100);app_manager_tick(&w,1200);assert(fake_time_reads==1);active(&w,"face");
+    app_manager_tick(&w,1000+APP_ALARM_POLL_MS-1);assert(fake_time_reads==1);
+    app_manager_tick(&w,1000+APP_ALARM_POLL_MS);assert(fake_time_reads==2);
+    clock_at(9,0,0);app_manager_tick(&w,2000);
+    active(&w,"clock");assert(!w.idle && alarms_seen==1 && alarm_key==chime && !strcmp(alarm_text,"整点") && !strcmp(alarm_app_at_event,"clock"));
+    assert(enters>0); /* the app had been entered when it was told: it sees a screen */
+    app_alarm_done(chime);
+    app_manager_tick(&w,3000);app_manager_tick(&w,4000);assert(alarms_seen==1); /* the same minute is not announced twice */
+    /* a chime does not interrupt a game, and is not made up for when the standby screen is back */
     assert(app_open(&w.context,"game"));app_manager_commit(&w);active(&w,"game");
-    app_manager_tick(&w,5000);active(&w,"game"); /* a chime does not interrupt a game */
-    wake_level=APP_WAKE_NOW;app_manager_tick(&w,6000);active(&w,"clock"); /* an alarm does */
+    clock_at(10,0,1);app_manager_tick(&w,5000);active(&w,"game");assert(alarms_seen==1);
+    app_idle(&w.context);app_manager_commit(&w);active(&w,"face");assert(w.idle);
+    clock_at(10,0,16);app_manager_tick(&w,6000);active(&w,"face");assert(alarms_seen==1);
+    /* an alarm does take any screen: a game, then the menu */
+    const unsigned ring=app_alarm_add(&(app_alarm_spec_t){.owner="clock",.kind=APP_ALARM_AFTER,.enabled=true,.after_s=2,.label="闹钟",.tag=7});
+    assert(app_open(&w.context,"game"));app_manager_commit(&w);active(&w,"game");
+    app_manager_tick(&w,6500);active(&w,"game");app_manager_tick(&w,8600);
+    active(&w,"clock");assert(alarms_seen==2 && alarm_key==ring && !strcmp(alarm_text,"闹钟"));
+    app_alarm_info_t info;assert(app_alarm_get(ring,&info) && info.state==APP_ALARM_RINGING && info.tag==7);
+    app_alarm_done(ring);
+    const unsigned menu_ring=app_alarm_add(&(app_alarm_spec_t){.owner="game",.target="clock",.kind=APP_ALARM_AFTER,.enabled=true,.after_s=1});
     assert(app_open(&w.context,"launcher"));app_manager_commit(&w);active(&w,"launcher");
-    app_manager_tick(&w,7000);active(&w,"clock"); /* even over the menu */
-    wake_level=APP_WAKE_NONE;app_idle(&w.context);app_manager_commit(&w);active(&w,"face");assert(w.idle);
-    app_manager_tick(&w,8000);app_manager_tick(&w,9000);active(&w,"face");
-    app_descriptor_t none=DESC("plain",0); /* an app without wake costs nothing */
-    const app_descriptor_t *const plain[]={&launcher,&face,&none};
-    app_manager_t q;assert(app_manager_init(&q,plain,3,&platform,"face",0));app_manager_tick(&q,1000);active(&q,"face");
+    app_manager_tick(&w,9000);app_manager_tick(&w,10000);active(&w,"clock");assert(alarms_seen==3 && alarm_key==menu_ring); /* even over the menu, for another app's entry */
+    app_alarm_done(menu_ring);
+    /* the target is already on screen: it is told, and not entered a second time */
+    const unsigned e0=enters,l0=leaves;
+    const unsigned again=app_alarm_add(&(app_alarm_spec_t){.owner="clock",.kind=APP_ALARM_AFTER,.enabled=true,.after_s=1});
+    app_manager_tick(&w,11000);app_manager_tick(&w,12000);
+    active(&w,"clock");assert(alarms_seen==4 && enters==e0 && leaves==l0 && alarm_key==again);
+    /* leaving the app that is ringing answers the ring: the entry is not left blocking the others */
+    assert(app_alarm_get(again,&info) && info.state==APP_ALARM_RINGING);
+    assert(app_open(&w.context,"game"));app_manager_commit(&w);active(&w,"game");
+    assert(!app_alarm_get(again,&info)); /* a one-shot that was answered is gone */
+    /* the app answers from its own callback */
+    alarm_answer_done=true;
+    const unsigned quick=app_alarm_add(&(app_alarm_spec_t){.owner="clock",.kind=APP_ALARM_AFTER,.enabled=true,.after_s=1});
+    app_manager_tick(&w,13000);app_manager_tick(&w,14000);
+    active(&w,"clock");assert(alarms_seen==5 && alarm_key==quick && !app_alarm_get(quick,&info));
+    alarm_answer_done=false;
+    /* an app with no on_event is only opened, and its entry is closed at once */
+    const unsigned only_open=app_alarm_add(&(app_alarm_spec_t){.owner="mute",.kind=APP_ALARM_AFTER,.enabled=true,.after_s=1});
+    app_manager_tick(&w,15000);app_manager_tick(&w,16000);
+    active(&w,"mute");assert(alarms_seen==5 && !app_alarm_get(only_open,&info));
+    /* a target that is not in the catalog is dropped quietly; it must not block the entries behind it */
+    const unsigned ghost=app_alarm_add(&(app_alarm_spec_t){.owner="clock",.target="nowhere",.kind=APP_ALARM_AFTER,.enabled=true,.after_s=1});
+    const unsigned after_ghost=app_alarm_add(&(app_alarm_spec_t){.owner="clock",.kind=APP_ALARM_AFTER,.enabled=true,.after_s=1});
+    app_manager_tick(&w,17000);app_manager_tick(&w,18000);app_manager_tick(&w,19000);
+    assert(!app_alarm_get(ghost,&info));active(&w,"clock");assert(alarms_seen==6 && alarm_key==after_ghost);
+    app_alarm_done(after_ghost);
+    /* a navigation that is already waiting goes first: the alarm is announced on the next look */
+    const unsigned late=app_alarm_add(&(app_alarm_spec_t){.owner="clock",.kind=APP_ALARM_AFTER,.enabled=true,.after_s=1});
+    assert(app_open(&w.context,"game"));app_manager_tick(&w,20000);active(&w,"game"); /* the open was committed by this tick, before the alarm was looked at */
+    app_manager_tick(&w,21000);active(&w,"clock");assert(alarms_seen==7 && alarm_key==late);app_alarm_done(late);
+    /* with no clock callback only the entries that count uptime fire, and nothing else is read */
+    app_platform_t bare={.scene_create=scene2,.scene_delete=destroy2};
+    app_alarm_reset();
+    app_manager_t q;assert(app_manager_init(&q,catalog,5,&bare,"face",0));
+    const unsigned c2=app_alarm_add(&(app_alarm_spec_t){.owner="clock",.kind=APP_ALARM_CLOCK,.enabled=true,.minute=0,.day_mask=APP_ALARM_EVERY_DAY,.hour_mask=APP_ALARM_EVERY_HOUR});
+    app_manager_tick(&q,1000);app_manager_tick(&q,2000);active(&q,"face");
+    const unsigned s2=app_alarm_add(&(app_alarm_spec_t){.owner="clock",.kind=APP_ALARM_AFTER,.enabled=true,.after_s=1});
+    app_manager_tick(&q,3000);app_manager_tick(&q,4000);active(&q,"clock");assert(alarm_key==s2);(void)c2;
+    app_alarm_reset();
 }
 static void time_protocol(void)
 {
@@ -152,5 +212,5 @@ int main(void)
     active(&booted,"wedding");assert(booted.idle && !strcmp(app_standby_id(&booted.context),"wedding"));
     key(&booted,true,100);key(&booted,false,150);active(&booted,"launcher");
     app_manager_tick(&booted,10150);active(&booted,"wedding"); /* the menu timeout returns to the default standby */
-    protocol();time_protocol();wake();puts("app framework: lifecycle ownership, catalog, cadence, standby persistence, default standby, global input, deferred navigation, wake-ups and bounded protocol passed");
+    protocol();time_protocol();alarms();puts("app framework: lifecycle ownership, catalog, cadence, standby persistence, default standby, global input, deferred navigation, alarm registry wake-ups and bounded protocol passed");
 }

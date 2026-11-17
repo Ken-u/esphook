@@ -1,6 +1,6 @@
 # 闹钟与整点报时
 
-七段数码管时钟，同时是闹钟和整点报时。**到点由框架自动打开本应用**：闹钟响起时打开在任何画面之上，整点报时只在设备停在待机应用时打开；不用先进菜单，也不占用别的应用的画面。
+七段数码管时钟，同时是闹钟和整点报时。**日程由框架的全局闹钟 API 管理，本应用只是它的一个使用者**：它把闹钟和整点报时登记成两条闹钟条目，到点由框架自动打开本应用（闹钟打开在任何画面之上，整点报时只在设备停在待机应用时打开），再通知它显示响铃画面；不用先进菜单，也不占用别的应用的画面。**别的应用和游戏可以用同一套 API**（见 [应用框架](app-framework.md) 的“闹钟 API”），包括把 `target` 设成 `alarm` 借用这里的响铃画面。
 
 ## 先对时
 
@@ -34,9 +34,14 @@
 
 ## 实现
 
-- `apps/alarm/firmware/alarm_core.{h,c}`：纯 C，只依赖 `app_time_t`：`al_due()` 判定该响什么（闹钟优先于报时，贪睡到点也算闹钟），`al_fire()` 记下这一分钟避免同一分钟响两次，`al_snooze()`、`al_minutes_until()`；配置是固定 8 字节、带版本号和范围校验的 blob，读到别人的数据就用默认值。
-- `apps/alarm/firmware/app.c`：七段数码管、设置列表、响铃画面（只依赖共享画布和少量 LVGL 文字），描述符里的 `init` 加载配置、`wake` 回调让框架轮询“现在要不要打开我”（`APP_WAKE_NOW` 闹钟、`APP_WAKE_IDLE` 报时），详见 [应用框架](app-framework.md) 的“唤醒、时钟与存储”。应用带 `APP_STANDBY`，也可以设为待机应用。
+- `framework/core/app_alarm.c` + `framework/include/esphook/app_alarm.h`：**全局闹钟注册表**。登记（`app_alarm_add/update/cancel`）、到点判定（CLOCK/AT/AFTER、窗口、一次性、待机限定、同一分钟只响一次）、响铃状态与贪睡（`app_alarm_snooze/done/skip`）、排队、超时与错过统计。框架管理器每 250ms 在 UI 任务里看一次，到点就打开 `target` 应用并发 `APP_EVENT_ALARM`。主机测试 `./scripts/test-app-alarm.sh`。
+- `apps/alarm/firmware/alarm_core.{h,c}`：纯 C，不读时钟也不知道屏幕：配置（固定 8 字节、带版本号和范围校验的 blob，读到别人的数据就用默认值）、名称表、12 小时制下数，以及把设置变成注册表条目的 `al_alarm_spec()`（闹钟：每天/工作日/一次，可贪睡 3 次、间隔 5 分钟）和 `al_chime_spec()`（整点报时：所选时段每个整点，`idle_only`，只在整点前 15 秒内有效）；`al_kind_of()` 区分响的是自己的闹钟、自己的报时还是别人登记来借用本应用的闹钟。
+- `apps/alarm/firmware/app.c`：七段数码管、设置列表、响铃画面（只依赖共享画布和少量 LVGL 文字）。`init()` 读配置并登记两条条目，每次保存设置后重新推送（说同样的话不会打断正在响的闹钟）；收到 `APP_EVENT_ALARM` 进入响铃画面，按键用 `app_alarm_snooze/done` 回答；整点正好有闹钟时用 `app_alarm_skip` 让报时让路；时钟页“还有 N 分”来自 `app_alarm_seconds_until`。描述符里没有 `wake`。应用带 `APP_STANDBY`，也可以设为待机应用。
 - `framework/core/app_time.{h,c}`：公历换算、星期、时区偏移的纯函数，主机测试 `./scripts/test-app-time.sh`。
+
+**别人登记的闹钟**：目标是 `alarm` 的其他应用的条目同样打开这里的响铃画面：标题是条目的 label，`max_snoozes` 大于 0 才有“短按稍后提醒 长按关闭”，否则“按键关闭”；舵机提醒只对本应用自己的闹钟和报时生效，借用时不动舵机。
+
+注意：贪睡按设备运行时间计，不受中途改时间影响。同一台设备上所有应用共用 8 个闹钟槽，本应用占 2 个；槽用完时再开闹钟会提示“闹钟登记失败”。
 
 ## USB 调试命令
 
@@ -44,14 +49,16 @@
 robot alarm status
 ```
 
-返回 `active`、`view`（0 时钟 1 设置 2 改时间 3 响铃）、`ring`（响的是什么：0 无 1 闹钟 2 报时）、`valid`（设备有没有时间）、`alarm`、`time`（HH:MM）、`repeat`、`chime`、`range`、`servo`、`fired`（闹钟响过几次）、`chimes` 和 `frames`。
+返回 `active`、`view`（0 时钟 1 设置 2 改时间 3 响铃）、`ring`（响的是什么：0 无 1 闹钟 2 报时；别的应用借用本应用的闹钟也算 1）、`valid`（设备有没有时间）、`alarm`、`time`（HH:MM）、`repeat`、`chime`、`range`、`servo`、`fired`（闹钟响过几次）、`chimes`、`frames`，以及 `aid`/`cid`（本应用在注册表里的闹钟、报时条目 id，0 表示没登记上）。
 
 ## 验证
 
 ```bash
 ./scripts/test-app-time.sh   # 日期/星期/时区换算，含闰年、跨日、负偏移
-./scripts/test-alarm.sh      # 到点判定：一次/每天/工作日、时段、整点只响一次、贪睡次数、12 小时制下数、配置校验
-./scripts/test-app-ui.sh     # 真实 LVGL：时钟、设置、改时间、响铃、报时、校时前后的提示；框架 wake 打开应用
+./scripts/test-app-alarm.sh  # 框架闹钟注册表：校验、槽位与所有者、CLOCK/AT/AFTER、窗口与错过、贪睡、待机限定、排队、超时
+./scripts/test-alarm.sh      # 本应用：设置表、设置变条目、真实注册表里的一次/每天/工作日、时段、整点只响一次、贪睡、报时让路
+./scripts/test-app-games.sh  # 管理器真实打开目标应用并通知（闹钟盖过游戏/菜单、报时只在待机、目标已在屏幕、未知目标丢弃）
+./scripts/test-app-ui.sh     # 真实 LVGL：时钟、设置、改时间、响铃、报时、校时前后的提示；别的应用登记的闹钟借用响铃画面
 ```
 
 **未验证**：SNTP 联网校时和舵机提醒没有在真实网络和舵机上验证（开发板没有接舵机，只有 USB 校时、屏幕和单键在真机上跑过）；舵机路径靠核心测试和无屏渲染里的舵机桩覆盖。
