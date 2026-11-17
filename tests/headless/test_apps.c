@@ -296,8 +296,8 @@ static void play_screentest(const char *out)
     assert(strstr(screen_line("robot screentest invert 0"),"OK") && !screen.now.invert && screen.now.y_gap==26);
     assert(strstr(screen_line("robot screentest gap 2 25"),"variant=custom") && screen.now.x_gap==2 && screen.now.y_gap==25);
     assert(strstr(screen_line("robot screentest plain"),"variant=plain") && screen.saves==1);
-    assert(strstr(screen_line("robot screentest save"),"OK saved") && screen.saves==2 && screen.now.saved_mhz==20);
-    assert(strstr(screen_line("robot screentest mhz 10"),"power cycle") && screen.saves==3 && screen.now.saved_mhz==10 && screen.now.mhz==20);
+    assert(strstr(screen_line("robot screentest save"),"OK saving") && screen.saves==2 && screen.now.saved_mhz==20);
+    assert(strstr(screen_line("robot screentest mhz 10"),"saved_mhz=10") && screen.saves==3 && screen.now.saved_mhz==10 && screen.now.mhz==20);
     assert(strstr(screen_line("robot screentest save"),"saved_mhz=10") && screen.now.saved_mhz==10); /* a plain save keeps the stored clock */
     assert(strstr(screen_line("robot screentest raw 2A 00 01 00 A0"),"OK sent") && screen.raws==1 && screen.raw_length==5 && screen.raw[0]==0x2A && screen.raw[4]==0xA0);
     assert(strstr(screen_line("robot screentest gap 99 0"),"ERR") && strstr(screen_line("robot screentest blink"),"ERR") && screen.raws==1);

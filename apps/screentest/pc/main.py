@@ -30,6 +30,16 @@ def ask(link, line, wait=2.0):
                 return text.decode(errors="replace")
     return None
 
+def send(link, line, wait=2.0):
+    """ask(), repeated while the screen is still busy with the previous change (a few milliseconds)."""
+    reply = ask(link, line, wait)
+    for _ in range(10):
+        if not (reply or "").startswith("ERR busy"):
+            break
+        time.sleep(0.05)
+        reply = ask(link, line, wait)
+    return reply
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--port")
@@ -42,7 +52,7 @@ def main(argv=None):
         return 0
     link = AppLink(args.port)
     try:
-        reply = ask(link, line)
+        reply = send(link, line)
     finally:
         link.close()
     if reply is None:

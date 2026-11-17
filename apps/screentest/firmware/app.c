@@ -124,10 +124,12 @@ static bool command(const char *line)
         else (void)app_command_reply("ERR busy, repeat");
         break;
     case APP_SCREEN_CMD_SAVE:
+        const uint8_t in_use = now.mhz;
         now.mhz = cmd.has_mhz ? cmd.value.mhz : now.saved_mhz;
-        if (app_screen_apply(&now, true)) {
+        if (app_screen_apply(&now, true)) { /* the flash write follows within a few tens of milliseconds */
             now.saved_mhz = now.mhz;
-            status(cmd.has_mhz ? "OK saved, the clock needs a power cycle " : "OK saved ", &now);
+            now.mhz = in_use;
+            status(cmd.has_mhz ? "OK saving, the clock needs a power cycle " : "OK saving ", &now);
         } else {
             (void)app_command_reply("ERR busy, repeat");
         }
