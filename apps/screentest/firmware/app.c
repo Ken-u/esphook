@@ -123,7 +123,7 @@ static bool command(const char *line)
         if (app_screen_apply(&now, false)) status("OK (not saved; `robot screentest save`) ", &now);
         else (void)app_command_reply("ERR busy, repeat");
         break;
-    case APP_SCREEN_CMD_SAVE:
+    case APP_SCREEN_CMD_SAVE: {
         const uint8_t in_use = now.mhz;
         now.mhz = cmd.has_mhz ? cmd.value.mhz : now.saved_mhz;
         if (app_screen_apply(&now, true)) { /* the flash write follows within a few tens of milliseconds */
@@ -134,6 +134,7 @@ static bool command(const char *line)
             (void)app_command_reply("ERR busy, repeat");
         }
         break;
+    }
     case APP_SCREEN_CMD_RAW:
         (void)app_command_reply(app_screen_raw(cmd.raw, cmd.raw_length) ? "OK sent" : "ERR busy, repeat");
         break;
