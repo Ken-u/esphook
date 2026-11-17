@@ -76,6 +76,8 @@ int main(void)
     /* save and the clock */
     c = P("robot screentest save");
     assert(c.kind == APP_SCREEN_CMD_SAVE && !c.has_mhz);
+    c = P("robot screentest reset");
+    assert(c.kind == APP_SCREEN_CMD_RESET && !c.has_mhz && !c.has_invert && !c.has_gap);
     c = P("robot screentest mhz 10");
     assert(c.kind == APP_SCREEN_CMD_SAVE && c.has_mhz && c.value.mhz == 10);
     c = P("robot screentest mhz 40");
@@ -85,6 +87,7 @@ int main(void)
     bad("robot screentest mhz");
     bad("robot screentest mhz 10 20");
     bad("robot screentest save now");
+    bad("robot screentest reset all");
 
     /* raw */
     c = P("robot screentest raw 21");

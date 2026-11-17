@@ -67,6 +67,17 @@ esp_err_t config_app_blob_set(const char *key, const void *data, size_t len)
     nvs_close(h); return err;
 }
 
+esp_err_t config_app_blob_erase(const char *key)
+{
+    if (!key || !key[0] || strlen(key) > 15) return ESP_ERR_INVALID_ARG;
+    nvs_handle_t h; esp_err_t err = nvs_open("appdata", NVS_READWRITE, &h);
+    if (err != ESP_OK) return err == ESP_ERR_NVS_NOT_FOUND ? ESP_OK : err;
+    err = nvs_erase_key(h, key);
+    if (err == ESP_ERR_NVS_NOT_FOUND) err = ESP_OK; /* nothing stored is as good as erased */
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h); return err;
+}
+
 /* NVS key 名最多 15 个字符，不能直接把 client/session id 拼进 key。
  * 显示名使用固定短 key 的 blob 记录，记录本身保存完整 type/id/name。 */
 #define MAX_DISPLAY_RECORDS 64

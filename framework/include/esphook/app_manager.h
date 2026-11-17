@@ -9,7 +9,7 @@ typedef struct { size_t app; bool idle, valid; } app_recent_t;
 struct app_manager {
     const app_descriptor_t *const *catalog;
     size_t catalog_count, active, standby, selected, pending, launcher;
-    bool idle, pending_idle, pending_set, ready, dirty, triple_blocked, double_blocked, exit_armed;
+    bool idle, pending_idle, pending_set, ready, dirty, triple_blocked, double_blocked, exit_armed, first_run_next;
     /* The last two apps other than the menu, newest first: where "back" goes (see app_back). */
     app_recent_t recent[2];
     /* A double click in the making. It outlives app changes on purpose: the first click of a double on the standby

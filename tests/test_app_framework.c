@@ -4,7 +4,8 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
-static unsigned enters,leaves,scenes,releases,renders,shorts,confirms,ups;
+static unsigned enters,leaves,scenes,releases,renders,shorts,confirms,ups,first_runs,setup_asked;
+static bool setup_wanted;
 static bool save_ok=true;
 static char saved[24];
 static void *scene(void *u) { (void)u; assert(!scenes); ++scenes; return &scenes; }
@@ -13,7 +14,7 @@ static void *scene2(void *u) { (void)u; return &saved; }
 static void destroy2(void *root,void *u) { (void)u; assert(root==&saved); }
 static void release(const char *id,void *u) { (void)id;(void)u;++releases; }
 static bool save(const char *id,void *u) { (void)u;if(save_ok) strcpy(saved,id);return save_ok; }
-static void enter(app_context_t *c) { assert(*(unsigned *)c->state==0);*(unsigned *)c->state=24;++enters; }
+static void enter(app_context_t *c) { assert(*(unsigned *)c->state==0);*(unsigned *)c->state=24;++enters;if(c->first_run) ++first_runs; }
 static void leave(app_context_t *c) { assert(*(unsigned *)c->state==24);++leaves; }
 static void render(app_context_t *c) { (void)c;++renders; }
 static void event(app_context_t *c,const app_event_t *e)
@@ -232,6 +233,40 @@ static void back_and_double(void)
     for(unsigned i=0;i<2;++i) { app_manager_key(&d,1,true,t+30000+i*100);app_manager_key(&d,1,false,t+30040+i*100); }
     app_manager_tick(&d,t+31000);active(&d,"game");
 }
+/* descriptor->first_run: asked once while booting; the first app that says yes is the first screen, ahead of the standby
+ * app, outside the "back" history, and ends with app_idle(). */
+static bool wants_setup(void) { ++setup_asked;return setup_wanted; }
+static void first_run_hook(void)
+{
+    app_descriptor_t setup=DESC("setup",0),other=DESC("other",0);
+    setup.first_run=wants_setup;other.first_run=wants_setup;
+    const app_descriptor_t *const catalog[]={&launcher,&face,&other,&setup,&game};
+    app_platform_t p={.scene_create=scene2,.scene_delete=destroy2};
+    /* Nothing to set up: the board boots as it always did, and the hook was asked exactly once per candidate. */
+    setup_wanted=false;setup_asked=0;first_runs=0;
+    app_manager_t quiet;assert(app_manager_init(&quiet,catalog,5,&p,"face",0));
+    active(&quiet,"face");assert(quiet.idle && !quiet.context.first_run && first_runs==0 && setup_asked==2);
+    /* Something to set up: the first candidate in catalog order starts, not idle, and the standby app waits. */
+    setup_wanted=true;setup_asked=0;first_runs=0;
+    app_manager_t m;assert(app_manager_init(&m,catalog,5,&p,"face",0));
+    active(&m,"other");assert(!m.idle && m.context.first_run && first_runs==1 && setup_asked==1);
+    assert(!strcmp(app_standby_id(&m.context),"face"));
+    /* It is not asked again, and the run is not in the history: back from the standby screen has nowhere to go. */
+    app_idle(&m.context);app_manager_commit(&m);
+    active(&m,"face");assert(m.idle && !m.context.first_run && first_runs==1 && setup_asked==1);
+    assert(!app_back(&m.context));
+    /* Entering the same app again later is an ordinary entry. */
+    assert(app_open(&m.context,"other"));app_manager_commit(&m);
+    active(&m,"other");assert(!m.context.first_run && first_runs==1);
+    assert(app_back(&m.context));app_manager_commit(&m);active(&m,"face");
+    /* A run that is left some other way (the menu) is over as well. */
+    setup_wanted=true;first_runs=0;
+    app_manager_t n;assert(app_manager_init(&n,catalog,5,&p,"face",0));
+    active(&n,"other");assert(n.context.first_run);
+    app_menu(&n.context);app_manager_commit(&n);active(&n,"launcher");assert(!n.context.first_run);
+    assert(app_open(&n.context,"other"));app_manager_commit(&n);assert(!n.context.first_run && first_runs==1);
+    setup_wanted=false;
+}
 int main(void)
 {
     app_manager_t m;app_platform_t p={.scene_create=scene,.scene_delete=destroy,.release_services=release,.save_standby=save};
@@ -307,5 +342,5 @@ int main(void)
     active(&booted,"wedding");assert(booted.idle && !strcmp(app_standby_id(&booted.context),"wedding"));
     key(&booted,true,100);key(&booted,false,150);active(&booted,"launcher");
     app_manager_tick(&booted,10150);active(&booted,"wedding"); /* the menu timeout returns to the default standby */
-    protocol();time_protocol();alarms();back_and_double();puts("app framework: lifecycle ownership, catalog, cadence, standby persistence, default standby, global input, deferred navigation, alarm registry wake-ups, back and the double click, and bounded protocol passed");
+    first_run_hook();protocol();time_protocol();alarms();back_and_double();puts("app framework: lifecycle ownership, catalog, cadence, standby persistence, default standby, first run, global input, deferred navigation, alarm registry wake-ups, back and the double click, and bounded protocol passed");
 }

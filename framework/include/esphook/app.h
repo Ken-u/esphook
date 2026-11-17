@@ -44,6 +44,12 @@ struct app_descriptor {
     void (*render)(app_context_t *);
     void (*icon)(void *parent, int x, int y, bool selected);
     bool (*command)(const char *line);
+    /* Optional first-run setup. Asked once while the board starts, after every init(): the first app that answers
+     * true is the first screen instead of the standby app (and `first_run` below is true for that entry only), so a
+     * setting the rest of the device depends on - the panel flavour, say - is made before anything else is shown.
+     * The app ends the run with app_idle(): the board then goes on to the standby screen as if it had just started.
+     * The run is not part of the "back" history. Called on the UI task; answer from stored state, do not block. */
+    bool (*first_run)(void);
 };
 struct app_context {
     app_manager_t *manager;
@@ -52,6 +58,7 @@ struct app_context {
     void *root; /* Framework-owned LVGL root, valid only while active. */
     uint64_t now_ms;
     bool standby;
+    bool first_run; /* this entry is the boot-time first run asked for by descriptor->first_run */
 };
 typedef struct {
     void *(*scene_create)(void *user);

@@ -32,6 +32,7 @@ static app_screen_t s_tune = {.invert = true, .x_gap = 1, .y_gap = 26, .mhz = 20
 static portMUX_TYPE s_tune_lock = portMUX_INITIALIZER_UNLOCKED;
 static struct { app_screen_t want; bool save, pending; } s_tune_req;
 static struct { uint8_t bytes[APP_SCREEN_RAW_MAX]; size_t length; bool pending; } s_raw_req;
+static bool s_forget_req;
 
 #define ST7735_CASET 0x2A
 #define ST7735_RASET 0x2B
@@ -99,7 +100,7 @@ static void tune_load(void)
     if (config_app_blob_get(TUNE_KEY, &blob, &length) != ESP_OK || length != sizeof blob || blob.version != TUNE_VERSION
         || blob.invert > 1U) return;
     const app_screen_t stored = {.invert = blob.invert != 0U, .x_gap = blob.x_gap, .y_gap = blob.y_gap,
-                                 .mhz = blob.mhz, .saved_mhz = blob.mhz};
+                                 .mhz = blob.mhz, .saved_mhz = blob.mhz, .configured = true};
     if (app_screen_valid(&stored)) s_tune = stored;
 }
 
@@ -121,6 +122,15 @@ bool dv_screen_apply(const app_screen_t *want, bool save)
     return queued;
 }
 
+bool dv_screen_forget(void)
+{
+    bool queued = false;
+    portENTER_CRITICAL(&s_tune_lock);
+    if (!s_tune_req.pending && !s_forget_req) { s_forget_req = true; queued = true; }
+    portEXIT_CRITICAL(&s_tune_lock);
+    return queued;
+}
+
 bool dv_screen_raw(const uint8_t *bytes, size_t length)
 {
     if (!bytes || length < 1U || length > APP_SCREEN_RAW_MAX) return false;
@@ -138,12 +148,24 @@ static void tune_poll(void)
     app_screen_t want = {0};
     uint8_t raw[APP_SCREEN_RAW_MAX] = {0};
     size_t raw_length = 0;
-    bool apply = false, save = false;
+    bool apply = false, save = false, forget = false;
     portENTER_CRITICAL(&s_tune_lock);
+    if (s_forget_req) { forget = true; s_forget_req = false; }
     if (s_tune_req.pending) { want = s_tune_req.want; save = s_tune_req.save; apply = true; s_tune_req.pending = false; }
     if (s_raw_req.pending) { memcpy(raw, s_raw_req.bytes, s_raw_req.length); raw_length = s_raw_req.length; s_raw_req.pending = false; }
     portEXIT_CRITICAL(&s_tune_lock);
 
+    if (forget) {
+        /* Back to what the firmware was written on, as on a board that was never set up: the next boot asks again. */
+        if (config_app_blob_erase(TUNE_KEY) != ESP_OK) ESP_LOGW(TAG, "screen tuning not erased");
+        portENTER_CRITICAL(&s_tune_lock);
+        const uint8_t in_use = s_tune.mhz;
+        const app_screen_t defaults = {.invert = true, .x_gap = 1, .y_gap = 26, .mhz = in_use, .saved_mhz = 20};
+        s_tune = defaults;
+        portEXIT_CRITICAL(&s_tune_lock);
+        ESP_ERROR_CHECK(esp_lcd_panel_invert_color(s_panel, defaults.invert));
+        ESP_ERROR_CHECK(esp_lcd_panel_set_gap(s_panel, defaults.x_gap, defaults.y_gap));
+    }
     if (apply) {
         ESP_ERROR_CHECK(esp_lcd_panel_invert_color(s_panel, want.invert));
         ESP_ERROR_CHECK(esp_lcd_panel_set_gap(s_panel, want.x_gap, want.y_gap));
@@ -158,6 +180,7 @@ static void tune_poll(void)
             if (config_app_blob_set(TUNE_KEY, &blob, sizeof blob) == ESP_OK) {
                 portENTER_CRITICAL(&s_tune_lock);
                 s_tune.saved_mhz = want.mhz;
+                s_tune.configured = true;
                 portEXIT_CRITICAL(&s_tune_lock);
             } else {
                 ESP_LOGW(TAG, "screen tuning not saved");
@@ -169,7 +192,7 @@ static void tune_poll(void)
         if (err != ESP_OK) ESP_LOGW(TAG, "raw screen command failed: %s", esp_err_to_name(err));
     }
     /* A new polarity or offset only shows once every pixel is sent again. */
-    if ((apply || raw_length) && s_display) lv_obj_invalidate(lv_screen_active());
+    if ((apply || forget || raw_length) && s_display) lv_obj_invalidate(lv_screen_active());
 }
 
 esp_err_t dv_init(void)

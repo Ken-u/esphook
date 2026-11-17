@@ -98,6 +98,11 @@ bool app_screen_parse(const char *line, app_screen_cmd_t *cmd)
         cmd->kind = APP_SCREEN_CMD_SAVE;
         return true;
     }
+    if (!strcmp(word, "reset")) {
+        if (n > 1) return bad(cmd, "no argument expected");
+        cmd->kind = APP_SCREEN_CMD_RESET;
+        return true;
+    }
     if (!strcmp(word, "mhz")) {
         if (n != 2 || !parse_uint(tok[1], 10, APP_SCREEN_MHZ_MAX, &a) || a < 1U) return bad(cmd, "usage: mhz <1..40>");
         cmd->kind = APP_SCREEN_CMD_SAVE;
@@ -120,5 +125,5 @@ bool app_screen_parse(const char *line, app_screen_cmd_t *cmd)
         cmd->kind = !strcmp(word, "start") ? APP_SCREEN_CMD_OPEN : APP_SCREEN_CMD_MENU;
         return true;
     }
-    return bad(cmd, "unknown word: status plugin plain invert gap save mhz raw start stop");
+    return bad(cmd, "unknown word: status plugin plain invert gap save reset mhz raw start stop");
 }

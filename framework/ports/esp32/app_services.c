@@ -169,6 +169,7 @@ bool app_storage_save(const char *key, const void *data, size_t size)
 void app_screen_read(app_screen_t *out) { dv_screen_read(out); }
 bool app_screen_apply(const app_screen_t *want, bool save) { return dv_screen_apply(want, save); }
 bool app_screen_raw(const uint8_t *bytes, size_t length) { return dv_screen_raw(bytes, length); }
+bool app_screen_forget(void) { return dv_screen_forget(); }
 bool app_transport_write(const char *line) { return cdc_write(line) == ESP_OK; }
 bool app_host_event(const app_context_t *ctx, const char *action, unsigned key, const char *text)
 {

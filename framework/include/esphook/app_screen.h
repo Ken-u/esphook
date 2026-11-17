@@ -17,6 +17,8 @@ typedef struct {
     uint8_t x_gap, y_gap;      /* RAM offsets of the 160 x 80 window */
     uint8_t mhz;               /* SPI clock in use since power-up */
     uint8_t saved_mhz;         /* SPI clock the next power-up uses (changing it needs a power cycle) */
+    bool configured;           /* a tuning is stored: false on a board that was never set up (the screentest app then runs
+                                  first at boot, see app_descriptor_t::first_run), read-only for apply() */
 } app_screen_t;
 
 #define APP_SCREEN_GAP_MAX 63U
@@ -32,6 +34,9 @@ bool app_screen_apply(const app_screen_t *want, bool save);
 /* Sends one raw command to the controller (bytes[0], then its parameters) and redraws; false when busy or malformed.
  * For experiments: a wrong register is undone by a power cycle. */
 bool app_screen_raw(const uint8_t *bytes, size_t length);
+/* Forgets the stored tuning: the firmware defaults apply now, `configured` turns false and the next boot starts with the
+ * screen setup again. False when the display is busy with an earlier request. */
+bool app_screen_forget(void);
 
 /* ---- pure helpers (framework/core/app_screen.c) ------------------------------------------------------------- */
 bool app_screen_valid(const app_screen_t *screen);
@@ -44,6 +49,7 @@ typedef enum {
     APP_SCREEN_CMD_STATUS,
     APP_SCREEN_CMD_SET,   /* apply the fields flagged below, not stored */
     APP_SCREEN_CMD_SAVE,  /* store what is applied now (and the clock, when flagged) */
+    APP_SCREEN_CMD_RESET, /* forget the stored tuning: defaults now, the setup runs again at the next boot */
     APP_SCREEN_CMD_RAW,
     APP_SCREEN_CMD_OPEN,  /* show the test pattern */
     APP_SCREEN_CMD_MENU,  /* leave it */
@@ -64,6 +70,7 @@ typedef struct {
  *   robot screentest invert 0|1        apply the colour polarity
  *   robot screentest gap <x> <y>       apply the RAM offsets (0..63)
  *   robot screentest save              store what is applied
+ *   robot screentest reset             forget the stored tuning (defaults now; the next boot sets the screen first)
  *   robot screentest mhz <1..40>       store the SPI clock (and what is applied); takes effect after a power cycle
  *   robot screentest raw <hex>...      one raw command, e.g. `raw 21` or `raw 2A 00 00 00 9F`
  *   robot screentest start | stop      show / leave the test pattern */

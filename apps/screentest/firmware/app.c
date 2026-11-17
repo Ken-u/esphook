@@ -10,10 +10,22 @@
  * The pattern shows what goes wrong with the wrong flavour at a glance: a white frame that must touch all four
  * edges, a grid whose vertical lines must stay vertical (a picture that slants a pixel more with every row has the
  * wrong x offset), colour squares in the corners (red, green, blue, yellow from top left, clockwise), the primary
- * colours and a grey ramp (every colour inverted means the polarity is wrong). K1 sets it right without a PC:
- * a short press inverts the colours, a 500 ms hold swaps the offsets between the two flavours, and leaving the app
- * (three presses) stores what is on screen. The PC does the same with `robot screentest plain` / `plugin` / `invert` /
- * `gap` / `raw` / `save` / `mhz` (framework/include/esphook/app_screen.h).
+ * colours and a grey ramp (every colour inverted means the polarity is wrong).
+ *
+ * K1 sets it right without a PC. A short press moves on to the next of four combinations of polarity and offsets
+ * (plugin, plugin with the colours the other way round, plain, plain inverted) - press until the picture is right -
+ * and a 500 ms hold stores what is on screen and leaves. The PC does the same with `robot screentest plain` /
+ * `plugin` / `invert` / `gap` / `raw` / `save` / `mhz` (framework/include/esphook/app_screen.h).
+ *
+ * Only the hold stores. Any other way out (the triple press, a command, the idle timeout below) puts the panel back
+ * the way it was when the app started - the triple press also delivers its first clicks as short presses, which must
+ * not leave a changed panel behind.
+ *
+ * A board that was never set up (no stored tuning) starts here: `first_run` makes this the first screen at boot,
+ * because a garbled screen is too hard to navigate to the menu with. In that run the triple press is off, the hold
+ * stores and ends the run with app_idle() - the board goes on to the standby screen - and 30 s without a key ends
+ * it the same way without storing, so a board nobody is watching still starts (and asks again at the next boot).
+ * Opened from the menu the app is the same, and the hold returns to the menu.
  *
  * command() runs on the USB task. It only parses, asks the screen service, and answers; the service is thread safe
  * and nothing here touches LVGL or the app's session state. */
@@ -21,10 +33,18 @@
 #define PLUGIN_Y 26
 #define PLAIN_X 0
 #define PLAIN_Y 24
+#define FIRST_RUN_IDLE_MS 30000U
+
+/* Polarity and offsets a module is known to need, in the order K1 steps through them (likeliest first). */
+static const struct { bool invert; uint8_t x, y; } presets[] = {
+    {true, PLUGIN_X, PLUGIN_Y}, {false, PLUGIN_X, PLUGIN_Y}, {false, PLAIN_X, PLAIN_Y}, {true, PLAIN_X, PLAIN_Y},
+};
+#define PRESETS (sizeof presets / sizeof presets[0])
 
 typedef struct {
-    lv_obj_t *variant, *values;
-    app_screen_t shown;
+    lv_obj_t *variant, *values, *hold;
+    app_screen_t shown, entry; /* entry: what was on screen when the app started */
+    uint64_t key_ms; /* the last key, for the first run's idle timeout */
     bool drawn, changed;
 } state_t;
 _Static_assert(sizeof(state_t) <= APP_STATE_CAPACITY, "screentest state too large");
@@ -55,46 +75,82 @@ static void enter(app_context_t *ctx)
     state_t *s = ctx->state;
     rects(ctx->root);
     lv_obj_t *hint = app_ui_label(ctx->root, &aihook_font_12, 14, 3, 132, 16, LV_LABEL_LONG_MODE_CLIP);
-    app_ui_text(hint, "短按 反色 长按 偏移");
+    app_ui_text(hint, "短按 切换 长按 确认");
     app_ui_center(hint);
+    s->hold = app_ui_hold_bar(ctx->root, 65, 0xFFFFFF);
+    s->key_ms = ctx->now_ms;
+    app_screen_read(&s->entry);
+    if (ctx->first_run) app_set_triple_exit(ctx, false); /* the way on is the confirmation (or the idle timeout) */
     s->variant = app_ui_label(ctx->root, &aihook_font_12, 14, 33, 132, 16, LV_LABEL_LONG_MODE_CLIP);
     s->values = app_ui_label(ctx->root, &aihook_font_12, 14, 49, 132, 16, LV_LABEL_LONG_MODE_CLIP);
     app_ui_center(s->variant);
     app_ui_center(s->values);
 }
 
-static void leave(app_context_t *ctx)
+static bool first_run(void)
 {
-    state_t *s = ctx->state;
-    if (!s->changed) return;
     app_screen_t now;
     app_screen_read(&now);
-    now.mhz = now.saved_mhz; /* the clock is changed only on purpose, by `mhz` */
-    (void)app_screen_apply(&now, true);
+    return !now.configured;
+}
+
+static void leave(app_context_t *ctx)
+{
+    const state_t *s = ctx->state;
+    if (s->changed) (void)app_screen_apply(&s->entry, false); /* not confirmed by the hold: the panel goes back */
+}
+
+static size_t preset_of(const app_screen_t *s)
+{
+    for (size_t i = 0; i < PRESETS; ++i)
+        if (s->invert == presets[i].invert && s->x_gap == presets[i].x && s->y_gap == presets[i].y) return i;
+    return PRESETS;
 }
 
 static void event(app_context_t *ctx, const app_event_t *e)
 {
     state_t *s = ctx->state;
+    s->key_ms = ctx->now_ms;
     if (e->kind != APP_EVENT_SHORT && e->kind != APP_EVENT_CONFIRM) return;
     app_screen_t now;
     app_screen_read(&now);
-    if (e->kind == APP_EVENT_SHORT) now.invert = !now.invert;
-    else if (now.x_gap == PLUGIN_X && now.y_gap == PLUGIN_Y) { now.x_gap = PLAIN_X; now.y_gap = PLAIN_Y; }
-    else { now.x_gap = PLUGIN_X; now.y_gap = PLUGIN_Y; }
-    if (app_screen_apply(&now, false)) s->changed = true;
+    if (e->kind == APP_EVENT_SHORT) {
+        const size_t at = preset_of(&now);
+        const size_t next = at == PRESETS ? 0 : (at + 1U) % PRESETS; /* a value set from the PC starts the round again */
+        now.invert = presets[next].invert;
+        now.x_gap = presets[next].x;
+        now.y_gap = presets[next].y;
+        if (app_screen_apply(&now, false)) s->changed = true;
+        return;
+    }
+    if (s->changed || !now.configured) { /* an unchanged, stored tuning needs no flash write */
+        now.mhz = now.saved_mhz; /* the clock is changed only on purpose, by `mhz` */
+        if (!app_screen_apply(&now, true)) return; /* busy: the hold can be repeated */
+    }
+    s->changed = false;
+    if (ctx->first_run) app_idle(ctx);
+    else app_menu(ctx);
+}
+
+static void tick(app_context_t *ctx)
+{
+    const state_t *s = ctx->state;
+    if (ctx->first_run && ctx->now_ms - s->key_ms >= FIRST_RUN_IDLE_MS) app_idle(ctx);
 }
 
 static void render(app_context_t *ctx)
 {
     state_t *s = ctx->state;
+    app_ui_hold_line(s->hold, app_hold_ms(ctx), true, 0);
     app_screen_t now;
     app_screen_read(&now);
     if (s->drawn && !memcmp(&now, &s->shown, sizeof now)) return;
     s->shown = now;
     s->drawn = true;
     char line[40];
-    snprintf(line, sizeof line, "%s %s", app_screen_variant(&now), now.invert ? "INV" : "NORM");
+    const size_t index = preset_of(&now);
+    if (index < PRESETS) snprintf(line, sizeof line, "%u/%u %s", (unsigned)index + 1U, (unsigned)PRESETS, now.invert ? "INV" : "NORM");
+    else snprintf(line, sizeof line, "-/%u %s", (unsigned)PRESETS, now.invert ? "INV" : "NORM"); /* set from the PC: none of the four */
     app_ui_text(s->variant, line);
     snprintf(line, sizeof line, "gap %u,%u  %uMHz", (unsigned)now.x_gap, (unsigned)now.y_gap, (unsigned)now.mhz);
     app_ui_text(s->values, line);
@@ -102,9 +158,9 @@ static void render(app_context_t *ctx)
 
 static void status(const char *prefix, const app_screen_t *s)
 {
-    (void)app_command_replyf("%sinvert=%u x=%u y=%u mhz=%u saved_mhz=%u variant=%s", prefix, s->invert ? 1U : 0U,
-                             (unsigned)s->x_gap, (unsigned)s->y_gap, (unsigned)s->mhz, (unsigned)s->saved_mhz,
-                             app_screen_variant(s));
+    (void)app_command_replyf("%sinvert=%u x=%u y=%u mhz=%u saved_mhz=%u variant=%s configured=%u", prefix,
+                             s->invert ? 1U : 0U, (unsigned)s->x_gap, (unsigned)s->y_gap, (unsigned)s->mhz,
+                             (unsigned)s->saved_mhz, app_screen_variant(s), s->configured ? 1U : 0U);
 }
 
 static bool command(const char *line)
@@ -135,6 +191,10 @@ static bool command(const char *line)
         }
         break;
     }
+    case APP_SCREEN_CMD_RESET:
+        (void)app_command_reply(app_screen_forget() ? "OK forgotten, defaults applied, the next boot sets the screen first"
+                                                    : "ERR busy, repeat");
+        break;
     case APP_SCREEN_CMD_RAW:
         (void)app_command_reply(app_screen_raw(cmd.raw, cmd.raw_length) ? "OK sent" : "ERR busy, repeat");
         break;
@@ -163,5 +223,5 @@ static void icon(void *parent, int x, int y, bool selected)
 }
 
 const app_descriptor_t esphook_app_screentest = {.api_version = APP_API_VERSION, .id = "screentest", .title = "屏幕测试",
-    .refresh_ms = 100, .state_size = sizeof(state_t), .on_enter = enter, .on_leave = leave, .on_event = event,
-    .render = render, .icon = icon, .command = command};
+    .refresh_ms = 50, .state_size = sizeof(state_t), .on_enter = enter, .on_leave = leave, .on_event = event,
+    .on_tick = tick, .render = render, .icon = icon, .command = command, .first_run = first_run};

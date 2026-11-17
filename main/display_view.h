@@ -16,3 +16,4 @@ bool dv_is_initialized(void);
 void dv_screen_read(app_screen_t *out);
 bool dv_screen_apply(const app_screen_t *want, bool save);
 bool dv_screen_raw(const uint8_t *bytes, size_t length);
+bool dv_screen_forget(void);

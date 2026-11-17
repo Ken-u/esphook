@@ -11,7 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "framework" / "pc"))
 from esphook_sdk import AppLink
 
-WORDS = "status plugin plain invert gap save mhz raw start stop"
+WORDS = "status plugin plain invert gap save reset mhz raw start stop"
 
 def command_line(words):
     return " ".join(["robot screentest"] + list(words)).strip()

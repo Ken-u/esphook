@@ -88,7 +88,8 @@ void app_manager_commit(app_manager_t *m)
 {
     if (!m->pending_set) return;
     size_t target = m->pending; bool idle = m->pending_idle;
-    m->pending_set = false;
+    const bool first_run = m->first_run_next; /* only the very first entry of a boot can be the first run */
+    m->pending_set = false; m->first_run_next = false;
     if (m->ready) {
         if (m->context.app->on_leave) m->context.app->on_leave(&m->context);
         app_alarm_leaving(m->context.app->id); /* leaving an app answers the alarm that was ringing in it */
@@ -97,12 +98,12 @@ void app_manager_commit(app_manager_t *m)
     }
     m->active = target; m->idle = idle; m->triple_blocked = false; m->double_blocked = false; m->exit_hold_ms = 0; m->exit_armed = false;
     m->dbl_pending = false; /* a double click that was waiting for its quiet moment belongs to the screen it was made on */
-    if (target != m->launcher) {
+    if (target != m->launcher && !first_run) {
         if (!m->recent[0].valid || m->recent[0].app != target) { m->recent[1] = m->recent[0]; m->recent[0].app = target; m->recent[0].valid = true; }
         m->recent[0].idle = idle;
     }
     memset(&m->storage, 0, sizeof m->storage);
-    m->context.app = m->catalog[target]; m->context.standby = idle;
+    m->context.app = m->catalog[target]; m->context.standby = idle; m->context.first_run = first_run;
     m->context.state = m->storage.bytes;
     m->context.root = m->platform.scene_create ? m->platform.scene_create(m->platform.user) : NULL;
     for (unsigned key = 0; key < 3; ++key) app_input_consume(&m->input[key]);
@@ -133,7 +134,12 @@ bool app_manager_init(app_manager_t *m, const app_descriptor_t *const *catalog,
     size_t launcher = find(m, APP_LAUNCHER), standby = find(m, standby_id);
     if (launcher == count || standby == count || !(catalog[standby]->flags & APP_STANDBY)) return false;
     m->launcher = launcher; m->standby = standby; m->context.manager = m; m->context.now_ms = ms;
-    request(&m->context, standby, true); app_manager_commit(m); return true;
+    /* A first run (descriptor->first_run) comes before the standby screen; it ends with app_idle(). */
+    size_t first = count;
+    for (size_t i = 0; i < count && first == count; ++i)
+        if (catalog[i]->first_run && catalog[i]->first_run()) first = i;
+    m->first_run_next = first != count;
+    request(&m->context, first != count ? first : standby, first == count); app_manager_commit(m); return true;
 }
 void app_manager_event(app_manager_t *m, const app_event_t *e)
 {

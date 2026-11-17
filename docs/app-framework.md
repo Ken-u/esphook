@@ -58,6 +58,7 @@ const app_descriptor_t esphook_app_counter = {
 | 回调 / 数据 | 契约 |
 | --- | --- |
 | `init()` | 每次启动调用一次，USB 接收前初始化；此时没有 LVGL，不能建控件；可分配应用的常驻传输资源 |
+| `first_run()` | 可选。启动时在所有 `init()` 之后问一次：第一个答 `true` 的应用成为开机后的第一个画面，排在待机应用之前（只有这一次进入时 `ctx->first_run` 为真，不在“返回”历史里，也不算待机，不会被通知抢占）；它做完后调 `app_idle(ctx)`，板子接着进待机画面，等于重新正常开机。用来放开机前必须先做的设置，例如 `screentest` 在没保存过屏幕调整时先让用户把屏幕调对。用已保存的状态回答，不要阻塞 |
 | `on_enter(ctx)` | 新会话；state 已清零，root 已创建；在 root 下建控件 |
 | `on_leave(ctx)` | 释放应用资源、图片缓存等；随后框架释放服务租约、删除 root 及动画、清零 state |
 | `on_event(ctx, e)` | DOWN / UP / SHORT / CONFIRM / CANCEL / MESSAGE / NOTIFY / NETWORK / ALARM；text 只在回调期间有效；ALARM 的 key 是闹钟条目 id、text 是 label，见“闹钟 API” |
@@ -87,7 +88,7 @@ const app_descriptor_t esphook_app_counter = {
 | 按住退出/确认进度线 | `app_ui_hold_bar(parent, y, rgb)` + `app_ui_hold_line()` | 配合 `app_set_exit_hold` |
 | UI 任务发布状态给 USB 任务读 | `app_shared_copy(dst, src)`；多字段/自增用 `app_critical_enter/exit()` | 临界区内只拷贝几个字节；不要 FreeRTOS |
 | 需要解析、较长的共享区 | `app_lock_create/take/give`（互斥锁） | 例：股票传输模型 |
-| 面板调整（颜色反相、RAM 偏移、SPI 时钟，跨重启） | `app_screen_read/apply/raw`（`esphook/app_screen.h`，线程安全，USB 任务也能调）和 `app_screen_parse`（`robot screentest ...` 文本命令的解析） | 新屏模块的两种版本见 `docs/hardware.md`；`screentest` 应用是它的界面 |
+| 面板调整（颜色反相、RAM 偏移、SPI 时钟，跨重启） | `app_screen_read/apply/raw/forget`（`esphook/app_screen.h`，线程安全，USB 任务也能调；`configured` 为假 = 这块板子没设置过，`screentest` 开机时先运行）和 `app_screen_parse`（`robot screentest ...` 文本命令的解析） | 新屏模块的两种版本见 `docs/hardware.md`；`screentest` 应用是它的界面 |
 | 最高分/记录（跨退出、跨重启） | `app_best_get(ctx)`（进入时灌给核心）、`app_best_record(ctx, score)`（一局结束时调用） | 按应用 id 自动分库，只在破纪录时写一次 flash，每帧调用也安全；见“设置存储” |
 | 回到上一个应用 | `app_back(ctx)`；全局手势“双击”已由框架处理 | 见“全局输入与导航” |
 | 回复 USB 文本命令 | `app_command_is/reply/replyf`（一行，至多 `APP_COMMAND_REPLY_MAX` 字节） | `command()` 返回 true 表示这行是你的 |

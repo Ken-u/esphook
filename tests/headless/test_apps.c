@@ -78,14 +78,19 @@ bool app_storage_save(const char *key,const void *data,size_t size)
 }
 bool app_transport_write(const char *s) { snprintf(output,sizeof output,"%s",s);return true; }
 /* The panel tuning is a plain record: the screen test is checked by what it asks the service for. */
-static struct { app_screen_t now;unsigned applies,saves,raws;uint8_t raw[APP_SCREEN_RAW_MAX];size_t raw_length;bool busy; } screen={.now={.invert=true,.x_gap=1,.y_gap=26,.mhz=20,.saved_mhz=20}};
+static struct { app_screen_t now;unsigned applies,saves,raws,forgets;uint8_t raw[APP_SCREEN_RAW_MAX];size_t raw_length;bool busy; } screen={.now={.invert=true,.x_gap=1,.y_gap=26,.mhz=20,.saved_mhz=20,.configured=true}};
 void app_screen_read(app_screen_t *s) { *s=screen.now; }
 bool app_screen_apply(const app_screen_t *w,bool save)
 {
     if(screen.busy || !app_screen_valid(w)) return false;
     ++screen.applies;screen.now.invert=w->invert;screen.now.x_gap=w->x_gap;screen.now.y_gap=w->y_gap;
-    if(save) { ++screen.saves;screen.now.saved_mhz=w->mhz; }
+    if(save) { ++screen.saves;screen.now.saved_mhz=w->mhz;screen.now.configured=true; }
     return true;
+}
+bool app_screen_forget(void)
+{
+    if(screen.busy) return false;
+    ++screen.forgets;screen.now=(app_screen_t){.invert=true,.x_gap=1,.y_gap=26,.mhz=screen.now.mhz,.saved_mhz=20};return true;
 }
 bool app_screen_raw(const uint8_t *b,size_t n)
 {
@@ -274,35 +279,59 @@ static void play_screentest(const char *out)
 {
     assert(app_open(&manager.context,"screentest"));app_manager_commit(&manager);run(300);
     dump(out,"screentest");
-    assert(shows_text(lv_screen_active(),"plugin INV") && shows_text(lv_screen_active(),"gap 1,26  20MHz")); /* what the firmware was written on */
-    /* A short press inverts, a hold swaps the offsets; nothing is stored while the pattern is up. */
-    event(APP_EVENT_SHORT);run(200);
+    assert(!manager.context.first_run && app_triple_exit(&manager.context));
+    assert(shows_text(lv_screen_active(),"1/4 INV") && shows_text(lv_screen_active(),"gap 1,26  20MHz")); /* what the firmware was written on */
+    assert(shows_text(lv_screen_active(),"短按 切换 长按 确认"));
+    /* A short press moves on to the next of four combinations; nothing is stored while the pattern is up. */
+    event(APP_EVENT_SHORT);run(100);
     assert(!screen.now.invert && screen.now.x_gap==1 && screen.now.y_gap==26 && screen.saves==0);
-    assert(shows_text(lv_screen_active(),"custom NORM"));
-    event(APP_EVENT_CONFIRM);run(200);dump(out,"screentest-plain");
+    assert(shows_text(lv_screen_active(),"2/4 NORM"));
+    event(APP_EVENT_SHORT);run(100);dump(out,"screentest-plain");
     assert(!screen.now.invert && screen.now.x_gap==0 && screen.now.y_gap==24 && screen.saves==0);
-    assert(shows_text(lv_screen_active(),"plain NORM") && shows_text(lv_screen_active(),"gap 0,24  20MHz"));
-    event(APP_EVENT_CONFIRM);assert(screen.now.x_gap==1 && screen.now.y_gap==26);
-    event(APP_EVENT_CONFIRM);assert(screen.now.x_gap==0 && screen.now.y_gap==24);
-    /* Leaving stores it, once; leaving a pattern nobody touched stores nothing. */
-    assert(app_open(&manager.context,APP_LAUNCHER));app_manager_commit(&manager);run(30);
-    assert(screen.saves==1 && screen.now.saved_mhz==20 && !screen.now.invert && screen.now.y_gap==24);
+    assert(shows_text(lv_screen_active(),"3/4 NORM") && shows_text(lv_screen_active(),"gap 0,24  20MHz"));
+    event(APP_EVENT_SHORT);assert(screen.now.invert && screen.now.y_gap==24);run(100);assert(shows_text(lv_screen_active(),"4/4 INV"));
+    event(APP_EVENT_SHORT);assert(screen.now.invert && screen.now.y_gap==26);run(100);assert(shows_text(lv_screen_active(),"1/4 INV")); /* and round again */
+    event(APP_EVENT_SHORT);event(APP_EVENT_SHORT);assert(!screen.now.invert && screen.now.y_gap==24);
+    /* A state set from the PC that is none of the four starts the round again at the first. */
+    screen.now.x_gap=2;run(100);assert(shows_text(lv_screen_active(),"-/4 NORM"));
+    event(APP_EVENT_SHORT);assert(screen.now.invert && screen.now.x_gap==1 && screen.now.y_gap==26);
+    event(APP_EVENT_SHORT);event(APP_EVENT_SHORT);assert(!screen.now.invert && screen.now.y_gap==24 && screen.saves==0);
+    /* The hold confirms: stores what is on screen, once, and goes back to the menu. */
+    k1(true);run(250);dump(out,"screentest-hold");assert(!left("screentest") && screen.saves==0);
+    run(400);k1(false);run(30);
+    assert(screen.saves==1 && screen.now.saved_mhz==20 && !screen.now.invert && screen.now.y_gap==24 && !strcmp(app_active_id(&manager.context),"launcher"));
+    /* Nothing changed and the tuning is stored: holding writes nothing again. */
     assert(app_open(&manager.context,"screentest"));app_manager_commit(&manager);run(100);
-    assert(app_open(&manager.context,APP_LAUNCHER));app_manager_commit(&manager);run(30);
-    assert(screen.saves==1);
+    event(APP_EVENT_CONFIRM);run(30);assert(screen.saves==1 && !strcmp(app_active_id(&manager.context),"launcher"));
+    /* Any other way out (the triple press, a command) puts back what was on screen on entry: only the hold stores. */
+    assert(app_open(&manager.context,"screentest"));app_manager_commit(&manager);run(100);
+    event(APP_EVENT_SHORT);event(APP_EVENT_SHORT);assert(screen.now.invert && screen.now.y_gap==26);
+    assert(mash_leaves("screentest") && screen.saves==1 && !screen.now.invert && screen.now.x_gap==0 && screen.now.y_gap==24);
+    assert(app_open(&manager.context,"screentest"));app_manager_commit(&manager);run(100);
+    assert(mash_leaves("screentest") && screen.saves==1 && !screen.now.invert && screen.now.y_gap==24);
+    /* A busy display service keeps the hold from leaving: it can be repeated. */
+    assert(app_open(&manager.context,"screentest"));app_manager_commit(&manager);run(100);
+    event(APP_EVENT_SHORT);event(APP_EVENT_SHORT);event(APP_EVENT_SHORT);assert(!screen.now.invert && screen.now.y_gap==26);
+    screen.busy=true;event(APP_EVENT_CONFIRM);assert(!strcmp(app_active_id(&manager.context),"screentest") && screen.saves==1);
+    screen.busy=false;event(APP_EVENT_SHORT);assert(!screen.now.invert && screen.now.y_gap==24);
+    event(APP_EVENT_CONFIRM);run(30);assert(screen.saves==2 && !strcmp(app_active_id(&manager.context),"launcher"));
     /* The PC side. */
-    assert(!strncmp(screen_line("robot screentest"),"invert=0 x=0 y=24 mhz=20 saved_mhz=20 variant=plain",54));
-    assert(strstr(screen_line("robot screentest plugin"),"OK") && screen.now.invert && screen.now.x_gap==1 && screen.now.y_gap==26 && screen.saves==1);
+    assert(strstr(screen_line("robot screentest"),"invert=0 x=0 y=24 mhz=20 saved_mhz=20 variant=plain configured=1"));
+    assert(strstr(screen_line("robot screentest plugin"),"OK") && screen.now.invert && screen.now.x_gap==1 && screen.now.y_gap==26 && screen.saves==2);
     assert(strstr(screen_line("robot screentest invert 0"),"OK") && !screen.now.invert && screen.now.y_gap==26);
     assert(strstr(screen_line("robot screentest gap 2 25"),"variant=custom") && screen.now.x_gap==2 && screen.now.y_gap==25);
-    assert(strstr(screen_line("robot screentest plain"),"variant=plain") && screen.saves==1);
-    assert(strstr(screen_line("robot screentest save"),"OK saving") && screen.saves==2 && screen.now.saved_mhz==20);
-    assert(strstr(screen_line("robot screentest mhz 10"),"saved_mhz=10") && screen.saves==3 && screen.now.saved_mhz==10 && screen.now.mhz==20);
+    assert(strstr(screen_line("robot screentest plain"),"variant=plain") && screen.saves==2);
+    assert(strstr(screen_line("robot screentest save"),"OK saving") && screen.saves==3 && screen.now.saved_mhz==20);
+    assert(strstr(screen_line("robot screentest mhz 10"),"saved_mhz=10") && screen.saves==4 && screen.now.saved_mhz==10 && screen.now.mhz==20);
     assert(strstr(screen_line("robot screentest save"),"saved_mhz=10") && screen.now.saved_mhz==10); /* a plain save keeps the stored clock */
+    assert(strstr(screen_line("robot screentest reset"),"OK forgotten") && screen.forgets==1 && !screen.now.configured && screen.now.invert && screen.now.y_gap==26 && screen.now.saved_mhz==20);
+    assert(strstr(screen_line("robot screentest"),"configured=0"));
+    assert(strstr(screen_line("robot screentest save"),"OK saving") && screen.now.configured && screen.saves==6); /* and stored again */
+    assert(strstr(screen_line("robot screentest plain"),"variant=plain") && screen.now.y_gap==24);
     assert(strstr(screen_line("robot screentest raw 2A 00 01 00 A0"),"OK sent") && screen.raws==1 && screen.raw_length==5 && screen.raw[0]==0x2A && screen.raw[4]==0xA0);
     assert(strstr(screen_line("robot screentest gap 99 0"),"ERR") && strstr(screen_line("robot screentest blink"),"ERR") && screen.raws==1);
     screen.busy=true; /* the display task has not taken the last request yet */
-    assert(strstr(screen_line("robot screentest plugin"),"ERR busy") && strstr(screen_line("robot screentest save"),"ERR busy") && strstr(screen_line("robot screentest raw 21"),"ERR busy"));
+    assert(strstr(screen_line("robot screentest plugin"),"ERR busy") && strstr(screen_line("robot screentest reset"),"ERR busy") && screen.forgets==1 && strstr(screen_line("robot screentest save"),"ERR busy") && strstr(screen_line("robot screentest raw 21"),"ERR busy"));
     assert(!screen.now.invert && screen.now.y_gap==24 && screen.raws==1);
     screen.busy=false;
     for(size_t i=0;i<esphook_app_count;++i) if(!strcmp(esphook_apps[i]->id,"screentest")) assert(!esphook_apps[i]->command("robot zombie status") && !esphook_apps[i]->command("robot screen"));
@@ -311,8 +340,31 @@ static void play_screentest(const char *out)
     assert(!strcmp(app_active_id(&manager.context),"screentest"));
     assert(strstr(screen_line("robot screentest stop"),"OK"));app_manager_commit(&manager);run(50);
     assert(!strcmp(app_active_id(&manager.context),"launcher"));
-    /* put the panel back for whoever looks at it next */
+    /* A board that was never set up starts here (descriptor->first_run), ahead of the standby screen. Boot is what sets
+     * the flag (checked in test_app_framework.c); the scenario sets it the same way. */
+    const unsigned stored=screen.saves;
     screen.now=(app_screen_t){.invert=true,.x_gap=1,.y_gap=26,.mhz=20,.saved_mhz=20};
+    for(size_t i=0;i<esphook_app_count;++i) if(!strcmp(esphook_apps[i]->id,"screentest")) assert(esphook_apps[i]->first_run && esphook_apps[i]->first_run());
+    manager.first_run_next=true;assert(app_open(&manager.context,"screentest"));app_manager_commit(&manager);run(100);
+    assert(manager.context.first_run && !manager.idle && !app_triple_exit(&manager.context));dump(out,"screentest-first-run");
+    event(APP_EVENT_SHORT);run(100);assert(!screen.now.invert && shows_text(lv_screen_active(),"2/4 NORM"));
+    assert(!mash_leaves("screentest")); /* the triple press is off: the way on is the hold, or the idle timeout */
+    screen.now.invert=false;screen.now.x_gap=1;screen.now.y_gap=26;
+    run(28000);assert(!left("screentest") && !manager.idle);
+    k1(true);run(100);k1(false);run(100); /* a key starts the 30 s again */
+    run(28000);assert(!left("screentest"));
+    run(3000);
+    assert(!strcmp(app_active_id(&manager.context),app_standby_id(&manager.context)) && manager.idle && !manager.context.first_run);
+    assert(screen.saves==stored && !screen.now.configured && screen.now.invert && screen.now.y_gap==26); /* nothing stored, the panel as it was */
+    manager.first_run_next=true;assert(app_open(&manager.context,"screentest"));app_manager_commit(&manager);run(100);
+    event(APP_EVENT_SHORT);run(50);assert(!screen.now.invert);
+    k1(true);run(250);dump(out,"screentest-first-run-hold");assert(!left("screentest") && screen.saves==stored);
+    run(400);k1(false);run(30);
+    assert(screen.saves==stored+1 && screen.now.configured && !screen.now.invert && screen.now.y_gap==26 && !manager.context.first_run);
+    assert(!strcmp(app_active_id(&manager.context),app_standby_id(&manager.context)) && manager.idle);
+    for(size_t i=0;i<esphook_app_count;++i) if(!strcmp(esphook_apps[i]->id,"screentest")) assert(!esphook_apps[i]->first_run()); /* stored: boot goes straight on */
+    /* put the panel back for whoever looks at it next */
+    screen.now=(app_screen_t){.invert=true,.x_gap=1,.y_gap=26,.mhz=20,.saved_mhz=20,.configured=true};
 }
 #endif
 /* The best score outlives the game (app_best.h): a game that finished a run is left and entered again, and its record is
