@@ -44,7 +44,7 @@ static void render(app_context_t *ctx)
         s->clock_label = app_ui_label(s->court, &aihook_font_12, 3, 0, 84, 14, LV_LABEL_LONG_MODE_CLIP);
         s->score_label = app_ui_label(s->court, &aihook_font_12, 89, 0, 68, 14, LV_LABEL_LONG_MODE_CLIP);
         lv_obj_set_style_text_color(s->score_label, app_ui_color(0xFDB927), LV_PART_MAIN);
-        /* Central lane is the exact +/-10px hit window, not a random reward. */
+        /* Central lane is the exact +/-10px window the hoop must be in when the ball reaches the rim. */
         app_ui_rect(s->court, 70, 17, 21, 45, 0x102C22, 0);
         for (int y = 18; y < 61; y += 6) app_ui_rect(s->court, 80, y, 1, 3, 0x54836E, 0);
         app_ui_rect(s->court, 2, 62, 156, 1, 0x59406C, 0);
@@ -101,8 +101,10 @@ static void render(app_context_t *ctx)
         app_ui_text(s->score_label, text);
         snprintf(text, sizeof text, "进 %lu/%lu", (unsigned long)game->made, (unsigned long)game->shots);
         app_ui_text(s->shots_label, text);
-        app_ui_text(s->hint, game->in_flight ? game->last_hit ? "命中! +2" : "没进" : "按键投篮");
-        lv_obj_set_style_text_color(s->hint, app_ui_color(game->in_flight
+        /* The outcome is decided at release but shown only when the ball reaches the moving rim. */
+        app_ui_text(s->hint, !game->in_flight ? "按键投篮" : !game->reached_rim ? "球飞行中"
+            : game->last_hit ? "命中! +2" : "没进");
+        lv_obj_set_style_text_color(s->hint, app_ui_color(game->reached_rim
             ? game->last_hit ? 0x47E6AE : 0xFF6B7A : 0xC178FF), LV_PART_MAIN);
         lv_obj_set_pos(s->hoop, (int)lroundf(game->hoop_x) - 16, 18);
         bool centered = fabsf(game->hoop_x - 80) <= BASKETBALL_HIT_PX;
