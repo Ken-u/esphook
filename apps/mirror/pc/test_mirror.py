@@ -213,8 +213,10 @@ class StreamTests(unittest.TestCase):
         stream, device, _ = self.stream()
         self.assertTrue(stream.hello()["ok"])
         device.active = False
+        ticks = iter(range(0, 1000))
         with self.assertRaises(Inactive):
-            stream.hello()
+            MirrorStream(device, clock=lambda: next(ticks) * 0.5, sleep=lambda s: None).hello()
+        self.assertGreater(len(device.lines), 2, "not running may only be a scene that is still being built: it asked again")
         device.active = True
         device.silent = 99
         ticks = iter(range(0, 100, 1))
@@ -223,6 +225,19 @@ class StreamTests(unittest.TestCase):
             quiet.hello(wait=3)
         self.assertNotIsInstance(caught.exception, Inactive)
         self.assertGreaterEqual(len(device.lines), 3)  # It asked again before giving up.
+
+    def test_hello_waits_for_an_app_that_is_still_starting(self):
+        stream, device, sleeps = self.stream()
+        device.active = False
+        original = device.send_line
+        def opening(text):
+            if len([l for l in device.lines if l == "mirror hello"]) == 2:
+                device.active = True  # the scene is up by the third question
+            original(text)
+        device.send_line = opening
+        self.assertTrue(stream.hello()["ok"])
+        self.assertEqual(len(device.lines), 3)
+        self.assertEqual(len(sleeps), 2)
 
     def test_hello_checks_the_screen_size(self):
         stream, device, _ = self.stream()

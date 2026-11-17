@@ -28,18 +28,25 @@ class MirrorStream:
         self.shown = [None] * codec.STRIPS
 
     def hello(self, wait=2.0):
-        """Ask the device whether it is ready. Returns its reply; raises Inactive or MirrorError."""
+        """Ask the device whether it is ready. Returns its reply; raises Inactive or MirrorError.
+
+        An app that was only just opened (or opened again) is not on screen for a few milliseconds while the device
+        sets up its scene, so "not running" is asked about again until `wait` seconds have passed."""
         deadline = self.clock() + wait
+        inactive = False
         while True:
             self.link.send_line("mirror hello")
             ack = self.link.wait_message("mirror_ack", lambda m: m.get("op") == "hello", timeout=0.4)
             if ack is not None:
-                if not ack.get("ok"):
-                    raise Inactive("设备上的副屏应用没有在运行")
-                if (ack.get("w"), ack.get("h"), ack.get("rows")) != (codec.W, codec.H, codec.ROWS):
-                    raise MirrorError(f"屏幕尺寸不一致：设备 {ack.get('w')}x{ack.get('h')}")
-                return ack
+                if ack.get("ok"):
+                    if (ack.get("w"), ack.get("h"), ack.get("rows")) != (codec.W, codec.H, codec.ROWS):
+                        raise MirrorError(f"屏幕尺寸不一致：设备 {ack.get('w')}x{ack.get('h')}")
+                    return ack
+                inactive = True
+                self.sleep(0.1)
             if self.clock() >= deadline:
+                if inactive:
+                    raise Inactive("设备上的副屏应用没有在运行")
                 raise MirrorError("设备没有回应 mirror 协议：确认固件包含副屏应用，并且没有别的程序占用串口")
 
     def _exchange(self, line, frame, index):

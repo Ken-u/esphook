@@ -170,8 +170,9 @@ def main(argv=None):
     reason, payloads = "interrupt", None
     try:
         if link:
-            link.open("mirror")
-            link.wait_active("mirror")
+            if link.status().get("active") != "mirror":  # opening it again would restart it, and its scene with it
+                link.open("mirror")
+                link.wait_active("mirror")
         stream.hello()
         reason, payloads = pump(source, stream, args, log=log)
     except KeyboardInterrupt:
