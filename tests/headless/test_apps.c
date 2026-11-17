@@ -52,8 +52,31 @@ static void run(unsigned ms)
 {
     for(unsigned i=0;i<ms;i+=5) { lv_tick_inc(5);app_manager_tick(&manager,manager.context.now_ms+5);app_manager_render(&manager);lv_timer_handler(); }
 }
+/* A glyph missing from the trimmed fixed font renders as blank space on the device: fail loudly instead. */
+static void check_glyphs(lv_obj_t *obj)
+{
+    if(lv_obj_check_type(obj,&lv_label_class)) {
+        const lv_font_t *font=lv_obj_get_style_text_font(obj,LV_PART_MAIN);
+        for(const unsigned char *p=(const unsigned char *)lv_label_get_text(obj);*p;) {
+            uint32_t letter=*p,extra=0;
+            if(letter>=0xF0) {letter&=0x07;extra=3;} else if(letter>=0xE0) {letter&=0x0F;extra=2;} else if(letter>=0xC0) {letter&=0x1F;extra=1;}
+            ++p;
+            for(;extra && *p;--extra,++p) letter=(letter<<6)|(*p&0x3F);
+            lv_font_glyph_dsc_t glyph;
+            if(letter>=0x20 && !lv_font_get_glyph_dsc(font,&glyph,letter,0)) { fprintf(stderr,"missing glyph U+%04X in \"%s\"\n",letter,lv_label_get_text(obj)); assert(!"label uses a glyph the font does not have"); }
+        }
+    }
+    for(uint32_t i=0;i<lv_obj_get_child_count(obj);++i) check_glyphs(lv_obj_get_child(obj,(int32_t)i));
+}
+static unsigned peak_heap;
 static void dump(const char *directory,const char *name)
 {
+    check_glyphs(lv_screen_active());
+    lv_mem_monitor_t heap;lv_mem_monitor(&heap);
+    unsigned used=(unsigned)(heap.total_size-heap.free_size);
+    if(used>peak_heap) peak_heap=used;
+    if(getenv("ESPHOOK_HEAP_REPORT")) fprintf(stderr,"heap %6u / %u bytes used after \"%s\"\n",used,(unsigned)heap.total_size,name);
+    assert(used<heap.total_size*80/100); /* Leave room for transitions, fragmentation and the display driver. */
     if(!directory) return;
     lv_refr_now(lv_display_get_default());
     char path[512];snprintf(path,sizeof path,"%s/%s.ppm",directory,name);FILE *f=fopen(path,"wb");assert(f);
@@ -73,6 +96,42 @@ static void stock_data(void)
     }
     assert(stock_transport_command("game {\"v\":1,\"seq\":3,\"id\":24,\"op\":\"show\",\"cursor\":60,\"state\":\"play\",\"held_ms\":0,\"trades\":0,\"pct_bps\":0,\"baseline_bps\":0,\"pnl_cents\":0,\"holding\":false,\"clock\":\"09:35\"}"));
     assert(strstr(output,"\"ok\":true"));
+}
+#endif
+/* Reads one number out of an app's own "robot <app> status" reply. */
+static unsigned game_status(const char *id,const char *line,const char *key)
+{
+    for(size_t i=0;i<esphook_app_count;++i) if(!strcmp(esphook_apps[i]->id,id)) {
+        assert(esphook_apps[i]->command && esphook_apps[i]->command(line));
+        const char *at=strstr(output,key);assert(at);return (unsigned)strtoul(at+strlen(key),NULL,10);
+    }
+    assert(!"unknown app");return 0;
+}
+#ifdef ESPHOOK_TEST_DINO
+/* Plays a few seconds: jump, run towards the first obstacle without jumping, crash. Frames are for eyes only. */
+static void play_dino(const char *out)
+{
+    assert(app_open(&manager.context,"dino"));app_manager_commit(&manager);run(100);
+    assert(game_status("dino","robot dino status","phase=")==0);dump(out,"dino-ready");
+    event(APP_EVENT_DOWN);run(80);dump(out,"dino-jump");assert(game_status("dino","robot dino status","phase=")==1);
+    event(APP_EVENT_UP);run(1900);dump(out,"dino-run");
+    for(unsigned s=0;s<30 && game_status("dino","robot dino status","phase=")!=2;++s) run(500);
+    assert(game_status("dino","robot dino status","phase=")==2);run(100);dump(out,"dino-over");
+    assert(game_status("dino","robot dino status","best=")>0);
+    run(600);event(APP_EVENT_DOWN);event(APP_EVENT_UP);assert(game_status("dino","robot dino status","phase=")==1); /* restart */
+}
+#endif
+#ifdef ESPHOOK_TEST_SKI
+static void play_ski(const char *out)
+{
+    assert(app_open(&manager.context,"ski"));app_manager_commit(&manager);run(100);
+    assert(game_status("ski","robot ski status","phase=")==0);dump(out,"ski-ready");
+    event(APP_EVENT_DOWN);run(2400);dump(out,"ski-play");assert(game_status("ski","robot ski status","phase=")==1);
+    event(APP_EVENT_DOWN);run(1500);dump(out,"ski-turn");
+    for(unsigned s=0;s<300 && game_status("ski","robot ski status","phase=")!=2;++s) run(500); /* never turning again ends in the yeti's arms */
+    assert(game_status("ski","robot ski status","phase=")==2 && game_status("ski","robot ski status","lives=")==0);
+    run(100);dump(out,"ski-over");
+    run(700);event(APP_EVENT_DOWN);assert(game_status("ski","robot ski status","phase=")==1 && game_status("ski","robot ski status","lives=")==3);
 }
 #endif
 void aihook_font_12_set_bitmap(const uint8_t *);
@@ -104,6 +163,12 @@ int main(int argc,char **argv)
             }
         }
     }
+#ifdef ESPHOOK_TEST_DINO
+    play_dino(out);
+#endif
+#ifdef ESPHOOK_TEST_SKI
+    play_ski(out);
+#endif
     assert(app_open(&manager.context,"settings"));app_manager_commit(&manager);run(20);
     event(APP_EVENT_SHORT);event(APP_EVENT_SHORT);event(APP_EVENT_SHORT);event(APP_EVENT_CONFIRM);
     event(APP_EVENT_SHORT);event(APP_EVENT_CONFIRM);assert(standby[0] && strcmp(standby,"face"));dump(out,"settings-standby");
@@ -120,5 +185,5 @@ int main(int argc,char **argv)
     assert(app_open(&manager.context,"face"));app_manager_commit(&manager);
     if(manager.context.app->on_leave) manager.context.app->on_leave(&manager.context);
     destroy(manager.context.root,NULL);lv_display_delete(d);lv_deinit();free(font);
-    printf("all built-in apps: real LVGL rendering, %u app transitions, 64KB UI heap, settings persistence and PC message passed\n",(unsigned)(30*esphook_app_count));
+    printf("all built-in apps: real LVGL rendering, %u app transitions, 64KB UI heap (peak %u bytes at sampled frames), settings persistence and PC message passed\n",(unsigned)(30*esphook_app_count),peak_heap);
 }

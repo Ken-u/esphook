@@ -38,6 +38,10 @@ jobs:
         run: ./scripts/test-robot.sh
       - name: Test GPIO6 basketball game
         run: ./scripts/test-basketball.sh
+      - name: Test dino runner game
+        run: ./scripts/test-dino.sh
+      - name: Test ski game
+        run: ./scripts/test-ski.sh
       - name: Test universal hardware profiles and optional-driver failure handling
         run: ./scripts/test-hardware.sh
       - name: Install UI protocol test dependency

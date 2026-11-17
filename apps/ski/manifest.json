@@ -1,0 +1,9 @@
+{
+  "id": "ski",
+  "order": "012",
+  "required": false,
+  "sources": [
+    "firmware/app.c",
+    "firmware/ski_game.c"
+  ]
+}

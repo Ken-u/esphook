@@ -111,6 +111,8 @@ Hook 的 HTTP `/notify`、`/dismiss`、配对、鉴权和 device link 协议保�
 | --- | --- |
 | 表情 | 自动眼睛动画、自定义表情/文字、人体方向状态 |
 | 投篮 | 设备端纯 C 规则，两分钟、随机速度、计分 |
+| 小恐龙 | 单键跳跃跑酷；纯 C 固定步长规则，共享画布点阵绘制，见 [robot-dino.md](robot-dino.md) |
+| 滑雪冒险 | 单键下滑躲树；安全线保证可通过的雪道，LVGL 对象池，见 [robot-ski.md](robot-ski.md) |
 | 做 T | PC 行情/均线/交易/结算；设备端 RAM 数据、图表和按键协议 |
 | 雷达 | 三目标扇形调试图，服务快照 |
 | Hook | 通知展示、未读信息、选择回复词及确认回传 |
@@ -119,7 +121,7 @@ Hook 的 HTTP `/notify`、`/dismiss`、配对、鉴权和 device link 协议保�
 | 示例 | 点击计数、清零、动画、雷达状态和 PC 自定义标题 |
 | 启动器 | 隐藏的系统应用，代码图标、分页、选择动画和确认圆 |
 
-设置短按循环六页。硬件配置页长按编辑、短按切换、长按保存，再长按重启生效。待机页长按进入编辑，短按切换可选应用，长按保存；三击随时回菜单。固件版本取 ESP-IDF app descriptor，当前版本由 `version.txt` 管理。数量统计已编译的可见应用，默认 8 个，不含系统 launcher；不显示凭据或认证密钥。
+设置短按循环六页。硬件配置页长按编辑、短按切换、长按保存，再长按重启生效。待机页长按进入编辑，短按切换可选应用，长按保存；三击随时回菜单。固件版本取 ESP-IDF app descriptor，当前版本由 `version.txt` 管理。数量统计已编译的可见应用，默认 10 个，不含系统 launcher；不显示凭据或认证密钥。
 
 PC 的运行入口和协议见 [app-pc-protocol.md](app-pc-protocol.md)。旧投篮命令仍可用，start 排队打开新局，stop 回菜单，status 查询最近快照；`robot menu` 通用开菜单。
 
@@ -135,6 +137,8 @@ python3 tests/test_app_sdk.py
 ./scripts/test-usb-cdc.sh
 python3 apps/key_report/pc/test_bridge.py
 ./scripts/test-basketball.sh
+./scripts/test-dino.sh
+./scripts/test-ski.sh
 ./scripts/test-robot-ui.sh
 python3 apps/stock/pc/test_stock_t.py
 python3 apps/hook/pc/test_hooks.py
@@ -150,6 +154,6 @@ git clone --depth 1 --branch v9.5.0 https://github.com/lvgl/lvgl.git /tmp/esphoo
 LVGL_SOURCE_DIR=/tmp/esphook-lvgl ./scripts/test-app-ui.sh
 ```
 
-它使用现有 fontdata 和 64KB LVGL 堆，遍历所有 manifest 应用、重复切换、检查根节点释放、设置持久化回调与 PC 消息，输出 PPM 屏幕帧。CI 上传这些帧，额外构建 ESP-IDF 5.5.4 默认通用配置与禁用机器人驱动的旧 Hook 配置。可选应用的完整硬件行为仍需要实机确认；主机 UI 测试不会驱动舵机，也不能证明实际 FPS。
+它使用现有 fontdata 和 64KB LVGL 堆，遍历所有 manifest 应用、重复切换、检查根节点释放、设置持久化回调与 PC 消息，并实际玩一遍小恐龙和滑雪（起跳/转向、结束、重开）；每次截图前检查屏幕上每个 label 的每个字都在固件字库里（缺字会显示成空白），并断言 LVGL 堆占用低于 80%（可设 `ESPHOOK_HEAP_REPORT=1` 打印各应用占用）。输出 PPM 屏幕帧。CI 上传这些帧，额外构建 ESP-IDF 5.5.4 默认通用配置与禁用机器人驱动的旧 Hook 配置。可选应用的完整硬件行为仍需要实机确认；主机 UI 测试不会驱动舵机，也不能证明实际 FPS。
 
 `APP_UI_BUILD_DIR` / `APP_UI_FRAMES_DIR` 可覆盖无屏测试目录。CI 的固件尺寸检查沿用两个 OTA 槽；先看实际体积再决定是否取消 OTA。未新增固件图片或大型游戏依赖。

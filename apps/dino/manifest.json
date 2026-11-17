@@ -1,0 +1,9 @@
+{
+  "id": "dino",
+  "order": "011",
+  "required": false,
+  "sources": [
+    "firmware/app.c",
+    "firmware/dino_game.c"
+  ]
+}
