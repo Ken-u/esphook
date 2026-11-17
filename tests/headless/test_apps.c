@@ -6,6 +6,7 @@
 #include "stock_transport.h"
 #endif
 #include <assert.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -91,7 +92,9 @@ static void stock_data(void)
     assert(stock_transport_command("game {\"v\":1,\"seq\":1,\"id\":24,\"op\":\"begin\",\"count\":108,\"first\":60,\"code\":\"600000\",\"date\":\"2026-11-12\",\"label\":\"测试\"}"));
     for(unsigned offset=0;offset<108;offset+=12) {
         char line[900];int used=snprintf(line,sizeof line,"game {\"v\":1,\"seq\":2,\"id\":24,\"op\":\"bars\",\"offset\":%u,\"bars\":[",offset);
-        for(unsigned i=0;i<12;++i) used+=snprintf(line+used,sizeof line-(size_t)used,"%s[1000,1100,900,1050,1000,990]",i?",":"");
+        for(unsigned i=0;i<12;++i) { /* a wavy synthetic day: candles around a drifting mid price */
+            unsigned n=offset+i;int mid=2000+(int)(180*sin(n/9.0))+(int)(n*3),o=mid+(int)(40*sin(n*2.1)),c=mid+(int)(40*cos(n*1.7));
+            used+=snprintf(line+used,sizeof line-(size_t)used,"%s[%d,%d,%d,%d,%d,%d]",i?",":"",o,(o>c?o:c)+25,(o<c?o:c)-25,c,mid-15,mid-60); }
         snprintf(line+used,sizeof line-(size_t)used,"]}");assert(stock_transport_command(line));assert(strstr(output,"\"ok\":true"));
     }
     assert(stock_transport_command("game {\"v\":1,\"seq\":3,\"id\":24,\"op\":\"show\",\"cursor\":60,\"state\":\"play\",\"held_ms\":0,\"trades\":0,\"pct_bps\":0,\"baseline_bps\":0,\"pnl_cents\":0,\"holding\":false,\"clock\":\"09:35\"}"));
@@ -107,16 +110,36 @@ static unsigned game_status(const char *id,const char *line,const char *key)
     }
     assert(!"unknown app");return 0;
 }
+#ifdef ESPHOOK_TEST_BASKETBALL
+/* Shoots until it has seen a make and a miss, then lets the clock run out. Frames are for eyes only. */
+static void play_basketball(const char *out)
+{
+    assert(app_open(&manager.context,"basketball"));app_manager_commit(&manager);run(100);
+    assert(game_status("basketball","robot game status","phase=")==1);dump(out,"basketball-idle");
+    unsigned made=0;bool saw_hit=false,saw_miss=false;
+    for(unsigned shot=0;shot<60 && !(saw_hit && saw_miss);++shot) {
+        event(APP_EVENT_SHORT);run(160);if(shot==0) dump(out,"basketball-flight");
+        run(320);
+        unsigned now_made=game_status("basketball","robot game status","made=");
+        if(now_made>made && !saw_hit) { saw_hit=true;dump(out,"basketball-hit"); }
+        else if(now_made==made && !saw_miss) { saw_miss=true;dump(out,"basketball-miss"); }
+        made=now_made;run(300);
+    }
+    assert(saw_hit && saw_miss);
+    for(unsigned s=0;s<40 && game_status("basketball","robot game status","phase=")!=2;++s) run(5000);
+    assert(game_status("basketball","robot game status","phase=")==2);run(300);dump(out,"basketball-result");
+}
+#endif
 #ifdef ESPHOOK_TEST_DINO
 /* Plays a few seconds: jump, run towards the first obstacle without jumping, crash. Frames are for eyes only. */
 static void play_dino(const char *out)
 {
     assert(app_open(&manager.context,"dino"));app_manager_commit(&manager);run(100);
     assert(game_status("dino","robot dino status","phase=")==0);dump(out,"dino-ready");
-    event(APP_EVENT_DOWN);run(80);dump(out,"dino-jump");assert(game_status("dino","robot dino status","phase=")==1);
-    event(APP_EVENT_UP);run(1900);dump(out,"dino-run");
+    event(APP_EVENT_DOWN);run(250);dump(out,"dino-jump");assert(game_status("dino","robot dino status","phase=")==1);
+    event(APP_EVENT_UP);run(650);dump(out,"dino-land");run(1500);dump(out,"dino-run");
     for(unsigned s=0;s<30 && game_status("dino","robot dino status","phase=")!=2;++s) run(500);
-    assert(game_status("dino","robot dino status","phase=")==2);run(100);dump(out,"dino-over");
+    assert(game_status("dino","robot dino status","phase=")==2);run(700);dump(out,"dino-over");
     assert(game_status("dino","robot dino status","best=")>0);
     run(600);event(APP_EVENT_DOWN);event(APP_EVENT_UP);assert(game_status("dino","robot dino status","phase=")==1); /* restart */
 }
@@ -126,12 +149,12 @@ static void play_ski(const char *out)
 {
     assert(app_open(&manager.context,"ski"));app_manager_commit(&manager);run(100);
     assert(game_status("ski","robot ski status","phase=")==0);dump(out,"ski-ready");
-    event(APP_EVENT_DOWN);run(2400);dump(out,"ski-play");assert(game_status("ski","robot ski status","phase=")==1);
-    event(APP_EVENT_DOWN);run(1500);dump(out,"ski-turn");
-    for(unsigned s=0;s<300 && game_status("ski","robot ski status","phase=")!=2;++s) run(500); /* never turning again ends in the yeti's arms */
-    assert(game_status("ski","robot ski status","phase=")==2 && game_status("ski","robot ski status","lives=")==0);
-    run(100);dump(out,"ski-over");
-    run(700);event(APP_EVENT_DOWN);assert(game_status("ski","robot ski status","phase=")==1 && game_status("ski","robot ski status","lives=")==3);
+    event(APP_EVENT_DOWN);run(60);dump(out,"ski-takeoff");assert(game_status("ski","robot ski status","phase=")==1);
+    run(250);dump(out,"ski-air");event(APP_EVENT_UP);run(1100);dump(out,"ski-run");
+    for(unsigned s=0;s<120 && game_status("ski","robot ski status","phase=")!=2;++s) run(500); /* never jumping again meets a rock or a chasm */
+    assert(game_status("ski","robot ski status","phase=")==2);run(400);dump(out,"ski-over");
+    assert(game_status("ski","robot ski status","best=")>0);
+    run(700);event(APP_EVENT_DOWN);event(APP_EVENT_UP);assert(game_status("ski","robot ski status","phase=")==1); /* restart */
 }
 #endif
 void aihook_font_12_set_bitmap(const uint8_t *);
@@ -163,6 +186,9 @@ int main(int argc,char **argv)
             }
         }
     }
+#ifdef ESPHOOK_TEST_BASKETBALL
+    play_basketball(out);
+#endif
 #ifdef ESPHOOK_TEST_DINO
     play_dino(out);
 #endif

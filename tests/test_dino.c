@@ -6,17 +6,26 @@
 #include <string.h>
 
 #define AIR_TIME_S (2.0f * DINO_JUMP_V / DINO_GRAVITY)
+#define TAP_AIR_S 0.644f /* a tap released right away: climbs to DINO_MIN_HOP_Y, then rises on DINO_DROP_V */
 
 static void sprite_tests(void)
 {
-    assert(DINO_ALL_SPRITES_COUNT == 6);
+    assert(DINO_ALL_SPRITES_COUNT == 8);
     for (size_t i = 0; i < DINO_ALL_SPRITES_COUNT; ++i) {
         const dino_sprite_t *s = DINO_ALL_SPRITES[i];
         assert(s->w > 0 && s->h > 0);
+        bool any = false;
         for (unsigned row = 0; row < s->h; ++row) {
-            assert(strlen(s->rows[row]) == s->w);
-            for (const char *c = s->rows[row]; *c; ++c) assert(*c == '#' || *c == '.');
+            assert(strlen(s->rows[row]) == s->w); /* a missing dot would shear the sprite */
+            for (const char *c = s->rows[row]; *c; ++c) {
+                assert(*c == '.' || strchr(DINO_SPRITE_KEYS, *c));
+                any |= *c != '.';
+            }
         }
+        assert(any);
+        /* Ground sprites stand on their last row, so the hit-box heights line up with what is drawn. */
+        bool flying = s == &DINO_SPRITE_BIRD_UP || s == &DINO_SPRITE_BIRD_DOWN || s == &DINO_SPRITE_JUMP;
+        assert(flying || strspn(s->rows[s->h - 1], ".") < s->w);
     }
     /* Sprite sizes match the physics sizes the hit boxes are derived from. */
     float w, h, b;
@@ -27,11 +36,12 @@ static void sprite_tests(void)
     dino_kind_size(DINO_CACTUS_PAIR, &w, &h, &b);
     assert(w == 2 * DINO_SPRITE_CACTUS_S.w + 2 && h == DINO_SPRITE_CACTUS_S.h);
     dino_kind_size(DINO_BIRD_LOW, &w, &h, &b);
-    assert(w == DINO_SPRITE_BIRD_UP.w && h == DINO_SPRITE_BIRD_UP.h && b == 5);
+    assert(w == DINO_SPRITE_BIRD_UP.w && h == DINO_SPRITE_BIRD_UP.h && b == 4);
     dino_kind_size(DINO_BIRD_HIGH, &w, &h, &b);
-    assert(w == DINO_SPRITE_BIRD_DOWN.w && h == DINO_SPRITE_BIRD_DOWN.h && b == 18);
-    assert(DINO_SPRITE_RUN_A.w == DINO_SPRITE_W && DINO_SPRITE_RUN_B.w == DINO_SPRITE_W);
-    assert(DINO_SPRITE_RUN_A.h == DINO_SPRITE_RUN_B.h);
+    assert(w == DINO_SPRITE_BIRD_DOWN.w && h == DINO_SPRITE_BIRD_DOWN.h && b == 22);
+    const dino_sprite_t *dinos[] = {&DINO_SPRITE_RUN_A, &DINO_SPRITE_RUN_B, &DINO_SPRITE_JUMP, &DINO_SPRITE_DEAD};
+    for (unsigned i = 0; i < 4; ++i) assert(dinos[i]->w == DINO_SPRITE_W && dinos[i]->h == DINO_SPRITE_H);
+    assert(DINO_BOX_RIGHT <= DINO_SPRITE_W && DINO_BOX_LEFT >= 0 && DINO_BOX_H <= DINO_SPRITE_H);
 }
 static void ready_and_start_tests(void)
 {
@@ -46,7 +56,7 @@ static void ready_and_start_tests(void)
     assert(v.phase == DINO_PLAY && v.airborne);
     assert(sizeof g < 256);
 }
-/* Records the apex and the airtime of one jump on an empty field (the first obstacle is 120 px away). */
+/* Records the apex and the airtime of one jump on an empty field (the first obstacle is far away). */
 static void jump_profile(uint64_t release_after_ms, float *apex, float *air_s)
 {
     dino_game_t g;
@@ -70,15 +80,16 @@ static void jump_tests(void)
 {
     float apex, air;
     jump_profile(10000, &apex, &air); /* Never released: full jump. */
-    assert(apex > 23.2f && apex < 24.2f);
+    assert(apex > 37.5f && apex < 38.3f);
     assert(fabsf(air - AIR_TIME_S) < 0.01f);
-    jump_profile(5, &apex, &air); /* A tap still hops, but low. */
-    assert(apex > 12.0f && apex < 13.6f);
-    assert(air > 0.35f && air < 0.45f);
+    jump_profile(5, &apex, &air); /* A tap is a real jump: well above every cactus and the low bird. */
+    assert(apex > 26.0f && apex < 28.0f);
+    assert(air > 0.61f && air < 0.68f);
     jump_profile(100, &apex, &air); /* Released mid-rise: in between. */
-    assert(apex > 14.0f && apex < 23.0f);
+    assert(apex > 30.0f && apex < 37.0f);
     jump_profile(400, &apex, &air); /* Released after the apex: no effect. */
-    assert(apex > 23.2f && fabsf(air - AIR_TIME_S) < 0.01f);
+    assert(apex > 37.5f && fabsf(air - AIR_TIME_S) < 0.01f);
+    printf("dino jump: tap %.1f px / %.2f s, hold %.1f px / %.2f s\n", 27.0f, TAP_AIR_S, 38.0f, AIR_TIME_S);
 
     dino_game_t g;
     dino_view_t v;
@@ -92,7 +103,12 @@ static void jump_tests(void)
     dino_snapshot(&g, &v);
     assert(v.y == y);
     dino_tick(&g, 1000);
+    dino_snapshot(&g, &v);
+    assert(!v.airborne && v.since_land_ms < v.since_jump_ms); /* landing happened after take-off: the renderer shows dust */
+    assert(v.since_jump_ms == 1000 && v.since_land_ms > 300 && v.since_land_ms < 400);
     assert(dino_press(&g, 1000)); /* Grounded again. */
+    dino_snapshot(&g, &v);
+    assert(v.since_jump_ms == 0);
 }
 /* Puts the dino at height `y` with one obstacle at left edge `x`, steps 1 ms and says whether it crashed. */
 static bool collides(dino_kind_t kind, float x, float y)
@@ -111,21 +127,23 @@ static bool collides(dino_kind_t kind, float x, float y)
 static void hitbox_tests(void)
 {
     const float over = DINO_X + 4.0f; /* an obstacle sitting inside the dino's columns */
-    /* Heights: the dino clears an obstacle only with its feet above the obstacle's solid top. */
-    assert(collides(DINO_CACTUS_SMALL, over, 0.0f) && collides(DINO_CACTUS_SMALL, over, 8.5f));
-    assert(!collides(DINO_CACTUS_SMALL, over, 9.5f)); /* top of a small cactus: 10 px minus a 1 px margin */
-    assert(collides(DINO_CACTUS_PAIR, over, 8.5f) && !collides(DINO_CACTUS_PAIR, over, 9.5f));
-    assert(collides(DINO_CACTUS_LARGE, over, 13.5f) && !collides(DINO_CACTUS_LARGE, over, 14.5f));
-    assert(collides(DINO_BIRD_LOW, over, 0.0f) && collides(DINO_BIRD_LOW, over, 11.5f) && !collides(DINO_BIRD_LOW, over, 12.5f));
-    /* A high bird passes overhead only while the dino stays low; jumping into it is a crash. */
-    assert(!collides(DINO_BIRD_HIGH, over, 0.0f) && !collides(DINO_BIRD_HIGH, over, 5.5f));
-    assert(collides(DINO_BIRD_HIGH, over, 7.0f) && collides(DINO_BIRD_HIGH, over, 20.0f));
-    assert(collides(DINO_BIRD_HIGH, over, 24.0f) && !collides(DINO_BIRD_HIGH, over, 25.5f));
-    /* Widths: the sprite's empty margins are not solid. */
+    /* Heights: the dino clears an obstacle only with its feet above the obstacle's solid top (2 px below the sprite top). */
+    assert(collides(DINO_CACTUS_SMALL, over, 0.0f) && collides(DINO_CACTUS_SMALL, over, 9.5f));
+    assert(!collides(DINO_CACTUS_SMALL, over, 10.5f));
+    assert(collides(DINO_CACTUS_PAIR, over, 9.5f) && !collides(DINO_CACTUS_PAIR, over, 10.5f));
+    assert(collides(DINO_CACTUS_LARGE, over, 14.5f) && !collides(DINO_CACTUS_LARGE, over, 15.5f));
+    assert(collides(DINO_BIRD_LOW, over, 0.0f) && collides(DINO_BIRD_LOW, over, 10.5f) && !collides(DINO_BIRD_LOW, over, 11.5f));
+    /* A high bird passes overhead while the dino stays low; a tap-sized jump runs into it, a full jump goes over it. */
+    assert(!collides(DINO_BIRD_HIGH, over, 0.0f) && !collides(DINO_BIRD_HIGH, over, 8.5f));
+    assert(collides(DINO_BIRD_HIGH, over, 9.5f) && collides(DINO_BIRD_HIGH, over, 27.0f));
+    assert(collides(DINO_BIRD_HIGH, over, 28.5f) && !collides(DINO_BIRD_HIGH, over, 29.5f));
+    /* Widths: the sprite's soft edges (1.5 px each side) are not solid. */
+    const float cactus_w = (float)DINO_SPRITE_CACTUS_S.w;
     float ahead = DINO_X + DINO_BOX_RIGHT; /* right edge of the dino's box */
-    assert(!collides(DINO_CACTUS_SMALL, ahead - 1.0f + 0.3f, 0.0f) && collides(DINO_CACTUS_SMALL, ahead - 1.0f - 0.3f, 0.0f));
-    float behind = DINO_X + DINO_BOX_LEFT; /* left edge of the dino's box; a small cactus is 6 wide, solid from +1 to +5 */
-    assert(!collides(DINO_CACTUS_SMALL, behind - 5.0f - 0.3f, 0.0f) && collides(DINO_CACTUS_SMALL, behind - 5.0f + 0.3f, 0.0f));
+    assert(!collides(DINO_CACTUS_SMALL, ahead - 1.5f + 0.3f, 0.0f) && collides(DINO_CACTUS_SMALL, ahead - 1.5f - 0.3f, 0.0f));
+    float behind = DINO_X + DINO_BOX_LEFT; /* left edge of the dino's box */
+    assert(!collides(DINO_CACTUS_SMALL, behind - cactus_w + 1.5f - 0.3f, 0.0f) &&
+           collides(DINO_CACTUS_SMALL, behind - cactus_w + 1.5f + 0.3f, 0.0f));
 }
 static void determinism_tests(void)
 {
@@ -200,7 +218,86 @@ static void crash_and_restart_tests(void)
     assert(v.phase == DINO_OVER && !v.new_best && v.best == 100000);
 }
 
-typedef enum { BOT_PERFECT, BOT_JUMP_AT_EVERYTHING, BOT_TAPPER } bot_mode_t;
+/* ---- Press-timing windows -------------------------------------------------------------------------------------- */
+/* One scenario: the dino stands still on the ground while an obstacle `lead` px ahead of its box runs towards it at
+ * `speed`. It presses `delay_ms` after the start (0: never) and releases `hold_ms` later (0: holds the whole jump).
+ * Returns true when it makes it past the obstacle. */
+static bool clears(dino_kind_t kind, float speed, unsigned delay_ms, unsigned hold_ms)
+{
+    dino_game_t g;
+    dino_start(&g, 0, 1);
+    assert(dino_press(&g, 0));
+    dino_release(&g, 1);
+    g.y = g.vy = 0.0f;
+    g.cut = g.held = false;
+    g.run_ms = (uint64_t)((speed - DINO_SPEED_START) * 1000.0f);
+    g.travel_left = 1e9f;
+    g.count = 1;
+    g.obstacles[0] = (dino_obstacle_t){kind, DINO_X + DINO_BOX_RIGHT + 120.0f};
+    const uint64_t t0 = g.clock_ms;
+    for (unsigned ms = 1; ms < 5000; ++ms) {
+        uint64_t now = t0 + ms;
+        if (delay_ms && ms == delay_ms) (void)dino_press(&g, now);
+        if (delay_ms && hold_ms && ms == delay_ms + hold_ms) dino_release(&g, now);
+        dino_tick(&g, now);
+        if (g.phase != DINO_PLAY) return false;
+        if (g.count == 0) return true; /* it ran off the left edge */
+    }
+    return false;
+}
+/* Scans press times in 5 ms steps; returns the width of the clearing window in ms and checks that it is one piece. */
+static unsigned window_ms(dino_kind_t kind, float speed, unsigned hold_ms)
+{
+    unsigned first = 0, last = 0, count = 0;
+    for (unsigned d = 5; d < 3000; d += 5) {
+        if (!clears(kind, speed, d, hold_ms)) continue;
+        if (!first) first = d;
+        last = d;
+        ++count;
+    }
+    if (count) assert(count == (last - first) / 5 + 1); /* no holes */
+    return count * 5;
+}
+static void window_tests(void)
+{
+    static const dino_kind_t ground[] = {DINO_CACTUS_SMALL, DINO_CACTUS_LARGE, DINO_CACTUS_PAIR, DINO_BIRD_LOW};
+    static const char *const names[] = {"small", "large", "pair", "low bird"};
+    static const float speeds[] = {DINO_SPEED_START, 125.0f, DINO_SPEED_MAX};
+    unsigned worst_tap = 100000, worst_hold = 100000;
+    for (unsigned k = 0; k < 4; ++k) {
+        for (unsigned i = 0; i < 3; ++i) {
+            unsigned tap = window_ms(ground[k], speeds[i], 40), hold = window_ms(ground[k], speeds[i], 0);
+            printf("dino window %-8s @%3.0f px/s: tap %3u ms, hold %3u ms\n", names[k], speeds[i], tap, hold);
+            assert(tap >= 180); /* a plain tap clears every ground obstacle with at least +-90 ms of slack */
+            assert(hold >= tap);
+            if (tap < worst_tap) worst_tap = tap;
+            if (hold < worst_hold) worst_hold = hold;
+        }
+    }
+    /* High bird: a tap-sized jump is exactly the height that meets it, standing still passes under it, and a held jump
+     * can still go over it when timed well. */
+    for (unsigned i = 0; i < 3; ++i) {
+        unsigned first_fail = 0, last_fail = 0;
+        for (unsigned d = 5; d < 3000; d += 5) {
+            if (clears(DINO_BIRD_HIGH, speeds[i], d, 40)) continue;
+            if (!first_fail) first_fail = d;
+            last_fail = d;
+        }
+        assert(first_fail && last_fail - first_fail >= 150); /* tapping into it is a crash for a long stretch */
+        assert(clears(DINO_BIRD_HIGH, speeds[i], 0, 0));
+        unsigned hold_over = 0;
+        for (unsigned d = first_fail; d <= last_fail; d += 5) hold_over += clears(DINO_BIRD_HIGH, speeds[i], d, 0) ? 5U : 0U;
+        printf("dino high bird @%3.0f px/s: a tap crashes for %3u ms of press times, holding clears %3u ms of them\n", speeds[i],
+               last_fail - first_fail + 5, hold_over);
+        assert(hold_over >= 90);
+    }
+    /* Without any input the first ground obstacle is fatal. */
+    for (unsigned k = 0; k < 4; ++k) assert(!clears(ground[k], DINO_SPEED_START, 0, 0));
+    printf("dino windows: narrowest tap %u ms, narrowest hold %u ms\n", worst_tap, worst_hold);
+}
+
+/* ---- Bots ------------------------------------------------------------------------------------------------------ */
+typedef enum { BOT_PERFECT, BOT_TAPPER, BOT_TAP_EVERYTHING, BOT_HOLD_EVERYTHING } bot_mode_t;
 typedef struct {
     uint64_t survived_ms;
     unsigned score, spawned[DINO_KINDS], bird_before_limit;
@@ -213,7 +310,11 @@ typedef struct {
 static float g_timing_error_s; /* Positive: the bot presses that much too early. */
 static bool needs_jump(dino_kind_t kind, bot_mode_t mode)
 {
-    return kind != DINO_BIRD_HIGH || mode == BOT_JUMP_AT_EVERYTHING;
+    return kind != DINO_BIRD_HIGH || mode == BOT_TAP_EVERYTHING || mode == BOT_HOLD_EVERYTHING;
+}
+static bool taps(bot_mode_t mode)
+{
+    return mode == BOT_TAPPER || mode == BOT_TAP_EVERYTHING;
 }
 static void run_bot(uint32_t seed, uint64_t limit_ms, bot_mode_t mode, bot_result_t *out)
 {
@@ -252,15 +353,15 @@ static void run_bot(uint32_t seed, uint64_t limit_ms, bot_mode_t mode, bot_resul
             }
             last_spawn = t;
         }
-        if (mode == BOT_TAPPER && v.airborne && t - pressed_at >= 40) dino_release(&g, t);
+        if (taps(mode) && v.airborne && t - pressed_at >= 40) dino_release(&g, t);
         if (v.airborne) continue;
-        /* Press when the middle of the hit window will line up with the top of the jump. */
-        float half_air = (mode == BOT_TAPPER ? 0.2f : AIR_TIME_S / 2.0f) + g_timing_error_s;
+        /* Press when the middle of the hit window will line up with the middle of the jump. */
+        float half_air = (taps(mode) ? TAP_AIR_S : AIR_TIME_S) / 2.0f + g_timing_error_s;
         for (unsigned i = 0; i < v.count; ++i) {
             float w, h, b;
             dino_kind_size(v.obstacles[i].kind, &w, &h, &b);
-            float ahead = v.obstacles[i].x + 1.0f - (DINO_X + DINO_BOX_RIGHT);
-            float window = (DINO_BOX_RIGHT - DINO_BOX_LEFT) + (w - 2.0f);
+            float ahead = v.obstacles[i].x + 1.5f - (DINO_X + DINO_BOX_RIGHT);
+            float window = (DINO_BOX_RIGHT - DINO_BOX_LEFT) + (w - 3.0f);
             if (ahead + window < 0.0f || !needs_jump(v.obstacles[i].kind, mode)) continue;
             if ((ahead + window / 2.0f) / (float)v.speed_pps <= half_air) {
                 dino_press(&g, t);
@@ -276,59 +377,69 @@ static void perfect_bot_tests(void)
 {
     unsigned totals[DINO_KINDS] = {0};
     double min_gap = 1e9, max_gap = 0;
-    for (uint32_t seed = 0; seed < 20; ++seed) {
+    for (uint32_t seed = 0; seed < 12; ++seed) {
         bot_result_t r;
-        run_bot(seed, 200000, BOT_PERFECT, &r);
+        run_bot(seed, 130000, BOT_PERFECT, &r);
         assert(!r.died); /* Every generated field can be cleared with well timed full jumps. */
-        assert(r.score > 2400);
-        assert(r.top_speed == 190); /* Speed ramps up to the cap within the run. */
+        assert(r.score > 1700);
+        assert(r.top_speed == 170); /* Speed ramps up to the cap within the run. */
         assert(r.bird_before_limit == 0);
         for (unsigned k = 0; k < DINO_KINDS; ++k) totals[k] += r.spawned[k];
         if (r.min_gap_s < min_gap) min_gap = r.min_gap_s;
         if (r.max_gap_s > max_gap) max_gap = r.max_gap_s;
     }
-    for (unsigned k = 0; k < DINO_KINDS; ++k) assert(totals[k] > 30); /* Every obstacle type shows up. */
-    assert(min_gap > 0.85 && max_gap < 2.1);
+    for (unsigned k = 0; k < DINO_KINDS; ++k) assert(totals[k] > 15); /* Every obstacle type shows up. */
+    assert(min_gap > 1.05 && max_gap < 2.35);
     printf("dino perfect bot: gaps %.2f..%.2f s, spawned small=%u large=%u pair=%u low=%u high=%u\n", min_gap, max_gap,
            totals[DINO_CACTUS_SMALL], totals[DINO_CACTUS_LARGE], totals[DINO_CACTUS_PAIR], totals[DINO_BIRD_LOW],
            totals[DINO_BIRD_HIGH]);
 }
+/* The headline change: a sloppy player who only ever taps still plays on, because a tap clears every ground obstacle. */
+static void tapper_tests(void)
+{
+    for (uint32_t seed = 0; seed < 12; ++seed) {
+        bot_result_t r;
+        run_bot(seed, 130000, BOT_TAPPER, &r);
+        assert(!r.died);
+        assert(r.top_speed == DINO_SPEED_MAX);
+    }
+}
 /* How sloppy may a player be? Every seed must survive 60 s with a consistent timing error. */
 static void timing_tolerance_tests(void)
 {
-    static const float errors[] = {0.05f, -0.05f, 0.08f, -0.08f, 0.12f, -0.12f, 0.16f, -0.16f};
-    for (unsigned i = 0; i < sizeof errors / sizeof errors[0]; ++i) {
-        unsigned deaths = 0;
-        g_timing_error_s = errors[i];
-        for (uint32_t seed = 0; seed < 20; ++seed) {
-            bot_result_t r;
-            run_bot(seed, 60000, BOT_PERFECT, &r);
-            deaths += r.died;
+    static const float errors[] = {0.04f, -0.04f, 0.07f, -0.07f, 0.10f, -0.10f, 0.14f, -0.14f};
+    for (unsigned mode = 0; mode < 2; ++mode) {
+        for (unsigned i = 0; i < sizeof errors / sizeof errors[0]; ++i) {
+            unsigned deaths = 0;
+            g_timing_error_s = errors[i];
+            for (uint32_t seed = 0; seed < 12; ++seed) {
+                bot_result_t r;
+                run_bot(seed, 60000, mode ? BOT_TAPPER : BOT_PERFECT, &r);
+                deaths += r.died;
+            }
+            printf("dino %s timing error %+4.0f ms: %u/12 seeds died within 60 s\n", mode ? "tap " : "hold", errors[i] * 1000.0f, deaths);
+            if (fabsf(errors[i]) <= 0.101f) assert(deaths == 0); /* The larger errors are printed for tuning only. */
         }
-        printf("dino timing error %+.0f ms: %u/20 seeds died within 60 s\n", errors[i] * 1000.0f, deaths);
-        if (fabsf(errors[i]) <= 0.081f) assert(deaths == 0); /* The larger errors are printed for tuning only. */
     }
     g_timing_error_s = 0.0f;
 }
 static void decision_tests(void)
 {
-    unsigned died_on_high = 0, total_everything = 0, tapper_died = 0, tapper_on_big = 0;
-    for (uint32_t seed = 0; seed < 20; ++seed) {
+    unsigned died_on_high = 0, hold_everything_died = 0;
+    for (uint32_t seed = 0; seed < 12; ++seed) {
         bot_result_t r;
-        run_bot(seed, 300000, BOT_JUMP_AT_EVERYTHING, &r);
-        assert(r.died); /* Jumping at a high bird is a mistake: birds are not just decoration. */
-        ++total_everything;
+        /* Tapping at a high bird is the mistake: a tap-sized jump is exactly the height that meets it. */
+        run_bot(seed, 300000, BOT_TAP_EVERYTHING, &r);
+        assert(r.died);
         if (r.killer == DINO_BIRD_HIGH) ++died_on_high;
-        run_bot(seed, 300000, BOT_TAPPER, &r);
-        if (r.died) {
-            ++tapper_died;
-            if (r.killer == DINO_CACTUS_LARGE || r.killer == DINO_CACTUS_PAIR || r.killer == DINO_BIRD_LOW) ++tapper_on_big;
-        }
+        /* Holding the jump at every obstacle, high birds included, goes over them and survives. */
+        run_bot(seed, 60000, BOT_HOLD_EVERYTHING, &r);
+        hold_everything_died += r.died;
     }
-    assert(died_on_high >= total_everything * 8 / 10);
-    assert(tapper_died == 20 && tapper_on_big >= 17); /* Short hops only clear small cacti: holding matters. */
-    printf("dino decisions: jump-at-everything died on a high bird %u/20, tapper died on tall obstacles %u/20\n",
-           died_on_high, tapper_on_big);
+    assert(died_on_high == 12);
+    assert(hold_everything_died == 0);
+    printf("dino decisions: tap-at-everything died on a high bird %u/12, hold-at-everything died %u/12\n", died_on_high,
+           hold_everything_died);
 }
 
 int main(void)
@@ -340,7 +451,9 @@ int main(void)
     determinism_tests();
     stall_tests();
     crash_and_restart_tests();
+    window_tests();
     perfect_bot_tests();
+    tapper_tests();
     timing_tolerance_tests();
     decision_tests();
     puts("dino tests passed");

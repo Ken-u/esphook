@@ -8,6 +8,7 @@
 #include "config_store.h"
 #include "usb_cdc.h"
 #include "esp_timer.h"
+#include "esp_system.h"
 #include "freertos/semphr.h"
 #include "cJSON.h"
 #include <stdio.h>
@@ -165,6 +166,9 @@ static void ack(const app_request_t *request, bool ok, bool queued)
         cJSON_AddNumberToObject(hardware,"radar_frames",info.radar_frames);
         /* Lines the host failed to drain since boot: a non-zero value that grows after a request timed out confirms a TX stall. */
         cJSON_AddNumberToObject(hardware,"usb_tx_drops",cdc_tx_drops());
+        /* Free heap now and its low-water mark since boot: lets a host check a big app (shared canvas, LVGL objects) left room. */
+        cJSON_AddNumberToObject(hardware,"heap_free",esp_get_free_heap_size());
+        cJSON_AddNumberToObject(hardware,"heap_min",esp_get_minimum_free_heap_size());
         if(request->reboot) cJSON_AddBoolToObject(j,"rebooting",true);
     }
     if (ok && (request->op == APP_OP_STATUS || request->op == APP_OP_LIST)) {

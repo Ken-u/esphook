@@ -20,8 +20,8 @@ static float unit(uint32_t *state)
 void dino_kind_size(dino_kind_t kind, float *width, float *height, float *bottom)
 {
     static const float table[DINO_KINDS][3] = {
-        [DINO_CACTUS_SMALL] = {6, 10, 0}, [DINO_CACTUS_LARGE] = {8, 15, 0}, [DINO_CACTUS_PAIR] = {14, 10, 0},
-        [DINO_BIRD_LOW] = {12, 8, 5}, [DINO_BIRD_HIGH] = {12, 8, 18}};
+        [DINO_CACTUS_SMALL] = {8, 12, 0}, [DINO_CACTUS_LARGE] = {10, 17, 0}, [DINO_CACTUS_PAIR] = {18, 12, 0},
+        [DINO_BIRD_LOW] = {14, 9, 4}, [DINO_BIRD_HIGH] = {14, 9, 22}};
     if (kind >= DINO_KINDS) kind = DINO_CACTUS_SMALL;
     *width = table[kind][0]; *height = table[kind][1]; *bottom = table[kind][2];
 }
@@ -46,7 +46,8 @@ static void begin_run(dino_game_t *g, uint64_t now)
     g->y = g->vy = 0;
     g->held = g->cut = g->record = false;
     g->count = 0;
-    g->travel_left = 120.0f; /* first obstacle shows up after a short run-up */
+    g->travel_left = 130.0f; /* first obstacle shows up after a short run-up */
+    g->land_ms = g->jump_ms = now;
 }
 void dino_start(dino_game_t *g, uint64_t now, uint32_t seed)
 {
@@ -75,8 +76,8 @@ static bool hit(const dino_game_t *g)
     for (unsigned i = 0; i < g->count; ++i) {
         float width, height, bottom;
         dino_kind_size(g->obstacles[i].kind, &width, &height, &bottom);
-        float o_left = g->obstacles[i].x + 1.0f, o_right = g->obstacles[i].x + width - 1.0f;
-        float o_bottom = bottom > 0.0f ? bottom + 1.0f : 0.0f, o_top = bottom + height - 1.0f;
+        float o_left = g->obstacles[i].x + 1.5f, o_right = g->obstacles[i].x + width - 1.5f; /* sprites have soft edges */
+        float o_bottom = bottom > 0.0f ? bottom + 1.0f : 0.0f, o_top = bottom + height - 2.0f;
         if (right > o_left && left < o_right && g->y + DINO_BOX_H > o_bottom && g->y < o_top) return true;
     }
     return false;
@@ -114,7 +115,7 @@ static void step(dino_game_t *g)
         /* Releasing early shortens the jump once it has cleared a minimum height. */
         if (g->cut && g->y >= DINO_MIN_HOP_Y && g->vy > DINO_DROP_V) g->vy = DINO_DROP_V;
         g->y += g->vy * STEP_S;
-        if (g->y <= 0.0f) { g->y = g->vy = 0.0f; g->cut = false; }
+        if (g->y <= 0.0f) { g->y = g->vy = 0.0f; g->cut = false; g->land_ms = g->clock_ms; }
     }
     if (hit(g)) crash(g);
 }
@@ -140,6 +141,7 @@ bool dino_press(dino_game_t *g, uint64_t now)
     }
     g->vy = DINO_JUMP_V;
     g->y = 0.001f; /* airborne from this step on */
+    g->jump_ms = g->clock_ms;
     g->held = true;
     g->cut = false;
     return true;
@@ -154,8 +156,10 @@ void dino_snapshot(const dino_game_t *g, dino_view_t *out)
 {
     unsigned score = score_of(g);
     *out = (dino_view_t){.phase = g->phase, .score = score, .best = g->best, .speed_pps = (unsigned)lroundf(g->speed),
-        .frame = (unsigned)(g->distance / 6.0), .scroll = (unsigned)g->distance, .count = g->count, .y = g->y,
+        .frame = (unsigned)(g->distance / 10.0), .scroll = (unsigned)g->distance, .count = g->count, .y = g->y,
         .airborne = g->y > 0.0f || g->vy > 0.0f, .new_best = g->phase == DINO_OVER && g->record,
-        .can_restart = g->phase == DINO_OVER && g->clock_ms - g->over_ms >= DINO_RESTART_DELAY_MS};
+        .can_restart = g->phase == DINO_OVER && g->clock_ms - g->over_ms >= DINO_RESTART_DELAY_MS,
+        .since_land_ms = (unsigned)(g->clock_ms - g->land_ms > 10000U ? 10000U : g->clock_ms - g->land_ms),
+        .since_jump_ms = (unsigned)(g->clock_ms - g->jump_ms > 10000U ? 10000U : g->clock_ms - g->jump_ms)};
     memcpy(out->obstacles, g->obstacles, sizeof out->obstacles);
 }

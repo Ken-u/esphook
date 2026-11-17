@@ -12,9 +12,9 @@ ESP32-C3 小屏应用与小游戏框架，所有内置应用共用生命周期�
 > 构建、接线及首次 USB 校准见 [机器人调试指南](docs/robot-bringup.md)。默认 auto 不初始化 PWM；机器人需先在设置中选择 robot 并重启，通过 USB 校准后使用 `robot arm` / `robot follow` 开启。
 > 新增 [表情/文字协议与扇形雷达调试页](docs/robot-display-protocol.md)：USB 输入 `robot radar` 切雷达页，`robot face` 返回；JSON 可客制表情和文字。
 > [GPIO6 启动器与全局按键](docs/robot-launcher.md)：待机眼睛动画，短按打开菜单；短按切换、按住 500ms 画圆确认；菜单 10s 无操作回待机；任何页面快速三击回菜单。
-> [投篮游戏](docs/robot-basketball.md)：从菜单进入，限时 2 分钟，篮筐随机变速变向、碰壁折返，球飞行时篮筐照常移动，要提前量；每中一球 2 分。
-> [小恐龙](docs/robot-dino.md)：Chrome 断网小恐龙。按下起跳，按住跳得更高，轻点只小跳；仙人掌要跳、高飞翼龙不能跳，速度越来越快。
-> [滑雪冒险](docs/robot-ski.md)：致敬 SkiFree。每按一下换一次方向，躲开树和石头，三条命，被雪怪追上就结束；雪道保证有一条能滑过去的路。
+> [投篮游戏](docs/robot-basketball.md)：从菜单进入，限时 2 分钟，篮筐随机变速变向、碰壁折返，球飞行时篮筐照常移动，要提前量；每中一球 2 分；竞技场背景、篮网摆动、命中火花和飘字、倒计时条和星级结算。
+> [小恐龙](docs/robot-dino.md)：Chrome 断网小恐龙，昼夜交替的像素画面。按下起跳，**轻点就能越过所有地面障碍**，按住跳得更高；高飞翼龙站着走过，速度越来越快。
+> [滑雪大冒险](docs/robot-ski.md)：横版下坡滑雪。按键起跳，**空中按住连续后空翻，翻满一圈以上有额外加分**和连击；跳过石头和冰缝，捡宝石，天色从白天渐变到夜晚。
 > [做 T 高手](docs/robot-stock-t.md)：PC 随机准备 A 股历史五分钟 K 线和 MA30/MA60，通过 USB 上传 RAM；按住暂停并确认满仓买入，短按满仓卖出，每天结束结算收益。PC 入口：`./scripts/stock-t.sh`。
 > 下方保留原 Agent Hook 项目说明；两种硬件共用应用框架和可选 device link，Wi-Fi 用于 Hook 连接、配置和 OTA。
 

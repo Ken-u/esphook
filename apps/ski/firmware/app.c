@@ -1,84 +1,271 @@
 #include "esphook/app.h"
+#include "esphook/app_gfx.h"
 #include "esphook/app_ui.h"
 #include "esphook/app_services.h"
 #include "esphook/app_runtime.h"
 #include "ski_game.h"
 #include "freertos/FreeRTOS.h"
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
-/* Everything is plain LVGL objects over a snow-white background. Trees and rocks come from fixed pools that are
- * created once and only moved/hidden afterwards, so a run allocates nothing after the first frame. */
-#define TREE_POOL 30
-#define ROCK_POOL 10
-#define MARKS 8
-#define SNOW 0xE9F2F9
-#define INK 0x16324F
+/* Layout: an 8 px sky strip, the 64 row pixel canvas (screen y 8..71), an 8 px snow strip. HUD pills float over the
+ * canvas. The rider's reference ground is canvas row GROUND_ROW; a full hop leaves ~14 rows of head room. */
+#define CANVAS_Y 8
+#define GROUND_ROW 44
+#define THEME_CYCLE_PX 7200.0
+#define THEME_HOLD_PX 1800.0
+#define THEME_BLEND_PX 700.0
+
 typedef struct {
     ski_game_t game;
-    lv_obj_t *skier, *ski_lower[2], *yeti, *pips[SKI_LIVES], *marks[MARKS];
-    lv_obj_t *trees[TREE_POOL], *trunks[TREE_POOL], *rocks[ROCK_POOL];
-    lv_obj_t *meters, *panel, *title, *detail, *hint;
-    uint8_t tree_variant[TREE_POOL];
-    int8_t drawn_dir;
-    bool built;
+    lv_obj_t *top, *plot, *bottom, *score_pill, *score, *gem_pill, *gem_count, *combo, *combo_text, *popup, *popup_text, *panel,
+        *title, *line1, *line2;
+    lv_image_dsc_t image;
+    uint32_t sky_rgb, snow_rgb;
 } state_t;
 _Static_assert(sizeof(state_t) <= APP_STATE_CAPACITY, "ski state too large");
-typedef struct { ski_phase_t phase; unsigned meters, best, lives, speed; } status_t;
-static status_t s_status;
+static ski_view_t s_status;
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 
-static void style_tree(lv_obj_t *obj, unsigned variant)
+/* One colour set per time of day; a run drifts day -> sunset -> night -> dawn as the distance grows. */
+typedef struct {
+    uint32_t top, mid, low, sun, far_mtn, near_mtn, pine, snow_hi, snow, shade;
+    unsigned stars; /* 0..256 */
+} theme_t;
+static const theme_t THEMES[4] = {
+    {0x3F8FD8, 0x7EC4F2, 0xD3EDFF, 0xFFF4B8, 0x93B5DA, 0x6489B6, 0x2F6066, 0xFFFFFF, 0xEBF5FD, 0xBCD4EB, 0},   /* day */
+    {0x3B2F6B, 0xC4627F, 0xFFB36B, 0xFFE3A6, 0x8E5E92, 0x5E4380, 0x2B2247, 0xFFEBDF, 0xF4D2D4, 0xB98EB4, 40},   /* sunset */
+    {0x070C26, 0x182659, 0x3A5A9C, 0xEEF3FF, 0x2B3C72, 0x1D2A58, 0x0D1531, 0xCFDCF7, 0x97ADD8, 0x6B84B9, 256},   /* night */
+    {0x2E3A7A, 0x8A6FB0, 0xF7B6A0, 0xFFDDB0, 0x7B75A9, 0x56538B, 0x25264F, 0xFFF2EB, 0xEBDAEB, 0xAAA1D0, 60},   /* dawn */
+};
+static theme_t theme_at(double distance)
 {
-    lv_obj_set_size(obj, variant ? 7 : 8, variant ? 8 : 10);
-    lv_obj_set_style_bg_color(obj, app_ui_color(variant ? 0x2E9E63 : 0x1F6F4A), LV_PART_MAIN);
+    double p = fmod(distance, THEME_CYCLE_PX);
+    unsigned seg = (unsigned)(p / THEME_HOLD_PX) & 3U;
+    double within = p - (double)seg * THEME_HOLD_PX;
+    double t = (within - (THEME_HOLD_PX - THEME_BLEND_PX)) / THEME_BLEND_PX;
+    if (t <= 0.0) return THEMES[seg];
+    unsigned k = (unsigned)(t * t * (3.0 - 2.0 * t) * 256.0);
+    const theme_t *a = &THEMES[seg], *b = &THEMES[(seg + 1U) & 3U];
+    return (theme_t){gfx_mix(a->top, b->top, k), gfx_mix(a->mid, b->mid, k), gfx_mix(a->low, b->low, k),
+        gfx_mix(a->sun, b->sun, k), gfx_mix(a->far_mtn, b->far_mtn, k), gfx_mix(a->near_mtn, b->near_mtn, k),
+        gfx_mix(a->pine, b->pine, k), gfx_mix(a->snow_hi, b->snow_hi, k), gfx_mix(a->snow, b->snow, k),
+        gfx_mix(a->shade, b->shade, k), a->stars + (unsigned)(((int)b->stars - (int)a->stars) * (int)k / 256)};
 }
-static void build(state_t *s, lv_obj_t *root)
+
+static void draw_sky(uint16_t *px, const theme_t *t, unsigned now_ms)
 {
-    app_ui_rect(root, 0, 0, APP_WIDTH, APP_HEIGHT, SNOW, 0);
-    for (unsigned i = 0; i < MARKS; ++i) s->marks[i] = app_ui_rect(root, (int)((i * 53U + 17U) % 150U) + 4, 0, 3, 1, 0xBFD3E6, 0);
-    for (unsigned i = 0; i < TREE_POOL; ++i) {
-        s->trunks[i] = app_ui_rect(root, 0, 0, 2, 3, 0x7A5230, 0);
-        s->trees[i] = app_ui_rect(root, 0, 0, 8, 10, 0x1F6F4A, 3);
-        lv_obj_add_flag(s->trunks[i], LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_flag(s->trees[i], LV_OBJ_FLAG_HIDDEN);
+    gfx_gradient(px, 0, 24, t->top, t->mid);
+    gfx_gradient(px, 24, 48, t->mid, t->low);
+    gfx_rect(px, 0, 48, APP_CANVAS_W, 16, gfx_rgb565(t->low));
+    for (unsigned i = 0; i < 18U && t->stars > 0; ++i) { /* stars come out as it gets dark */
+        uint32_t h = gfx_hash(i * 977U + 5U);
+        if ((h & 0xFFU) >= t->stars) continue;
+        int x = (int)((h >> 8) % 160U), y = (int)((h >> 16) % 34U);
+        bool twinkle = ((now_ms / 400U + i) & 3U) == 0U;
+        uint16_t c = gfx_rgb565(twinkle ? 0xFFFFFF : gfx_mix(t->top, 0xFFFFFF, 190));
+        gfx_plot(px, x, y, c);
+        if (twinkle) { gfx_plot(px, x - 1, y, gfx_rgb565(gfx_mix(t->top, 0xFFFFFF, 110))); gfx_plot(px, x + 1, y, gfx_rgb565(gfx_mix(t->top, 0xFFFFFF, 110))); }
     }
-    for (unsigned i = 0; i < ROCK_POOL; ++i) {
-        s->rocks[i] = app_ui_rect(root, 0, 0, 7, 5, 0x7C8798, 2);
-        lv_obj_add_flag(s->rocks[i], LV_OBJ_FLAG_HIDDEN);
+    /* Sun by day, moon by night: a soft halo around a disc; the moon gets a bite taken out of it. */
+    gfx_sun(px, 118, 17, t->sun, t->mid, gfx_mix(t->mid, t->top, 128), t->stars > 140U);
+}
+static void draw_pines(uint16_t *px, int offset, uint32_t color)
+{
+    const uint16_t c = gfx_rgb565(color);
+    for (int k = offset / 19 - 1; k <= (offset + APP_CANVAS_W) / 19 + 1; ++k) {
+        uint32_t h = gfx_hash((uint32_t)k * 31U + 7U);
+        int x = k * 19 + (int)(h % 7U) - offset, tall = 11 + (int)((h >> 8) % 6U);
+        if (x < -8 || x > APP_CANVAS_W + 8) continue;
+        gfx_peak(px, x, 50 - tall, 5, tall / 2 + 1, c);                /* upper tier */
+        gfx_peak(px, x, 50 - tall + tall / 3, 9, tall - tall / 3, c);  /* lower tier */
+        gfx_vline(px, x, 49, 51, c);
     }
-    s->skier = lv_obj_create(root);
-    app_ui_plain(s->skier);
-    lv_obj_set_size(s->skier, 10, 16);
-    app_ui_rect(s->skier, 3, 0, 4, 4, 0xFFD0A6, 2);   /* head */
-    app_ui_rect(s->skier, 2, 4, 6, 6, 0xE5484D, 2);   /* jacket */
-    app_ui_rect(s->skier, 2, 9, 2, 4, 0x203040, 0);   /* skis: upper halves ... */
-    app_ui_rect(s->skier, 6, 9, 2, 4, 0x203040, 0);
-    s->ski_lower[0] = app_ui_rect(s->skier, 2, 12, 2, 4, 0x203040, 0); /* ... lower halves lean with the heading */
-    s->ski_lower[1] = app_ui_rect(s->skier, 6, 12, 2, 4, 0x203040, 0);
-    s->yeti = lv_obj_create(root);
-    app_ui_plain(s->yeti);
-    lv_obj_set_size(s->yeti, 14, 12);
-    app_ui_rect(s->yeti, 0, 0, 14, 12, 0x8FA9D1, 5);
-    app_ui_rect(s->yeti, 3, 3, 8, 6, 0x2A2142, 2);
-    app_ui_rect(s->yeti, 4, 4, 2, 2, 0xFF5A5A, 0);
-    app_ui_rect(s->yeti, 8, 4, 2, 2, 0xFF5A5A, 0);
-    app_ui_rect(s->yeti, 5, 7, 4, 1, 0xF4F7FB, 0);
-    lv_obj_add_flag(s->yeti, LV_OBJ_FLAG_HIDDEN);
-    s->meters = app_ui_label(root, &aihook_font_12, 3, 0, 80, 14, LV_LABEL_LONG_MODE_CLIP);
-    lv_obj_set_style_text_color(s->meters, app_ui_color(INK), LV_PART_MAIN);
-    for (unsigned i = 0; i < SKI_LIVES; ++i) s->pips[i] = app_ui_rect(root, 160 - 3 - (int)(SKI_LIVES - i) * 8, 3, 6, 6, 0xE5484D, 3);
-    s->panel = app_ui_rect(root, 12, 12, 136, 56, 0x102536, 6);
-    s->title = app_ui_label(s->panel, &aihook_font_16, 0, 4, 136, 20, LV_LABEL_LONG_MODE_CLIP);
-    s->detail = app_ui_label(s->panel, &aihook_font_12, 0, 26, 136, 14, LV_LABEL_LONG_MODE_CLIP);
-    s->hint = app_ui_label(s->panel, &aihook_font_12, 0, 40, 136, 14, LV_LABEL_LONG_MODE_CLIP);
-    lv_obj_set_style_text_color(s->title, app_ui_color(APP_COLOR_ACCENT), LV_PART_MAIN);
-    lv_obj_set_style_text_color(s->hint, app_ui_color(APP_COLOR_MUTED), LV_PART_MAIN);
-    lv_obj_set_style_text_align(s->title, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_set_style_text_align(s->detail, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_set_style_text_align(s->hint, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    s->drawn_dir = 0;
-    s->built = true;
+}
+static void draw_terrain(uint16_t *px, const ski_view_t *v, const theme_t *t, int base)
+{
+    int heights[41], rows[APP_CANVAS_W];
+    uint8_t edge[APP_CANVAS_W]; /* 0 ground, 1 chasm floor, 2 left lip, 3 right lip */
+    for (int k = 0; k < 41; ++k) heights[k] = (int)lroundf((ski_terrain(v->seed, (double)(base + 4 * k)) - v->cam_y) * 8.0f);
+    for (int c = 0; c < APP_CANVAS_W; ++c) {
+        int k = c / 4, f = c % 4, h8 = heights[k] + (heights[k + 1] - heights[k]) * f / 4;
+        rows[c] = GROUND_ROW - ((h8 + 4) >> 3);
+        edge[c] = 0;
+    }
+    for (unsigned i = 0; i < v->count; ++i) {
+        const ski_thing_t *o = &v->things[i];
+        if (o->kind != SKI_CHASM) continue;
+        int x0 = (int)lroundf(SKI_RIDER_X + o->rel), x1 = x0 + o->w;
+        for (int c = x0; c < x1; ++c)
+            if (c >= 0 && c < APP_CANVAS_W) edge[c] = c == x0 ? 2 : c == x1 - 1 ? 3 : 1;
+    }
+    const uint16_t hi = gfx_rgb565(t->snow_hi), body = gfx_rgb565(t->snow), shade = gfx_rgb565(t->shade),
+        void_top = gfx_rgb565(gfx_mix(t->shade, 0x101a30, 150)), void_deep = gfx_rgb565(0x0b1224);
+    for (int c = 0; c < APP_CANVAS_W; ++c) {
+        int top = rows[c] < 0 ? 0 : rows[c];
+        if (edge[c] == 0) {
+            for (int y = top; y < APP_CANVAS_H; ++y) {
+                int depth = y - rows[c];
+                uint32_t color = depth < 2 ? t->snow_hi : gfx_mix(t->snow, t->shade, (unsigned)(depth > 14 ? 256 : depth * 256 / 14));
+                if (y > 50) color = gfx_mix(color, t->shade, (unsigned)((y - 50) * 256 / 13)); /* melts into the snow strip below */
+                uint16_t px565 = depth < 2 ? hi : depth < 4 ? body : gfx_rgb565(color);
+                if (depth > 2 && ((gfx_hash((uint32_t)(base + c) * 131U + (uint32_t)y) & 63U) == 0U)) px565 = hi; /* sparkles */
+                px[y * APP_CANVAS_W + c] = px565;
+            }
+            continue;
+        }
+        /* Chasm: the walls are lit snow, the floor falls away into dark ice. */
+        int rim = c > 0 ? rows[c - 1] : rows[c];
+        if (edge[c] == 3) rim = rows[c];
+        if (rim < 0) rim = 0;
+        for (int y = rim; y < APP_CANVAS_H; ++y) {
+            int depth = y - rim;
+            uint16_t color = edge[c] == 2 ? (depth < 2 ? hi : shade) : edge[c] == 3 ? (depth < 2 ? hi : body)
+                : (uint16_t)(depth < 6 ? void_top : void_deep);
+            if (edge[c] == 1 && depth > 1 && (depth + c) % 7 == 0) color = shade; /* icicle glints */
+            px[y * APP_CANVAS_W + c] = color;
+        }
+    }
+}
+static void draw_rock(uint16_t *px, const ski_thing_t *o, const ski_view_t *v, const theme_t *t)
+{
+    int x0 = (int)lroundf(SKI_RIDER_X + o->rel);
+    int base = GROUND_ROW - (int)lroundf(o->y - v->cam_y) + 2, w = o->w, h = o->h + 2;
+    const uint16_t dark = gfx_rgb565(gfx_mix(0x4A5468, t->pine, 60)), mid = gfx_rgb565(0x7B879C),
+        light = gfx_rgb565(0xA9B6C9), snow = gfx_rgb565(t->snow_hi);
+    for (int row = 0; row < h; ++row) {
+        int span = (int)lroundf((float)w * sqrtf((float)(row + 1) / (float)h) + 0.4f), left = x0 + (w - span) / 2;
+        if (span < 3) span = 3;
+        int y = base - h + row;
+        gfx_hline(px, left, left + span - 1, y, row == 0 ? snow : mid);
+        gfx_plot(px, left, y, row == 0 ? snow : dark);
+        gfx_plot(px, left + span - 1, y, dark);
+        if (row > 0 && row < h - 1) gfx_plot(px, left + 1 + span / 4, y, light);
+    }
+    gfx_hline(px, x0 + 1, x0 + w - 2, base, dark);
+}
+static void draw_gem(uint16_t *px, const ski_thing_t *o, const ski_view_t *v, unsigned now_ms)
+{
+    static const char *const rows[] = {"..#..", ".#o#.", "#oWo#", ".#o#.", "..#.."};
+    int x = (int)lroundf(SKI_RIDER_X + o->rel), y = GROUND_ROW - (int)lroundf(o->y - v->cam_y) - 2;
+    bool glint = ((now_ms / 120U + (unsigned)x / 6U) & 7U) == 0U;
+    const uint16_t colors[] = {gfx_rgb565(0x28B8E8), gfx_rgb565(0x7FE8FF), gfx_rgb565(glint ? 0xFFFFFF : 0xC8F6FF)};
+    gfx_blit(px, 5, 5, rows, x, y, "#oW", colors, false);
+}
+/* Local rider coordinates: u runs along the board towards the nose, v up from the board's underside. The pivot is
+ * the rider's centre of mass, which is what flies on a parabola, so flips turn about it. */
+typedef struct { float cx, cy, cs, sn; } frame_t;
+static void to_screen(const frame_t *f, float u, float v, int *x, int *y)
+{
+    float vv = v - 5.0f;
+    *x = (int)lroundf(f->cx + u * f->cs - vv * f->sn);
+    *y = (int)lroundf(f->cy - (u * f->sn + vv * f->cs));
+}
+static void seg(uint16_t *px, const frame_t *f, float u0, float v0, float u1, float v1, uint16_t color, bool thick)
+{
+    int x0, y0, x1, y1;
+    to_screen(f, u0, v0, &x0, &y0);
+    to_screen(f, u1, v1, &x1, &y1);
+    if (thick) gfx_line2(px, x0, y0, x1, y1, color);
+    else gfx_line(px, x0, y0, x1, y1, color);
+}
+static void draw_rider(uint16_t *px, float cx, float cy, float degrees, unsigned now_ms, float speed, bool wiped)
+{
+    const float radians = degrees * 0.0174533f;
+    const frame_t f = {cx, cy, cosf(radians), sinf(radians)};
+    const uint16_t board = gfx_rgb565(0xE8503A), nose = gfx_rgb565(0xFF9A6B), pants = gfx_rgb565(0x1F2B4D),
+        jacket = gfx_rgb565(0xF2B92B), sleeve = gfx_rgb565(0xFFD966), skin = gfx_rgb565(0xF3C6A0),
+        hat = gfx_rgb565(0xD9453B), scarf = gfx_rgb565(0xE04B4B), goggle = gfx_rgb565(0x1B2236);
+    float wave = sinf((float)now_ms * 0.02f) * 1.6f, trail = 3.0f + speed * 0.04f;
+    seg(px, &f, -6.0f, 0.0f, 6.0f, 0.0f, board, false);
+    seg(px, &f, -6.0f, 1.0f, 6.0f, 1.0f, board, false);
+    seg(px, &f, 6.0f, 1.0f, 7.5f, 2.5f, nose, false);
+    seg(px, &f, -6.0f, 1.0f, -7.0f, 2.0f, nose, false);
+    seg(px, &f, -2.0f, 1.5f, -1.5f, 5.0f, pants, false);
+    seg(px, &f, 2.0f, 1.5f, 1.5f, 5.0f, pants, false);
+    seg(px, &f, 0.0f, 5.0f, 0.0f, 10.0f, jacket, true);
+    seg(px, &f, 0.0f, 9.0f, wiped ? -4.0f : -3.5f, wiped ? 12.0f : 6.5f, sleeve, false);
+    seg(px, &f, 1.0f, 9.0f, wiped ? 5.0f : 4.0f, wiped ? 12.0f : 8.0f, sleeve, false);
+    int hx, hy;
+    to_screen(&f, 0.5f, 12.5f, &hx, &hy);
+    gfx_disc(px, hx, hy, 2, skin);
+    int gx, gy, px2, py2;
+    to_screen(&f, 1.6f, 12.8f, &gx, &gy);
+    gfx_plot(px, gx, gy, goggle);
+    to_screen(&f, 0.0f, 14.6f, &px2, &py2);
+    gfx_plot(px, px2, py2, hat);
+    seg(px, &f, -1.8f, 14.0f, 2.2f, 14.0f, hat, false);
+    seg(px, &f, -0.5f, 10.0f, -trail, 9.0f + wave, scarf, false);
+    seg(px, &f, -0.5f, 9.0f, -trail * 0.8f, 7.6f + wave, scarf, false);
+}
+static void draw_flakes(uint16_t *px, const theme_t *t, unsigned now_ms, unsigned scroll)
+{
+    const uint16_t c = gfx_rgb565(gfx_mix(t->snow_hi, t->mid, 40));
+    for (unsigned i = 0; i < 16U; ++i) {
+        uint32_t h = gfx_hash(i * 6151U + 1U);
+        unsigned depth = 1U + (h >> 24) % 3U;
+        int x = (int)(((h & 0xFFU) * 160U / 256U + 160U * 4U - (scroll * depth / 4U) % 160U - now_ms * depth / 90U) % 160U);
+        int y = (int)(((h >> 8) % 64U + now_ms * (8U + depth * 6U) / 1000U) % 64U);
+        gfx_plot(px, x, y, c);
+    }
+}
+static void draw_scene(uint16_t *px, const ski_view_t *v, unsigned now_ms)
+{
+    const theme_t t = theme_at(v->x);
+    const unsigned scroll = (unsigned)v->x;
+    const int base = (int)floor(v->x) - (int)SKI_RIDER_X;
+    draw_sky(px, &t, now_ms);
+    gfx_ridge(px, (int)(base * 0.10), 26, 44, 8, 18, 0x1111U, t.far_mtn, gfx_mix(t.far_mtn, t.snow_hi, 150));
+    gfx_ridge(px, (int)(base * 0.22), 18, 47, 3, 10, 0x2222U, t.near_mtn, gfx_mix(t.near_mtn, t.snow_hi, 90));
+    draw_pines(px, (int)(base * 0.40), t.pine);
+    draw_terrain(px, v, &t, base);
+    for (unsigned i = 0; i < v->count; ++i) {
+        if (v->things[i].rel > APP_CANVAS_W || v->things[i].rel < -(SKI_RIDER_X + 30.0f)) continue;
+        if (v->things[i].kind == SKI_ROCK) draw_rock(px, &v->things[i], v, &t);
+        else if (v->things[i].kind == SKI_GEM) draw_gem(px, &v->things[i], v, now_ms);
+    }
+    draw_flakes(px, &t, now_ms, scroll);
+    float sy = (float)GROUND_ROW - (v->y - v->cam_y);
+    if (v->phase == SKI_OVER) {
+        /* Wipe-out: the whole rider tumbles forward and slides, then dizzy stars circle the head. */
+        float age = (float)v->over_age_ms, slide = 10.0f * (1.0f - expf(-age / 260.0f));
+        float bounce = fabsf(sinf(age / 120.0f)) * 9.0f * expf(-age / 380.0f);
+        float turn = v->angle - 270.0f * (1.0f - expf(-age / 350.0f));
+        draw_rider(px, SKI_RIDER_X + slide, sy - 5.0f - bounce, turn, now_ms, 20.0f, true);
+        for (int i = 0; i < 3 && v->over_age_ms > 450U; ++i) {
+            float a = (float)now_ms * 0.012f + (float)i * 2.09f;
+            gfx_plot(px, (int)(SKI_RIDER_X + slide + cosf(a) * 7.0f), (int)(sy - 20.0f + sinf(a) * 2.0f), gfx_rgb565(0xFFE066));
+        }
+        const uint16_t puff = gfx_rgb565(t.snow_hi);
+        for (unsigned i = 0; i < 9U; ++i) {
+            uint32_t h = gfx_hash(i + 77U);
+            float r = (float)(h % 9U + 3U) * (1.0f - expf(-age / 200.0f)), a = (float)(h >> 8 & 255U) * 0.0245f;
+            if (v->over_age_ms < 700U) gfx_plot(px, (int)(SKI_RIDER_X + 4.0f + cosf(a) * r), (int)(sy - 4.0f - fabsf(sinf(a)) * r), puff);
+        }
+    } else {
+        draw_rider(px, SKI_RIDER_X, sy - 5.0f, v->angle, now_ms, (float)v->speed_pps, false);
+        if (v->grounded && v->phase == SKI_PLAY) { /* powder thrown up behind the board */
+            const uint16_t spray = gfx_rgb565(t.snow_hi);
+            for (unsigned i = 0; i < 7U; ++i) {
+                unsigned age = (now_ms / 35U + i * 5U) % 12U;
+                uint32_t h = gfx_hash(i * 19U + now_ms / 105U);
+                gfx_plot(px, (int)SKI_RIDER_X - 6 - (int)age * 3 / 2, (int)sy - 1 - (int)(age * (2U + h % 3U) / 7U), spray);
+            }
+        }
+        if (v->popup_points && v->popup_age_ms < 700U) { /* sparkles burst out of a landed flip */
+            const uint16_t gold = gfx_rgb565(0xFFE066), white = gfx_rgb565(0xFFFFFF);
+            for (unsigned i = 0; i < 12U; ++i) {
+                float a = (float)i * 0.5236f, r = 4.0f + (float)v->popup_age_ms * 0.025f;
+                gfx_plot(px, (int)(SKI_RIDER_X + cosf(a) * r), (int)(sy - 9.0f - sinf(a) * r * 0.8f), i & 1U ? gold : white);
+            }
+        }
+    }
+}
+static void sync_strips(state_t *s, const theme_t *t)
+{
+    if (s->sky_rgb != t->top) { lv_obj_set_style_bg_color(s->top, app_ui_color(t->top), LV_PART_MAIN); s->sky_rgb = t->top; }
+    if (s->snow_rgb != t->shade) { lv_obj_set_style_bg_color(s->bottom, app_ui_color(t->shade), LV_PART_MAIN); s->snow_rgb = t->shade; }
 }
 static void enter(app_context_t *ctx)
 {
@@ -91,77 +278,105 @@ static void tick(app_context_t *ctx)
     ski_tick(&s->game, ctx->now_ms);
     ski_view_t view;
     ski_snapshot(&s->game, &view);
-    status_t status = {view.phase, view.meters, view.best, view.lives, view.speed_pps};
-    portENTER_CRITICAL(&s_lock); s_status = status; portEXIT_CRITICAL(&s_lock);
+    portENTER_CRITICAL(&s_lock); s_status = view; portEXIT_CRITICAL(&s_lock);
 }
 static void leave(app_context_t *ctx)
 {
-    (void)ctx;
+    state_t *s = ctx->state;
+    if (s->plot) app_ui_plot_refresh(s->plot, &s->image); /* The shared canvas goes to the next app. */
     portENTER_CRITICAL(&s_lock); s_status.phase = (ski_phase_t)255; portEXIT_CRITICAL(&s_lock);
 }
 static void event(app_context_t *ctx, const app_event_t *e)
 {
     state_t *s = ctx->state;
-    if (e->kind == APP_EVENT_DOWN) (void)ski_press(&s->game, e->ms); /* turn on the press, not the release */
+    switch (e->kind) {
+    case APP_EVENT_DOWN: (void)ski_press(&s->game, e->ms); break;
+    case APP_EVENT_UP: case APP_EVENT_CANCEL: ski_release(&s->game, e->ms); break;
+    default: break; /* SHORT/CONFIRM are the same press seen again; the jump already happened on DOWN. */
+    }
+}
+static lv_obj_t *pill(lv_obj_t *parent, int x, int y, int w, int h, uint32_t rgb, unsigned opa)
+{
+    lv_obj_t *p = app_ui_rect(parent, x, y, w, h, rgb, 5);
+    lv_obj_set_style_bg_opa(p, (lv_opa_t)opa, LV_PART_MAIN);
+    return p;
+}
+static void build(state_t *s, lv_obj_t *root)
+{
+    s->top = app_ui_rect(root, 0, 0, APP_WIDTH, CANVAS_Y, THEMES[0].top, 0);
+    s->image.header.magic = LV_IMAGE_HEADER_MAGIC;
+    s->image.header.cf = LV_COLOR_FORMAT_RGB565;
+    s->image.header.w = APP_CANVAS_W; s->image.header.h = APP_CANVAS_H; s->image.header.stride = APP_CANVAS_W * 2;
+    s->image.data_size = APP_CANVAS_W * APP_CANVAS_H * 2; s->image.data = (const uint8_t *)app_ui_pixels();
+    s->plot = lv_image_create(root);
+    lv_obj_set_pos(s->plot, 0, CANVAS_Y);
+    lv_image_set_src(s->plot, &s->image);
+    s->bottom = app_ui_rect(root, 0, CANVAS_Y + APP_CANVAS_H, APP_WIDTH, APP_HEIGHT - CANVAS_Y - APP_CANVAS_H, THEMES[0].shade, 0);
+    s->sky_rgb = THEMES[0].top; s->snow_rgb = THEMES[0].shade;
+    s->score_pill = pill(root, 100, 10, 57, 15, 0x0B1630, 130);
+    s->score = app_ui_label(s->score_pill, &aihook_font_12, 3, 1, 51, 14, LV_LABEL_LONG_MODE_CLIP);
+    lv_obj_set_style_text_align(s->score, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
+    s->gem_pill = pill(root, 121, 27, 36, 15, 0x0B1630, 130);
+    app_ui_rect(s->gem_pill, 4, 4, 7, 7, 0x4FD8F5, 2);
+    s->gem_count = app_ui_label(s->gem_pill, &aihook_font_12, 14, 1, 20, 14, LV_LABEL_LONG_MODE_CLIP);
+    s->combo = pill(root, 4, 10, 62, 15, 0xC26A00, 200);
+    s->combo_text = app_ui_label(s->combo, &aihook_font_12, 4, 1, 56, 14, LV_LABEL_LONG_MODE_CLIP);
+    s->popup = pill(root, 8, 48, 100, 17, 0x0B1630, 190);
+    s->popup_text = app_ui_label(s->popup, &aihook_font_12, 3, 2, 94, 14, LV_LABEL_LONG_MODE_CLIP);
+    app_ui_center(s->popup_text);
+    lv_obj_set_style_text_color(s->popup_text, app_ui_color(0xFFE066), LV_PART_MAIN);
+    s->panel = pill(root, 58, 12, 100, 54, 0x0B1630, 205);
+    s->title = app_ui_label(s->panel, &aihook_font_16, 0, 4, 100, 20, LV_LABEL_LONG_MODE_CLIP);
+    s->line1 = app_ui_label(s->panel, &aihook_font_12, 0, 25, 100, 14, LV_LABEL_LONG_MODE_CLIP);
+    s->line2 = app_ui_label(s->panel, &aihook_font_12, 0, 38, 100, 14, LV_LABEL_LONG_MODE_CLIP);
+    app_ui_center(s->title); app_ui_center(s->line1); app_ui_center(s->line2);
+    lv_obj_set_style_text_color(s->line2, app_ui_color(APP_COLOR_MUTED), LV_PART_MAIN);
 }
 static void render(app_context_t *ctx)
 {
     state_t *s = ctx->state;
     ski_view_t v;
     ski_snapshot(&s->game, &v);
-    if (!s->built) build(s, ctx->root);
-    unsigned trees = 0, rocks = 0;
-    for (unsigned i = 0; i < v.count; ++i) {
-        const ski_sprite_t *sprite = &v.sprites[i];
-        if (sprite->kind == SKI_TREE && trees < TREE_POOL) {
-            lv_obj_t *obj = s->trees[trees];
-            if (s->tree_variant[trees] != sprite->variant + 1U) { style_tree(obj, sprite->variant); s->tree_variant[trees] = (uint8_t)(sprite->variant + 1U); }
-            int half = sprite->variant ? 4 : 5; /* canopy half height; the trunk hangs below it */
-            lv_obj_set_pos(obj, sprite->x - (sprite->variant ? 3 : 4), sprite->y - half);
-            lv_obj_set_pos(s->trunks[trees], sprite->x - 1, sprite->y + half);
-            app_ui_hide(obj, false);
-            app_ui_hide(s->trunks[trees], false);
-            ++trees;
-        } else if (sprite->kind == SKI_ROCK && rocks < ROCK_POOL) {
-            lv_obj_set_pos(s->rocks[rocks], sprite->x - 3, sprite->y - 2);
-            app_ui_hide(s->rocks[rocks], false);
-            ++rocks;
-        }
+    if (!s->plot) build(s, ctx->root);
+    char text[64];
+    const theme_t t = theme_at(v.x);
+    sync_strips(s, &t);
+    snprintf(text, sizeof text, "%05u", v.score);
+    app_ui_text(s->score, text);
+    lv_obj_set_style_text_color(s->score, app_ui_color(v.new_best ? APP_COLOR_ACCENT : APP_COLOR_TEXT), LV_PART_MAIN);
+    snprintf(text, sizeof text, "x%u", v.gems);
+    app_ui_text(s->gem_count, text);
+    bool play = v.phase == SKI_PLAY;
+    app_ui_hide(s->score_pill, !play);
+    app_ui_hide(s->gem_pill, !play || v.gems == 0);
+    app_ui_hide(s->combo, !play || v.combo < 2);
+    if (play && v.combo >= 2) {
+        snprintf(text, sizeof text, "连击 x%u", v.combo);
+        app_ui_text(s->combo_text, text);
     }
-    for (unsigned i = trees; i < TREE_POOL; ++i) { app_ui_hide(s->trees[i], true); app_ui_hide(s->trunks[i], true); }
-    for (unsigned i = rocks; i < ROCK_POOL; ++i) app_ui_hide(s->rocks[i], true);
-    for (unsigned i = 0; i < MARKS; ++i) /* Snow flecks sweep upwards at the speed of the slope. */
-        lv_obj_set_y(s->marks[i], (int)((i * 29U + 96U - v.scroll % 96U) % 96U) - 8);
-    if (s->drawn_dir != v.dir) { /* The lower halves of the skis lean into the turn. */
-        lv_obj_set_x(s->ski_lower[0], 2 + v.dir * 2);
-        lv_obj_set_x(s->ski_lower[1], 6 + v.dir * 2);
-        s->drawn_dir = (int8_t)v.dir;
+    app_ui_hide(s->popup, !(play && v.popup_points && v.popup_age_ms < 1500U));
+    if (play && v.popup_points) {
+        if (v.popup_perfect) snprintf(text, sizeof text, "完美翻转 +%u", v.popup_points);
+        else snprintf(text, sizeof text, "翻转 x%u +%u", v.popup_flips, v.popup_points);
+        app_ui_text(s->popup_text, text);
     }
-    lv_obj_set_pos(s->skier, (int)(v.skier_x + 0.5f) - 5, (int)SKI_SKIER_Y - 8);
-    app_ui_hide(s->skier, v.invulnerable && v.phase == SKI_PLAY && ((ctx->now_ms / 90U) & 1U)); /* blink after a crash */
-    bool yeti_visible = v.yeti_y > -6.0f;
-    app_ui_hide(s->yeti, !yeti_visible);
-    if (yeti_visible) lv_obj_set_pos(s->yeti, (int)(v.yeti_x + 0.5f) - 7, (int)(v.yeti_y + 0.5f) - 6);
-    for (unsigned i = 0; i < SKI_LIVES; ++i)
-        lv_obj_set_style_bg_color(s->pips[i], app_ui_color(i < v.lives ? 0xE5484D : 0xB8C6D6), LV_PART_MAIN);
-    char text[48];
-    snprintf(text, sizeof text, "%u米", v.meters);
-    app_ui_text(s->meters, text);
-    bool overlay = v.phase != SKI_PLAY;
-    app_ui_hide(s->panel, !overlay);
+    app_ui_hide(s->panel, play);
     if (v.phase == SKI_READY) {
-        app_ui_text(s->title, "滑雪冒险");
-        if (v.best) snprintf(text, sizeof text, "最远 %u米", v.best);
-        else snprintf(text, sizeof text, "避开树木 躲开雪怪");
-        app_ui_text(s->detail, text);
-        app_ui_text(s->hint, "按键开始 再按换向");
+        app_ui_text(s->title, "滑雪大冒险");
+        lv_obj_set_style_text_color(s->title, app_ui_color(APP_COLOR_ACCENT), LV_PART_MAIN);
+        app_ui_text(s->line1, "按键跳 按住翻转");
+        snprintf(text, sizeof text, "最高 %05u", v.best);
+        app_ui_text(s->line2, text);
     } else if (v.phase == SKI_OVER) {
-        app_ui_text(s->title, "被雪怪抓住!");
-        if (v.new_best) snprintf(text, sizeof text, "滑行 %u米 新纪录", v.meters);
-        else snprintf(text, sizeof text, "滑行 %u米 最远 %u", v.meters, v.best);
-        app_ui_text(s->detail, text);
-        app_ui_text(s->hint, v.can_restart ? "按键重来 / 三击菜单" : "");
+        app_ui_text(s->title, v.new_best ? "新纪录!" : v.crash == SKI_CRASH_ROCK ? "撞到石头" : v.crash == SKI_CRASH_FALL ? "掉进冰缝" : "落地失败");
+        lv_obj_set_style_text_color(s->title, app_ui_color(v.new_best ? APP_COLOR_ACCENT : 0xFF8A7A), LV_PART_MAIN);
+        snprintf(text, sizeof text, "得分 %u  翻转 %u", v.score, v.flips);
+        app_ui_text(s->line1, text);
+        snprintf(text, sizeof text, v.can_restart ? "按键重来 三击菜单" : "最高 %05u", v.best);
+        app_ui_text(s->line2, text);
     }
+    draw_scene(app_ui_pixels(), &v, (unsigned)ctx->now_ms);
+    app_ui_plot_refresh(s->plot, &s->image);
 }
 static bool command(const char *line)
 {
@@ -171,23 +386,31 @@ static bool command(const char *line)
     }
     if (!strcmp(line, "robot ski stop")) { (void)app_runtime_menu(); return true; }
     if (strcmp(line, "robot ski status")) return false;
-    status_t v;
+    ski_view_t v;
     portENTER_CRITICAL(&s_lock); v = s_status; portEXIT_CRITICAL(&s_lock);
     char reply[120];
-    snprintf(reply, sizeof reply, "phase=%u meters=%u best=%u lives=%u speed=%u", (unsigned)v.phase, v.meters, v.best, v.lives, v.speed);
+    snprintf(reply, sizeof reply, "phase=%u score=%u best=%u flips=%u gems=%u speed=%u", (unsigned)v.phase, v.score, v.best, v.flips,
+             v.gems, v.speed_pps);
     (void)app_transport_write(reply);
     return true;
 }
 static void icon(void *parent, int x, int y, bool selected)
 {
-    app_ui_rect(parent, x + 1, y + 1, 26, 26, selected ? APP_COLOR_ACCENT : 0xDCE9F5, 5); /* snow */
-    app_ui_rect(parent, x + 5, y + 14, 6, 9, 0x1F6F4A, 3);                                 /* tree */
-    app_ui_rect(parent, x + 8, y + 3, 5, 5, 0xFFD0A6, 2);                                  /* head */
-    app_ui_rect(parent, x + 7, y + 8, 7, 6, 0xE5484D, 2);                                  /* jacket */
-    app_ui_rect(parent, x + 7, y + 14, 2, 8, 0x203040, 0);                                 /* skis */
-    app_ui_rect(parent, x + 12, y + 14, 2, 8, 0x203040, 0);
-    app_ui_rect(parent, x + 19, y + 11, 6, 12, 0x2E9E63, 3);                               /* second tree */
+    /* A night slope with a moon, a pine and a rider in the air. */
+    app_ui_rect(parent, x + 1, y + 2, 27, 25, 0x1B2A5C, 4);
+    app_ui_rect(parent, x + 19, y + 5, 6, 6, 0xEEF3FF, 3);
+    app_ui_rect(parent, x + 21, y + 4, 5, 5, 0x1B2A5C, 3);
+    app_ui_rect(parent, x + 3, y + 12, 5, 1, 0x2F6066, 0);  /* pine */
+    app_ui_rect(parent, x + 4, y + 10, 3, 2, 0x2F6066, 0);
+    app_ui_rect(parent, x + 5, y + 8, 1, 2, 0x2F6066, 0);
+    for (int i = 0; i < 13; ++i) { /* the slope falls to the right */
+        int top = y + 17 + i / 2;
+        app_ui_rect(parent, x + 1 + i * 2, top, 2, y + 27 - top + 1, i & 1 ? 0xDCE9F8 : 0xFFFFFF, 0);
+    }
+    app_ui_rect(parent, x + 8, y + 12, 10, 2, 0xE8503A, 1);                         /* board */
+    app_ui_rect(parent, x + 11, y + 6, 3, 6, selected ? APP_COLOR_ACCENT : 0xF2B92B, 1); /* body */
+    app_ui_rect(parent, x + 11, y + 3, 4, 4, 0xF3C6A0, 2);                          /* head */
 }
 const app_descriptor_t esphook_app_ski = {.api_version = APP_API_VERSION, .id = "ski", .title = "滑雪冒险",
-    .refresh_ms = 50, .state_size = sizeof(state_t), .on_enter = enter, .on_leave = leave, .on_event = event,
+    .refresh_ms = 33, .state_size = sizeof(state_t), .on_enter = enter, .on_leave = leave, .on_event = event,
     .on_tick = tick, .render = render, .icon = icon, .command = command};

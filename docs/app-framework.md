@@ -24,6 +24,7 @@ idf.py build
 | `framework/core/app_keys.c` | 实体/USB 输入合并、映射与 USB 租期取消 |
 | `framework/core/app_input.c` | 25ms 消抖、500ms 确认、800ms 三击、松手消费 |
 | `framework/include/esphook/app_ui.h` | LVGL 标签、矩形、图层、字体、确认圆与共享 RGB565 画布 |
+| `framework/include/esphook/app_gfx.h` | 画布软件绘图：线/圆/渐变（抖动）、半透明叠加、调色板点阵、山脉/云/太阳，只在 UI 任务调用 |
 | `framework/include/esphook/app_services.h` | 雷达、舵机、Hook、显示协议、设备信息、时钟、随机数、PC 事件 |
 | `framework/ports/esp32` | RTOS 队列、NVS 适配、异步 Hook 回传、LVGL 与 LCD 输出 |
 | `framework/services` | Hook 通知模型、人体跟随/校准、显示协议与雷达投影 |
@@ -62,7 +63,7 @@ const app_descriptor_t esphook_app_counter = {
 
 除 init 和 command 外，回调都由 UI 任务调用。导航 `app_open/menu/idle` 延迟到回调返回提交；不允许把 ctx 或事件临时指针留给后台任务。回调中不等待、联网或执行长计算；传输模型需要跨任务时独立同步，例如 stock_transport 的互斥锁。
 
-所有应用共用 2048 字节会话区，而不是每个应用预留一份。雷达和 K 线共用 15,360 字节像素缓冲。共享画布每次使用都重绘，切出前清理图片缓存，参见雷达/股票的 on_leave。常驻股票上传暂存区仍在应用自己的 transport 中，只有完整数据才提交。
+所有应用共用 2048 字节会话区，而不是每个应用预留一份。雷达、K 线、小恐龙、滑雪和投篮共用 160×64 的 20,480 字节像素缓冲（`APP_CANVAS_W/H`；雷达和 K 线只用其中 160×48），整屏重绘的游戏用 `app_gfx.h` 里的有裁剪绘图函数。共享画布每次使用都重绘，切出前清理图片缓存，参见雷达/股票的 on_leave。常驻股票上传暂存区仍在应用自己的 transport 中，只有完整数据才提交。
 
 ## 注册与应用配置
 
@@ -110,9 +111,9 @@ Hook 的 HTTP `/notify`、`/dismiss`、配对、鉴权和 device link 协议保�
 | 应用 | 实现 |
 | --- | --- |
 | 表情 | 自动眼睛动画、自定义表情/文字、人体方向状态 |
-| 投篮 | 设备端纯 C 规则，两分钟、随机速度、计分 |
-| 小恐龙 | 单键跳跃跑酷；纯 C 固定步长规则，共享画布点阵绘制，见 [robot-dino.md](robot-dino.md) |
-| 滑雪冒险 | 单键下滑躲树；安全线保证可通过的雪道，LVGL 对象池，见 [robot-ski.md](robot-ski.md) |
+| 投篮 | 设备端纯 C 规则，两分钟、随机速度、计分；共享画布绘制竞技场、篮网、火花，见 [robot-basketball.md](robot-basketball.md) |
+| 小恐龙 | 单键跳跃跑酷；轻点即可越过地面障碍；纯 C 固定步长规则，共享画布点阵绘制（昼夜、视差、尘土），见 [robot-dino.md](robot-dino.md) |
+| 滑雪大冒险 | 横版下坡，单键起跳、空中按住连续翻转、翻圈加分；纯 C 规则，共享画布绘制，见 [robot-ski.md](robot-ski.md) |
 | 做 T | PC 行情/均线/交易/结算；设备端 RAM 数据、图表和按键协议 |
 | 雷达 | 三目标扇形调试图，服务快照 |
 | Hook | 通知展示、未读信息、选择回复词及确认回传 |
@@ -154,6 +155,6 @@ git clone --depth 1 --branch v9.5.0 https://github.com/lvgl/lvgl.git /tmp/esphoo
 LVGL_SOURCE_DIR=/tmp/esphook-lvgl ./scripts/test-app-ui.sh
 ```
 
-它使用现有 fontdata 和 64KB LVGL 堆，遍历所有 manifest 应用、重复切换、检查根节点释放、设置持久化回调与 PC 消息，并实际玩一遍小恐龙和滑雪（起跳/转向、结束、重开）；每次截图前检查屏幕上每个 label 的每个字都在固件字库里（缺字会显示成空白），并断言 LVGL 堆占用低于 80%（可设 `ESPHOOK_HEAP_REPORT=1` 打印各应用占用）。输出 PPM 屏幕帧。CI 上传这些帧，额外构建 ESP-IDF 5.5.4 默认通用配置与禁用机器人驱动的旧 Hook 配置。可选应用的完整硬件行为仍需要实机确认；主机 UI 测试不会驱动舵机，也不能证明实际 FPS。
+它使用现有 fontdata 和 64KB LVGL 堆，遍历所有 manifest 应用、重复切换、检查根节点释放、设置持久化回调与 PC 消息，并实际玩一遍投篮（出手、命中/未进、时间到结算）、小恐龙和滑雪（起跳/翻转、落地、结束、重开）；每次截图前检查屏幕上每个 label 的每个字都在固件字库里（缺字会显示成空白），并断言 LVGL 堆占用低于 80%（可设 `ESPHOOK_HEAP_REPORT=1` 打印各应用占用）。输出 PPM 屏幕帧。CI 上传这些帧，额外构建 ESP-IDF 5.5.4 默认通用配置与禁用机器人驱动的旧 Hook 配置。可选应用的完整硬件行为仍需要实机确认；主机 UI 测试不会驱动舵机，也不能证明实际 FPS。
 
 `APP_UI_BUILD_DIR` / `APP_UI_FRAMES_DIR` 可覆盖无屏测试目录。CI 的固件尺寸检查沿用两个 OTA 槽；先看实际体积再决定是否取消 OTA。未新增固件图片或大型游戏依赖。

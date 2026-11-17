@@ -95,4 +95,4 @@ keymap ACK 的 mapping 是已持久化配置，usb_lease_ms 为 350。physical/u
 
 hold/press/poll 每 100ms 续期；手动 key_down 后须持续 poll 或重复 key_down。超时发 CANCEL，释放后不补发 SHORT/CONFIRM。实体/USB 多来源按住合并，一方释放不会松开另一方。close 与窗口失焦取消 USB 键；GameLink 使用相同连接调用这些接口，不占第二个串口。stock 真机只接受设备确认，CANCEL 恢复暂停而不交易。
 
-hardware ACK 的 hardware 含 active/configured/restart_required/drivers_compiled/physical_keys、screen/radar/servo、radar_frames 和 usb_tx_drops。状态为 unknown、initialized_connection_unknown、not_detected、detected、disabled 或 error。初始化成功不代表设备实物接入；只有有效雷达帧可确认检测。auto 默认不初始化 PWM，robot 需保存后重启并显式 arm；旧屏幕设备可选 screen。详见 [发布指南](release-kit.md)。
+hardware ACK 的 hardware 含 active/configured/restart_required/drivers_compiled/physical_keys、screen/radar/servo、radar_frames、usb_tx_drops，以及 heap_free / heap_min（当前空闲堆和开机以来的最低空闲堆，字节）。状态为 unknown、initialized_connection_unknown、not_detected、detected、disabled 或 error。初始化成功不代表设备实物接入；只有有效雷达帧可确认检测。auto 默认不初始化 PWM，robot 需保存后重启并显式 arm；旧屏幕设备可选 screen。详见 [发布指南](release-kit.md)。

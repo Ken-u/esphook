@@ -18,7 +18,10 @@ void app_ui_hide(lv_obj_t *obj, bool hide);
 void app_ui_center(lv_obj_t *obj);
 lv_obj_t *app_ui_ring(lv_obj_t *parent, int x, int y, int size);
 void app_ui_progress(lv_obj_t *ring, unsigned ms);
-/* One framework-owned 160x48 RGB565 scratch canvas, reused between applications.
- * Repaint before invalidating the image; never retain across an app transition. */
+/* One framework-owned RGB565 scratch canvas of APP_CANVAS_W x APP_CANVAS_H, reused between applications.
+ * Radar and stock use its first 48 rows, games use all of it. Repaint before invalidating the image;
+ * never retain across an app transition. */
+#define APP_CANVAS_W 160
+#define APP_CANVAS_H 64
 uint16_t *app_ui_pixels(void);
 void app_ui_plot_refresh(lv_obj_t *image, const lv_image_dsc_t *descriptor);

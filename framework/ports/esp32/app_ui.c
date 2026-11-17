@@ -1,7 +1,7 @@
 #include "app_ui.h"
 #include "src/misc/cache/instance/lv_image_cache.h"
 #include <string.h>
-static uint16_t s_pixels[APP_WIDTH * 48];
+static uint16_t s_pixels[APP_CANVAS_W * APP_CANVAS_H];
 uint16_t *app_ui_pixels(void) { return s_pixels; }
 lv_color_t app_ui_color(uint32_t rgb) { return lv_color_hex(rgb); }
 void app_ui_plain(lv_obj_t *obj)
