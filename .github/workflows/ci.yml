@@ -58,6 +58,8 @@ jobs:
         run: ./scripts/test-app-time.sh
       - name: Test shared app maths, random and fixed steps
         run: ./scripts/test-app-util.sh
+      - name: Test persistent best scores
+        run: ./scripts/test-app-best.sh
       - name: Test lucky slip game
         run: ./scripts/test-fortune.sh
       - name: Test framework alarm registry

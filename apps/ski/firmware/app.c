@@ -3,6 +3,7 @@
 #include "esphook/app_ui.h"
 #include "esphook/app_services.h"
 #include "ski_game.h"
+#include "esphook/app_best.h"
 #include "esphook/app_command.h"
 #include "esphook/app_sync.h"
 #include <math.h>
@@ -271,6 +272,7 @@ static void enter(app_context_t *ctx)
 {
     state_t *s = ctx->state;
     ski_start(&s->game, ctx->now_ms, app_random());
+    s->game.best = app_best_get(ctx); /* the record survives leaving the game and a reboot */
     /* Jumping and spinning are done with the key, and a press starts a run: three quick presses are never an exit.
      * Holding it for three seconds (a spin ends long before that) is. */
     app_set_triple_exit(ctx, false);
@@ -282,6 +284,7 @@ static void tick(app_context_t *ctx)
     ski_tick(&s->game, ctx->now_ms);
     ski_view_t view;
     ski_snapshot(&s->game, &view);
+    if (view.phase == SKI_OVER) (void)app_best_record(ctx, view.best);
     app_shared_copy(s_status, view);
 }
 static void leave(app_context_t *ctx)

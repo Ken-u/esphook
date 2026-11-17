@@ -54,6 +54,22 @@ void app_select_next(app_context_t *c)
 { size_t n = app_count(c); if (n) c->manager->selected = (c->manager->selected + 1) % n; }
 void app_set_triple_exit(app_context_t *c, bool enabled) { c->manager->triple_blocked = !enabled; }
 bool app_triple_exit(const app_context_t *c) { return !c->manager->triple_blocked; }
+/* The double click works wherever the triple exit does: an app that is played by mashing the key has no use for either. */
+void app_set_double_back(app_context_t *c, bool enabled) { c->manager->double_blocked = !enabled; }
+bool app_double_back(const app_context_t *c) { return !c->manager->double_blocked && !c->manager->triple_blocked; }
+/* "Back" from an app is the app before it; from the menu it is the app the menu was opened from. */
+static const app_recent_t *back_target(const app_manager_t *m, bool from_menu)
+{
+    const app_recent_t *r = &m->recent[from_menu ? 0 : 1];
+    return r->valid ? r : NULL;
+}
+bool app_back(app_context_t *c)
+{
+    const app_recent_t *r = back_target(c->manager, c->manager->active == c->manager->launcher);
+    if (!r) return false;
+    request(c, r->app, r->idle);
+    return true;
+}
 void app_set_exit_hold(app_context_t *c, unsigned ms)
 {
     app_manager_t *m = c->manager;
@@ -79,7 +95,12 @@ void app_manager_commit(app_manager_t *m)
         if (m->platform.release_services) m->platform.release_services(m->context.app->id, m->platform.user);
         if (m->context.root && m->platform.scene_delete) m->platform.scene_delete(m->context.root, m->platform.user);
     }
-    m->active = target; m->idle = idle; m->triple_blocked = false; m->exit_hold_ms = 0; m->exit_armed = false;
+    m->active = target; m->idle = idle; m->triple_blocked = false; m->double_blocked = false; m->exit_hold_ms = 0; m->exit_armed = false;
+    m->dbl_pending = false; /* a double click that was waiting for its quiet moment belongs to the screen it was made on */
+    if (target != m->launcher) {
+        if (!m->recent[0].valid || m->recent[0].app != target) { m->recent[1] = m->recent[0]; m->recent[0].app = target; m->recent[0].valid = true; }
+        m->recent[0].idle = idle;
+    }
     memset(&m->storage, 0, sizeof m->storage);
     m->context.app = m->catalog[target]; m->context.standby = idle;
     m->context.state = m->storage.bytes;
@@ -111,7 +132,7 @@ bool app_manager_init(app_manager_t *m, const app_descriptor_t *const *catalog,
     }
     size_t launcher = find(m, APP_LAUNCHER), standby = find(m, standby_id);
     if (launcher == count || standby == count || !(catalog[standby]->flags & APP_STANDBY)) return false;
-    m->standby = standby; m->context.manager = m; m->context.now_ms = ms;
+    m->launcher = launcher; m->standby = standby; m->context.manager = m; m->context.now_ms = ms;
     request(&m->context, standby, true); app_manager_commit(m); return true;
 }
 void app_manager_event(app_manager_t *m, const app_event_t *e)
@@ -137,15 +158,45 @@ static void dispatch(app_manager_t *m, unsigned key, unsigned actions, uint64_t 
         if (m->pending_set) { app_manager_commit(m); break; }
     }
 }
+/* Double click, K1 only: two clicks no more than APP_DOUBLE_MS apart, then a quiet moment of the same length. The
+ * quiet moment is what keeps a quick triple press a triple (the menu) instead of a double that left first; both
+ * clicks reach the app as ordinary presses, and only then is it taken back. The gesture is measured from the screen it
+ * began on: the first click of a double on a screen that opens the menu on a click (the standby screen, radar) must
+ * not make "back" mean the app that click has just left. */
+static void double_press(app_manager_t *m, uint64_t ms)
+{
+    m->dbl_pending = false; /* a further press: whatever the pair was, it is no double (three of them are the menu) */
+    if (m->triple_blocked || m->double_blocked) { m->dbl_clicks = 0; return; }
+    if (m->dbl_clicks == 1 && ms >= m->dbl_first_ms && ms - m->dbl_first_ms <= APP_DOUBLE_MS) { m->dbl_clicks = 2; return; }
+    m->dbl_clicks = 1; m->dbl_first_ms = ms;
+    m->dbl_launcher = m->active == m->launcher; m->dbl_selected = m->selected;
+}
+static void double_release(app_manager_t *m, unsigned action, uint64_t ms)
+{
+    if (!(action & INPUT_SHORT)) { m->dbl_clicks = 0; return; } /* a hold, or the press that was the menu, is not a click */
+    if (m->dbl_clicks == 2) { m->dbl_pending = true; m->dbl_due_ms = ms + APP_DOUBLE_MS; }
+}
+static void double_fire(app_manager_t *m, uint64_t ms)
+{
+    m->dbl_pending = false; m->dbl_clicks = 0;
+    if (m->triple_blocked || m->double_blocked) return; /* the app on screen has opted out since */
+    const app_recent_t *r = back_target(m, m->dbl_launcher);
+    if (!r) return; /* nothing to go back to: the pair of clicks stays what it was */
+    if (m->active == m->launcher) m->selected = m->dbl_selected; /* the clicks that were a double must not have moved the menu cursor */
+    request(&m->context, r->app, r->idle);
+    m->activity_ms = ms; m->dirty = true;
+    app_manager_commit(m);
+}
 void app_manager_key(app_manager_t *m, unsigned key, bool down, uint64_t ms)
 {
     if (!m->ready || key >= 3) return;
     if (key || m->triple_blocked) m->input[key].clicks = 0; /* Triple navigation belongs only to K1, and an app may switch it off. */
     const bool was_down = m->input[key].down;
     unsigned action = app_input_edge(&m->input[key], down, ms);
-    if (!key && down && !was_down) m->exit_armed = m->exit_hold_ms != 0; /* only a press that began with the exit hold on counts */
+    if (!key && down && !was_down) { m->exit_armed = m->exit_hold_ms != 0; double_press(m, ms); } /* only a press that began with the exit hold on counts */
     if (key) action &= ~INPUT_MENU;
     dispatch(m, key, action, ms);
+    if (!key && !down && was_down) double_release(m, action, ms);
 }
 /* The alarm registry (app_alarm.h) is looked at a few times a second. What starts opens its target app, whatever is on
  * screen, and the target is told right after it has been entered (see announce_alarm). */
@@ -190,6 +241,7 @@ void app_manager_tick(app_manager_t *m, uint64_t ms)
         app_menu(&m->context); app_manager_commit(m); /* the commit consumes the held key, so its release does nothing */
         return;
     }
+    if (m->dbl_pending && ms >= m->dbl_due_ms && !m->input[0].down) { double_fire(m, ms); return; }
     for (unsigned key = 0; key < 3; ++key) dispatch(m, key, app_input_tick(&m->input[key], ms), ms);
     if (!strcmp(app_active_id(&m->context), APP_LAUNCHER) && ms >= m->activity_ms &&
         ms - m->activity_ms >= APP_MENU_IDLE_MS) app_idle(&m->context);
@@ -202,6 +254,7 @@ void app_manager_cancel_key(app_manager_t *m,unsigned key,uint64_t ms)
     if(!m->ready || key>=3) return;
     bool notify=m->input[key].down && !m->input[key].blocked;
     memset(&m->input[key],0,sizeof m->input[key]);
+    if(!key) { m->dbl_clicks=0;m->dbl_pending=false; } /* a cancelled press is no click */
     if(notify) { app_event_t e={.kind=APP_EVENT_CANCEL,.key=key,.ms=ms};app_manager_event(m,&e); }
 }
 void app_manager_render(app_manager_t *m)

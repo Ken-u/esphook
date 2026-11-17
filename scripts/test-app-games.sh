@@ -13,6 +13,7 @@ trap 'rm -f "$app_test_bin"' EXIT
 #include "esphook/app_rand.h"
 #include "esphook/app_sync.h"
 #include "esphook/app_command.h"
+#include "esphook/app_best.h"
 EOF
 "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -pedantic -g \
   -fsanitize=address,undefined -fno-omit-frame-pointer \

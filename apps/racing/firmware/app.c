@@ -4,6 +4,7 @@
 #include "esphook/app_services.h"
 #include "esphook/app_steer.h"
 #include "esphook/app_ui.h"
+#include "esphook/app_best.h"
 #include "esphook/app_command.h"
 #include "esphook/app_sync.h"
 #include "racing_core.h"
@@ -440,6 +441,7 @@ static void enter(app_context_t *ctx)
 {
     state_t *s = ctx->state;
     rc_init(&s->core, app_random() ^ (uint32_t)ctx->now_ms);
+    s->core.best = app_best_get(ctx); /* the record survives leaving the game and a reboot */
     steer_init(&s->steer);
     haptic_init(&s->haptic);
     s->last_ms = ctx->now_ms;
@@ -470,6 +472,7 @@ static void tick(app_context_t *ctx)
     sync_exit(ctx, s);
     rc_advance(&s->core, dt);
     s->last_ms = now;
+    if (s->core.phase == RC_OVER) (void)app_best_record(ctx, s->core.best);
     s->bg16 -= (int)((int64_t)rc_curve_at(&s->core, s->core.pos_mm) * (int)rc_speed_kmh(&s->core) * (int)(dt > 200U ? 200U : dt) / 165000);
     app_servo_t sv;
     app_servo_read(&sv);

@@ -63,16 +63,16 @@ void app_time_read(app_time_t *t)
     if(fake_clock.set) app_time_from_epoch(fake_clock.epoch+(uint32_t)((manager.context.now_ms-fake_clock.base_ms)/1000U),fake_clock.tz,t);
 }
 bool app_time_set(uint32_t epoch,int tz) { fake_clock.set=true;fake_clock.epoch=epoch;fake_clock.tz=tz;fake_clock.base_ms=manager.context.now_ms;return epoch>=APP_EPOCH_MIN; }
-static struct { char key[16];unsigned char data[APP_STORAGE_MAX];size_t size; } storage[8];
+static struct { char key[16];unsigned char data[APP_STORAGE_MAX];size_t size; } storage[16];
 bool app_storage_load(const char *key,void *out,size_t size)
 {
-    for(unsigned i=0;i<8;++i) if(!strcmp(storage[i].key,key) && storage[i].size==size) { memcpy(out,storage[i].data,size);return true; }
+    for(unsigned i=0;i<16;++i) if(!strcmp(storage[i].key,key) && storage[i].size==size) { memcpy(out,storage[i].data,size);return true; }
     return false;
 }
 bool app_storage_save(const char *key,const void *data,size_t size)
 {
     assert(size && size<=APP_STORAGE_MAX && strlen(key)<16);
-    for(unsigned i=0;i<8;++i) if(!storage[i].key[0] || !strcmp(storage[i].key,key)) { strcpy(storage[i].key,key);memcpy(storage[i].data,data,size);storage[i].size=size;return true; }
+    for(unsigned i=0;i<16;++i) if(!storage[i].key[0] || !strcmp(storage[i].key,key)) { strcpy(storage[i].key,key);memcpy(storage[i].data,data,size);storage[i].size=size;return true; }
     return false;
 }
 bool app_transport_write(const char *s) { snprintf(output,sizeof output,"%s",s);return true; }
@@ -223,6 +223,56 @@ static void play_basketball(const char *out)
 }
 #endif
 #ifdef ESPHOOK_TEST_DINO
+/* The menu is an iPod-style list: the title and "n/N" of the selected app are on screen at every step, the list scrolls
+ * one row at a time and comes round again at the end, and holding the key fills the bar without ever leaving the menu
+ * before the half second is up. Frames: the top, the scrolling edge, the last page, and a hold half way. */
+static void check_menu(const char *out)
+{
+    const size_t total=app_count(&manager.context);
+    assert(total>4 && !strcmp(app_active_id(&manager.context),"launcher"));
+    const size_t first=app_selection(&manager.context);
+    for(size_t i=0;i<=total;++i) {
+        const size_t sel=app_selection(&manager.context);
+        char count[16];snprintf(count,sizeof count,"%u/%u",(unsigned)sel+1U,(unsigned)total);
+        run(300);
+        assert(shows_text(lv_screen_active(),count) && shows_text(lv_screen_active(),app_at(&manager.context,sel)->title));
+        if(i==0||i==2||i==3||i==4||i==9||i==total-1) { char name[64];snprintf(name,sizeof name,"launcher-%zu",i);dump(out,name); }
+        event(APP_EVENT_SHORT);assert(!strcmp(app_active_id(&manager.context),"launcher"));
+        if(i==3) { run(60);dump(out,"launcher-scroll-mid"); } /* the list sliding up one row under the bar */
+    }
+    assert(app_selection(&manager.context)==(first+1U)%total); /* total + 1 presses: once round and one more */
+    k1(true);run(250);dump(out,"launcher-hold-half");assert(!strcmp(app_active_id(&manager.context),"launcher"));
+    run(400);assert(strcmp(app_active_id(&manager.context),"launcher")); /* the half second is up: the selected app opens */
+    k1(false);run(100);
+    assert(app_open(&manager.context,APP_LAUNCHER));app_manager_commit(&manager);run(20);
+}
+/* The best score outlives the game (app_best.h): a game that finished a run is left and entered again, and its record is
+ * still on the title screen; a game that was never finished has none. Entering the others in between makes the framework
+ * read the store again instead of answering from its RAM copy, which is also what a reboot looks like. */
+static void check_records(void)
+{
+    static const struct { const char *id,*line; bool exact; } games[]={
+        {"dino","robot dino status",true},{"ski","robot ski status",true},{"starship","robot starship status",false},
+        {"racing","robot racing status",false},{"miner","robot miner status",false},{"jump","robot jump status",false},
+        {"zombie","robot zombie status",false}};
+    unsigned before[sizeof games/sizeof games[0]]={0};
+    unsigned played=0;
+    for(unsigned i=0;i<sizeof games/sizeof games[0];++i) {
+        if(!app_find(&manager.context,games[i].id)) continue;
+        assert(app_open(&manager.context,games[i].id));app_manager_commit(&manager);run(60);
+        before[i]=game_status(games[i].id,games[i].line,"best=");
+        assert(before[i]>0);++played;
+        assert(app_open(&manager.context,APP_LAUNCHER));app_manager_commit(&manager);run(30);
+    }
+    for(unsigned i=0;i<sizeof games/sizeof games[0];++i) {
+        if(!app_find(&manager.context,games[i].id)) continue;
+        assert(app_open(&manager.context,games[i].id));app_manager_commit(&manager);run(60);
+        const unsigned again=game_status(games[i].id,games[i].line,"best=");
+        assert(again>0 && again<=before[i] && (!games[i].exact || again==before[i]));
+        assert(app_open(&manager.context,APP_LAUNCHER));app_manager_commit(&manager);run(30);
+    }
+    assert(played>0);
+}
 /* Plays a few seconds: jump, run towards the first obstacle without jumping, crash. Frames are for eyes only. */
 static void play_dino(const char *out)
 {
@@ -1242,6 +1292,7 @@ int main(int argc,char **argv)
 #ifdef ESPHOOK_TEST_MIRROR
     play_mirror(out);
 #endif
+    check_records();
     assert(app_open(&manager.context,"settings"));app_manager_commit(&manager);run(20);
     event(APP_EVENT_SHORT);event(APP_EVENT_SHORT);event(APP_EVENT_SHORT);event(APP_EVENT_CONFIRM);
     event(APP_EVENT_SHORT);event(APP_EVENT_CONFIRM);assert(standby[0] && strcmp(standby,"face"));dump(out,"settings-standby");
@@ -1250,10 +1301,7 @@ int main(int argc,char **argv)
     assert(hardware_profile==APP_PROFILE_AUTO && restarts==0);
     event(APP_EVENT_CONFIRM);assert(restarts==1);
     assert(app_open(&manager.context,"launcher"));app_manager_commit(&manager);run(20);
-    for(size_t i=0;i<app_count(&manager.context);++i) {
-        event(APP_EVENT_SHORT);assert(!strcmp(app_active_id(&manager.context),"launcher"));
-        if(i%3==0) { char name[64];snprintf(name,sizeof name,"launcher-page%zu",i/3+1);run(300);dump(out,name); } /* icons of every page */
-    }
+    check_menu(out);
 #ifdef ESPHOOK_TEST_DEMO
     assert(app_open(&manager.context,"demo"));app_manager_commit(&manager);event(APP_EVENT_SHORT);
     app_event_t message={.kind=APP_EVENT_MESSAGE,.text="{\"text\":\"PC 自定义标题\"}",.ms=manager.context.now_ms};app_manager_event(&manager,&message);run(20);dump(out,"demo-message");

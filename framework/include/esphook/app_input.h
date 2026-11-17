@@ -5,6 +5,7 @@
 #define APP_DEBOUNCE_MS 25U
 #define APP_CONFIRM_MS 500U
 #define APP_TRIPLE_MS 800U
+#define APP_DOUBLE_MS 300U /* two clicks at most this far apart (and no third within it afterwards) are a double click */
 #define APP_MENU_IDLE_MS 10000U
 
 enum { INPUT_DOWN = 1, INPUT_UP = 2, INPUT_SHORT = 4, INPUT_CONFIRM = 8, INPUT_MENU = 16 };

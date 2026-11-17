@@ -2,6 +2,7 @@
 #include "esphook/app_gfx.h"
 #include "esphook/app_services.h"
 #include "esphook/app_ui.h"
+#include "esphook/app_best.h"
 #include "esphook/app_command.h"
 #include "esphook/app_sync.h"
 #include "miner_core.h"
@@ -238,6 +239,7 @@ static void enter(app_context_t *ctx)
 {
     state_t *s = ctx->state;
     mn_init(&s->core, app_random() ^ (uint32_t)ctx->now_ms);
+    s->core.best = app_best_get(ctx); /* the record survives leaving the game and a reboot */
     s->last_ms = ctx->now_ms;
     /* The claw is fired by a tap: three quick taps are never an exit, holding the key for two seconds is. */
     app_set_triple_exit(ctx, false);
@@ -260,6 +262,7 @@ static void tick(app_context_t *ctx)
     if (dt > 100U) dt = 100U; /* a stall must not throw the claw across the mine */
     const unsigned before = s->core.phase;
     mn_advance(&s->core, dt);
+    if (s->core.phase == MN_CLEAR || s->core.phase == MN_OVER) (void)app_best_record(ctx, s->core.best);
     if (before != s->core.phase) publish(s, true, false);
 }
 static void event(app_context_t *ctx, const app_event_t *e)

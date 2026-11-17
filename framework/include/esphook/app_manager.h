@@ -3,10 +3,21 @@
 #include "app_alarm.h"
 
 
+/* An app that was on screen: which one, and whether as the standby screen (idle) or opened on purpose. */
+typedef struct { size_t app; bool idle, valid; } app_recent_t;
+
 struct app_manager {
     const app_descriptor_t *const *catalog;
-    size_t catalog_count, active, standby, selected, pending;
-    bool idle, pending_idle, pending_set, ready, dirty, triple_blocked, exit_armed;
+    size_t catalog_count, active, standby, selected, pending, launcher;
+    bool idle, pending_idle, pending_set, ready, dirty, triple_blocked, double_blocked, exit_armed;
+    /* The last two apps other than the menu, newest first: where "back" goes (see app_back). */
+    app_recent_t recent[2];
+    /* A double click in the making. It outlives app changes on purpose: the first click of a double on the standby
+     * screen is what opens the menu. `dbl_launcher` and `dbl_selected` are what the first click found. */
+    bool dbl_pending, dbl_launcher;
+    unsigned dbl_clicks;
+    uint64_t dbl_first_ms, dbl_due_ms;
+    size_t dbl_selected;
     uint64_t activity_ms, rendered_ms, alarm_ms;
     unsigned exit_hold_ms, alarm_id; /* alarm_id: an alarm that started and has not been announced to its app yet */
     app_input_t input[3];

@@ -149,6 +149,89 @@ static void time_protocol(void)
         "{\"v\":1,\"seq\":6,\"op\":\"time\",\"epoch\":5000000000,\"tz_min\":480}"};
     for(unsigned i=0;i<sizeof bad/sizeof bad[0];++i) assert(!app_protocol_parse(bad[i],strlen(bad[i]),&r));
 }
+/* Back and the double click. History: the last two apps other than the menu. Gesture: two clicks <= 300 ms apart, then a
+ * quiet 300 ms, so that a quick triple press stays the menu. */
+static void click(app_manager_t *m,uint64_t t) { key(m,true,t);key(m,false,t+40); }
+static void reopen(app_manager_t *m,const char *id) { assert(app_open(&m->context,id));app_manager_commit(m);active(m,id); }
+static void back_and_double(void)
+{
+    app_platform_t p={.scene_create=scene2,.scene_delete=destroy2};
+    app_manager_t d;assert(app_manager_init(&d,apps,4,&p,"face",0));active(&d,"face");assert(d.idle);
+    uint64_t t=1000;
+    /* nothing to go back to right after boot, and the API says so */
+    assert(!app_back(&d.context) && app_double_back(&d.context));
+    click(&d,t);active(&d,"launcher"); /* a click wakes the menu */
+    t+=200;click(&d,t);app_manager_tick(&d,t+400);active(&d,"launcher"); /* a double with no history is just two clicks */
+    /* from the menu, back is the app the menu was opened from: the standby screen, as the standby screen */
+    assert(app_back(&d.context));app_manager_commit(&d);active(&d,"face");assert(d.idle);
+    /* a game opened from the menu: history is [game, face] */
+    t+=20000;click(&d,t);active(&d,"launcher");reopen(&d,"game");assert(!d.idle);
+    unsigned before=shorts;
+    t+=1000;click(&d,t);t+=250;click(&d,t);                    /* a double click on the game */
+    active(&d,"game");assert(shorts==before+2);                  /* both clicks reached it as ordinary presses */
+    app_manager_tick(&d,t+40+299);active(&d,"game");              /* not before the quiet moment is over */
+    app_manager_tick(&d,t+40+300);active(&d,"face");assert(d.idle); /* then back, to the standby screen it left */
+    /* and again: the toggle between the two. On the standby screen the first click opens the menu, the second moves
+     * its cursor, and the gesture is still read as made on the standby screen: back is the game. */
+    const size_t cursor=app_selection(&d.context);
+    t+=5000;click(&d,t);active(&d,"launcher");t+=200;click(&d,t);
+    assert(app_selection(&d.context)==(cursor+1)%3);               /* the second click did move the cursor ... */
+    app_manager_tick(&d,t+40+300);active(&d,"game");assert(!d.idle);
+    assert(app_selection(&d.context)==cursor);                     /* ... and the double click gave that back */
+    t+=5000;click(&d,t);t+=200;click(&d,t);app_manager_tick(&d,t+400);active(&d,"face");
+    /* the menu in between does not count: game -> menu -> radar, and back from the radar is the game */
+    reopen(&d,"game");t+=5000;click(&d,t);t+=120;click(&d,t);t+=120;click(&d,t);active(&d,"launcher"); /* a quick triple: the menu */
+    app_manager_tick(&d,t+2000);active(&d,"launcher");             /* and not a double that left first */
+    reopen(&d,"radar");t+=5000;click(&d,t);t+=200;click(&d,t);app_manager_tick(&d,t+400);active(&d,"game");
+    t+=5000;click(&d,t);t+=200;click(&d,t);app_manager_tick(&d,t+400);active(&d,"radar");
+    /* from the menu: back is where it came from, whatever the cursor did */
+    app_menu(&d.context);app_manager_commit(&d);active(&d,"launcher");
+    const size_t menu_cursor=app_selection(&d.context);
+    t+=5000;click(&d,t);t+=150;click(&d,t);assert(app_selection(&d.context)==(menu_cursor+2)%3);
+    app_manager_tick(&d,t+400);active(&d,"radar");assert(app_selection(&d.context)==menu_cursor);
+    /* opening the app the menu came from keeps the app before it */
+    app_menu(&d.context);app_manager_commit(&d);reopen(&d,"radar");
+    t+=5000;click(&d,t);t+=200;click(&d,t);app_manager_tick(&d,t+400);active(&d,"game");
+    /* a third press inside the quiet moment is a triple, one after it is an ordinary click of the app it went back to */
+    reopen(&d,"game");reopen(&d,"radar");reopen(&d,"game");
+    t+=5000;click(&d,t);t+=250;click(&d,t);                       /* presses at 0 and 250, released at 290 */
+    key(&d,true,t+285);key(&d,false,t+330);active(&d,"launcher");  /* the third at 285 after the second: the menu */
+    app_manager_tick(&d,t+1000);active(&d,"launcher");
+    reopen(&d,"game");
+    t+=5000;click(&d,t);t+=250;click(&d,t);
+    before=shorts;app_manager_tick(&d,t+40+300);active(&d,"radar");key(&d,true,t+400);key(&d,false,t+440);active(&d,"radar");
+    assert(shorts==before+1);                                      /* the late press landed in the app it went back to */
+    /* slow clicks are only clicks, and so is a hold followed by a click */
+    reopen(&d,"game");reopen(&d,"radar");reopen(&d,"game");
+    t+=5000;click(&d,t);t+=301;click(&d,t);app_manager_tick(&d,t+2000);active(&d,"game");
+    t+=5000;key(&d,true,t);app_manager_tick(&d,t+700);key(&d,false,t+700);t+=800;click(&d,t);app_manager_tick(&d,t+2000);active(&d,"game");
+    /* a click followed by a hold is not a double, and neither are two clicks and a third press that is no triple */
+    t+=5000;click(&d,t);key(&d,true,t+200);app_manager_tick(&d,t+800);key(&d,false,t+800);app_manager_tick(&d,t+3000);active(&d,"game");
+    t+=5000;click(&d,t);key(&d,true,t+290);key(&d,false,t+740);                    /* the second click is slow: released at 450 ms */
+    key(&d,true,t+1000);key(&d,false,t+1030);app_manager_tick(&d,t+2000);active(&d,"game"); /* a third inside the quiet moment, 1 s after the first */
+    /* a cancelled press (a USB lease running out) is no click */
+    t+=5000;click(&d,t);app_manager_cancel_key(&d,0,t+100);t+=150;click(&d,t);app_manager_tick(&d,t+2000);active(&d,"game");
+    /* the app can opt out: of both gestures (a game played by mashing) or of the double click alone */
+    app_set_triple_exit(&d.context,false);assert(!app_double_back(&d.context));
+    t+=5000;click(&d,t);t+=150;click(&d,t);app_manager_tick(&d,t+2000);active(&d,"game");
+    app_set_triple_exit(&d.context,true);assert(app_double_back(&d.context));
+    app_set_double_back(&d.context,false);assert(!app_double_back(&d.context) && app_triple_exit(&d.context));
+    t+=5000;click(&d,t);t+=150;click(&d,t);app_manager_tick(&d,t+2000);active(&d,"game");
+    t+=5000;click(&d,t);t+=100;click(&d,t);t+=100;click(&d,t);active(&d,"launcher"); /* the triple still works */
+    reopen(&d,"game");assert(app_double_back(&d.context));        /* restored on every app change */
+    /* an app that opts out between the two clicks stops the gesture */
+    t+=5000;click(&d,t);app_set_double_back(&d.context,false);t+=150;click(&d,t);app_manager_tick(&d,t+2000);active(&d,"game");
+    /* back by hand, from an app: one step, and then the toggle */
+    reopen(&d,"radar");reopen(&d,"game");
+    assert(app_back(&d.context));app_manager_commit(&d);active(&d,"radar");
+    assert(app_back(&d.context));app_manager_commit(&d);active(&d,"game");
+    /* a pending double belongs to its screen: a change of app in the quiet moment cancels it */
+    t+=5000;click(&d,t);t+=200;click(&d,t);reopen(&d,"radar");app_manager_tick(&d,t+2000);active(&d,"radar");
+    /* keys other than K1 never make a double */
+    reopen(&d,"game");
+    for(unsigned i=0;i<2;++i) { app_manager_key(&d,1,true,t+30000+i*100);app_manager_key(&d,1,false,t+30040+i*100); }
+    app_manager_tick(&d,t+31000);active(&d,"game");
+}
 int main(void)
 {
     app_manager_t m;app_platform_t p={.scene_create=scene,.scene_delete=destroy,.release_services=release,.save_standby=save};
@@ -224,5 +307,5 @@ int main(void)
     active(&booted,"wedding");assert(booted.idle && !strcmp(app_standby_id(&booted.context),"wedding"));
     key(&booted,true,100);key(&booted,false,150);active(&booted,"launcher");
     app_manager_tick(&booted,10150);active(&booted,"wedding"); /* the menu timeout returns to the default standby */
-    protocol();time_protocol();alarms();puts("app framework: lifecycle ownership, catalog, cadence, standby persistence, default standby, global input, deferred navigation, alarm registry wake-ups and bounded protocol passed");
+    protocol();time_protocol();alarms();back_and_double();puts("app framework: lifecycle ownership, catalog, cadence, standby persistence, default standby, global input, deferred navigation, alarm registry wake-ups, back and the double click, and bounded protocol passed");
 }

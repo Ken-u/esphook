@@ -5,6 +5,7 @@
 #include "esphook/app_services.h"
 #include "esphook/app_steer.h"
 #include "esphook/app_ui.h"
+#include "esphook/app_best.h"
 #include "esphook/app_command.h"
 #include "esphook/app_sync.h"
 #include "starship_core.h"
@@ -378,6 +379,7 @@ static void enter(app_context_t *ctx)
 {
     state_t *s = ctx->state;
     ss_init(&s->core, app_random() ^ (uint32_t)ctx->now_ms);
+    s->core.best = app_best_get(ctx); /* the record survives leaving the game and a reboot */
     steer_init(&s->steer);
     haptic_init(&s->haptic);
     s->last_ms = ctx->now_ms;
@@ -407,6 +409,7 @@ static void tick(app_context_t *ctx)
     s->prev_cam = s->core.cam_x;
     ss_advance(&s->core, now > s->last_ms ? (uint32_t)(now - s->last_ms) : 0U);
     s->last_ms = now;
+    if (s->core.phase == SS_OVER) (void)app_best_record(ctx, s->core.best);
     app_servo_t sv;
     app_servo_read(&sv);
     while (ss_take_hit(&s->core)) /* a light shake for every point of shield lost, a longer one for the last */

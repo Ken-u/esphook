@@ -83,6 +83,20 @@ void app_select_next(app_context_t *ctx);
  * three presses are plain presses: DOWN/UP/SHORT/CONFIRM arrive as usual and nothing navigates. */
 void app_set_triple_exit(app_context_t *ctx, bool enabled);
 bool app_triple_exit(const app_context_t *ctx);
+/* Back: request the app that was on screen before this one, ignoring the menu in between - the app-switcher toggle.
+ * The framework remembers the last two apps other than the menu, so from app B (opened after A) back is A, from A
+ * it is B again; from the menu itself it is the app the menu was opened from. Returns false, and does nothing, when
+ * there is no such app yet (right after boot). Like every navigation it takes effect when the callback returns, and
+ * an app that was the standby screen comes back as the standby screen. */
+bool app_back(app_context_t *ctx);
+/* The global gesture for it: two quick clicks of K1 (APP_DOUBLE_MS apart) go back, wherever the app does not mash
+ * the key. Both clicks reach the app as ordinary presses; the framework waits a moment for a third (a quick triple is
+ * still the menu) and only then goes back, so it comes about 0.3 s after the second click. It is on by default, off
+ * wherever the triple exit is off (an app that is played by mashing has neither), and an app that wants its quick
+ * double clicks for itself while keeping the triple can switch just this one off. Restored on every app change.
+ * In the menu a double click goes back to the app the menu was opened from, with the cursor where it was. */
+void app_set_double_back(app_context_t *ctx, bool enabled);
+bool app_double_back(const app_context_t *ctx);
 /* The deliberate way out for a game that switched the triple exit off: holding K1 for `ms` (1000..10000, 0 turns it
  * off, which is the default) goes back to the menu. The app still sees DOWN, and CONFIRM at 500 ms, like any hold, so
  * pick a time no normal play reaches. It counts only a press that began while it was on: switch it on for the calm

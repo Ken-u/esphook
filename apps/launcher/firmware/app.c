@@ -1,31 +1,50 @@
 #include "esphook/app.h"
 #include "esphook/app_ui.h"
+#include <stdio.h>
 
-/* The menu: a dark gradient screen, three beveled tiles with the apps' own icons, a lit cursor that slides to the
- * selected tile (the half-second confirm ring closes around it), titles below and page pips at the top right.
- * Only plain rectangles and one arc are used, so no shadow or mask buffers are needed on the LVGL heap. */
-#define TILE 40
-#define TILE_Y 17
-#define TILE_X0 8
-#define TILE_STEP 52
-#define ICON_PAD 6
-#define CURSOR_SIZE 50
-#define MAX_PIPS 8
-#define COLOR_TILE_TOP 0x1C2745
-#define COLOR_TILE_LOW 0x0F1730
-#define COLOR_TILE_ON_TOP 0x2E4074
-#define COLOR_TILE_ON_LOW 0x182549
-#define COLOR_EDGE 0x33437A
-#define COLOR_TEXT_DIM 0x8E9BC2
+/* The menu, laid out like an old iPod: a header with the title and the position, a list of four rows on the left
+ * with a blue bar that slides between them and a thin scroll bar, and the selected app's icon on a plate on the right.
+ * A short press moves the bar down (the list scrolls when the bar reaches an edge), a 500 ms hold opens the app, and
+ * while it is held the bar fills from the left and a gold line grows under it. Nothing here is round, so nothing can
+ * collide with the shape of the selection. Only plain rectangles are used (no arcs, shadows or masks), and only four
+ * row slots exist however long the list is: they are re-bound, and slid by one row when the list scrolls. */
+#define HEAD_H 16
+#define ROW_H 16
+#define ROWS 4
+#define LIST_W 100
+#define BAR_X 3
+#define BAR_W (LIST_W - 2 * BAR_X)
+#define BAR_H 14
+#define SCROLL_X 102
+#define SCROLL_Y (HEAD_H + 2)
+#define SCROLL_H (APP_HEIGHT - HEAD_H - 4)
+#define PANE_X 106
+#define PANE_W (APP_WIDTH - PANE_X)
+#define PLATE 40
+#define PLATE_X (PANE_X + (PANE_W - PLATE) / 2)
+#define PLATE_Y 19
+#define SLIDE_MS 130
+#define COLOR_TEXT 0xFFFFFF
+#define COLOR_TEXT_DIM 0xA9B6DB
+#define COLOR_BAR_TOP 0x5A98FF
+#define COLOR_BAR_LOW 0x2C62D2
+#define COLOR_RULE 0x1B2850
 typedef struct {
-    lv_obj_t *plates[3], *icons[3], *titles[3], *cursor, *ring, *pips[MAX_PIPS];
-    size_t page_index, previous;
-    unsigned pages;
+    lv_obj_t *bar, *sweep, *edge, *rows[ROWS], *names[ROWS], *chevrons[ROWS], *count, *track, *thumb, *plate, *icon;
+    size_t top, seen;          /* first visible app; selection last drawn ((size_t)-1 before the first frame) */
+    int bar_slot, sweep_px;
 } state_t;
 _Static_assert(sizeof(state_t) <= APP_STATE_CAPACITY, "launcher state too large");
 
-static void arc_x(void *object, int32_t value) { lv_obj_set_x(object, value); }
-static int tile_x(unsigned slot) { return TILE_X0 + (int)slot * TILE_STEP; }
+static void set_y(void *object, int32_t value) { lv_obj_set_y(object, value); }
+static void slide(lv_obj_t *object, int from, int to)
+{
+    lv_anim_delete(object, NULL);
+    lv_obj_set_y(object, from);
+    lv_anim_t a; lv_anim_init(&a); lv_anim_set_var(&a, object); lv_anim_set_values(&a, from, to);
+    lv_anim_set_exec_cb(&a, set_y); lv_anim_set_duration(&a, SLIDE_MS); lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    lv_anim_start(&a);
+}
 static lv_obj_t *gradient(lv_obj_t *parent, int x, int y, int w, int h, uint32_t top, uint32_t low, int radius)
 {
     lv_obj_t *o = app_ui_rect(parent, x, y, w, h, top, radius);
@@ -33,94 +52,120 @@ static lv_obj_t *gradient(lv_obj_t *parent, int x, int y, int w, int h, uint32_t
     lv_obj_set_style_bg_grad_dir(o, LV_GRAD_DIR_VER, LV_PART_MAIN);
     return o;
 }
-static void colour_plate(lv_obj_t *plate, bool selected)
+static lv_obj_t *text(lv_obj_t *parent, int x, int y, int w, uint32_t rgb)
 {
-    lv_obj_set_style_bg_color(plate, app_ui_color(selected ? COLOR_TILE_ON_TOP : COLOR_TILE_TOP), LV_PART_MAIN);
-    lv_obj_set_style_bg_grad_color(plate, app_ui_color(selected ? COLOR_TILE_ON_LOW : COLOR_TILE_LOW), LV_PART_MAIN);
-    lv_obj_set_style_border_color(plate, app_ui_color(selected ? 0x4A5E9C : COLOR_EDGE), LV_PART_MAIN);
+    lv_obj_t *label = app_ui_label(parent, &aihook_font_12, x, y, w, 14, LV_LABEL_LONG_MODE_CLIP);
+    lv_obj_set_style_text_color(label, app_ui_color(rgb), LV_PART_MAIN);
+    return label;
 }
 static void enter(app_context_t *ctx)
 {
     state_t *s = ctx->state;
-    s->previous = (size_t)-1; s->page_index = (size_t)-1;
-    s->pages = (unsigned)((app_count(ctx) + 2) / 3);
-    if (s->pages > MAX_PIPS) s->pages = MAX_PIPS;
+    s->top = s->seen = (size_t)-1; s->bar_slot = -1; s->sweep_px = -1;
     gradient(ctx->root, 0, 0, APP_WIDTH, APP_HEIGHT, 0x0E1730, 0x04070E, 0);
-    app_ui_rect(ctx->root, 0, 13, APP_WIDTH, 1, 0x1B2850, 0); /* the top bar's rule */
-    app_ui_rect(ctx->root, 0, 14, APP_WIDTH, 1, 0x0A1224, 0);
-    lv_obj_t *hint = app_ui_label(ctx->root, &aihook_font_12, 5, 0, 104, 14, LV_LABEL_LONG_MODE_CLIP);
-    lv_obj_set_style_text_color(hint, app_ui_color(COLOR_TEXT_DIM), LV_PART_MAIN);
-    app_ui_text(hint, "短按切换 长按进入");
-    for (unsigned i = 0; i < MAX_PIPS; ++i) {
-        s->pips[i] = app_ui_rect(ctx->root, 0, 5, 4, 4, 0x2C3A68, 2);
-        app_ui_hide(s->pips[i], i >= s->pages);
+    /* the header: a lit strip with the title on the left and the position on the right */
+    gradient(ctx->root, 0, 0, APP_WIDTH, HEAD_H - 1, 0x33436F, 0x182348, 0);
+    app_ui_rect(ctx->root, 0, 0, APP_WIDTH, 1, 0x5A6CA0, 0);
+    app_ui_rect(ctx->root, 0, HEAD_H - 1, APP_WIDTH, 1, 0x0A1224, 0);
+    lv_obj_t *title = text(ctx->root, 6, 0, 70, COLOR_TEXT);
+    app_ui_text(title, "菜单");
+    s->count = text(ctx->root, APP_WIDTH - 46, 0, 40, COLOR_TEXT_DIM);
+    lv_obj_set_style_text_align(s->count, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
+    /* the list: a window that clips four rows, the bar under their names */
+    lv_obj_t *view = lv_obj_create(ctx->root); app_ui_plain(view);
+    lv_obj_set_pos(view, 0, HEAD_H); lv_obj_set_size(view, LIST_W, ROWS * ROW_H);
+    s->bar = gradient(view, BAR_X, 1, BAR_W, BAR_H, COLOR_BAR_TOP, COLOR_BAR_LOW, 4);
+    s->sweep = app_ui_rect(s->bar, 0, 0, 0, BAR_H, 0xFFFFFF, 4);
+    lv_obj_set_style_bg_opa(s->sweep, 72, LV_PART_MAIN);
+    s->edge = app_ui_rect(s->bar, 0, BAR_H - 2, 0, 2, APP_COLOR_ACCENT, 0);
+    for (unsigned i = 0; i < ROWS; ++i) {
+        s->rows[i] = lv_obj_create(view); app_ui_plain(s->rows[i]);
+        lv_obj_set_pos(s->rows[i], 0, (int)i * ROW_H); lv_obj_set_size(s->rows[i], LIST_W, ROW_H);
+        s->names[i] = text(s->rows[i], 10, 0, BAR_W - 24, COLOR_TEXT_DIM);
+        s->chevrons[i] = text(s->rows[i], LIST_W - 15, 0, 10, COLOR_TEXT_DIM);
+        app_ui_text(s->chevrons[i], ">");
     }
-    for (unsigned i = 0; i < 3; ++i) {
-        const int x = tile_x(i);
-        s->plates[i] = gradient(ctx->root, x, TILE_Y, TILE, TILE, COLOR_TILE_TOP, COLOR_TILE_LOW, 9);
-        lv_obj_set_style_border_width(s->plates[i], 1, LV_PART_MAIN);
-        lv_obj_set_style_border_opa(s->plates[i], LV_OPA_COVER, LV_PART_MAIN);
-        colour_plate(s->plates[i], false);
-        lv_obj_t *gloss = app_ui_rect(s->plates[i], 5, 1, TILE - 12, 1, 0xFFFFFF, 0); /* the lit top edge of the bevel */
-        lv_obj_set_style_bg_opa(gloss, 46, LV_PART_MAIN);
-        s->icons[i] = lv_obj_create(ctx->root); app_ui_plain(s->icons[i]);
-        lv_obj_set_pos(s->icons[i], x + ICON_PAD, TILE_Y + ICON_PAD); lv_obj_set_size(s->icons[i], 28, 28);
-        s->titles[i] = app_ui_label(ctx->root, &aihook_font_12, x - 6, 63, TILE + 12, 15, LV_LABEL_LONG_MODE_CLIP);
-        app_ui_center(s->titles[i]);
-    }
-    /* The cursor is one object that slides: a soft glow, a bright frame and the confirm ring around them. */
-    s->cursor = lv_obj_create(ctx->root); app_ui_plain(s->cursor);
-    lv_obj_set_size(s->cursor, CURSOR_SIZE, CURSOR_SIZE); lv_obj_set_pos(s->cursor, tile_x(0) - 5, TILE_Y - 5);
-    lv_obj_t *glow = app_ui_rect(s->cursor, 1, 1, CURSOR_SIZE - 2, CURSOR_SIZE - 2, APP_COLOR_ACCENT, 12);
-    lv_obj_set_style_bg_opa(glow, 40, LV_PART_MAIN);
-    lv_obj_t *frame = app_ui_rect(s->cursor, 3, 3, CURSOR_SIZE - 6, CURSOR_SIZE - 6, APP_COLOR_ACCENT, 10);
-    lv_obj_set_style_bg_opa(frame, LV_OPA_TRANSP, LV_PART_MAIN);
-    lv_obj_set_style_border_width(frame, 2, LV_PART_MAIN); lv_obj_set_style_border_opa(frame, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_border_color(frame, app_ui_color(APP_COLOR_ACCENT), LV_PART_MAIN);
-    s->ring = app_ui_ring(s->cursor, 0, 0, CURSOR_SIZE);
-    lv_obj_set_style_arc_color(s->ring, app_ui_color(0x2A3868), LV_PART_MAIN);
-    app_ui_hide(s->ring, true);
+    /* the scroll bar and the rule that separates the list from the preview */
+    s->track = app_ui_rect(ctx->root, SCROLL_X, SCROLL_Y, 2, SCROLL_H, 0x16203F, 1);
+    s->thumb = app_ui_rect(ctx->root, SCROLL_X, SCROLL_Y, 2, 6, 0x6F8CD6, 1);
+    app_ui_rect(ctx->root, PANE_X - 2, HEAD_H, 1, APP_HEIGHT - HEAD_H, COLOR_RULE, 0);
+    /* the preview: the selected app's own icon on a plate, and what a hold does */
+    s->plate = gradient(ctx->root, PLATE_X, PLATE_Y, PLATE, PLATE, 0x2E4074, 0x182549, 9);
+    lv_obj_set_style_border_width(s->plate, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_opa(s->plate, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_color(s->plate, app_ui_color(0x4A5E9C), LV_PART_MAIN);
+    lv_obj_t *gloss = app_ui_rect(s->plate, 5, 1, PLATE - 12, 1, 0xFFFFFF, 0); /* the lit top edge of the bevel */
+    lv_obj_set_style_bg_opa(gloss, 46, LV_PART_MAIN);
+    s->icon = lv_obj_create(ctx->root); app_ui_plain(s->icon);
+    lv_obj_set_pos(s->icon, PLATE_X + 6, PLATE_Y + 6); lv_obj_set_size(s->icon, 28, 28);
+    lv_obj_t *caption = text(ctx->root, PANE_X, 62, PANE_W, 0x7D8BB5);
+    lv_obj_set_style_text_align(caption, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    app_ui_text(caption, "长按进入");
 }
-static void layout_pips(state_t *s, size_t page)
+/* The first app of the window that keeps `selected` in view with the least movement, and the whole list when it fits. */
+static size_t window_top(size_t top, size_t selected, size_t total)
 {
-    unsigned total = (s->pages ? s->pages - 1U : 0U) * 7U + 10U;
-    int x = APP_WIDTH - 5 - (int)total;
-    for (unsigned i = 0; i < s->pages; ++i) {
-        const bool on = i == page;
-        lv_obj_set_pos(s->pips[i], x, 5); lv_obj_set_size(s->pips[i], on ? 10 : 4, 4);
-        lv_obj_set_style_bg_color(s->pips[i], app_ui_color(on ? APP_COLOR_ACCENT : 0x2C3A68), LV_PART_MAIN);
-        x += (on ? 10 : 4) + 3;
+    if (total <= ROWS) return 0;
+    if (top == (size_t)-1) return selected >= ROWS ? selected - ROWS + 1 : 0;
+    if (selected < top) return selected;
+    if (selected >= top + ROWS) return selected - ROWS + 1;
+    return top;
+}
+static void draw_list(app_context_t *ctx, state_t *s, size_t selected, size_t total)
+{
+    const size_t top = window_top(s->top, selected, total);
+    const int moved = s->top == (size_t)-1 ? 0 : top == s->top + 1 ? 1 : top + 1 == s->top ? -1 : 0;
+    for (unsigned i = 0; i < ROWS; ++i) {
+        const app_descriptor_t *a = app_at(ctx, top + i);
+        const bool on = top + i == selected;
+        app_ui_hide(s->rows[i], !a);
+        app_ui_text(s->names[i], a ? a->title : "");
+        lv_obj_set_style_text_color(s->names[i], app_ui_color(on ? COLOR_TEXT : COLOR_TEXT_DIM), LV_PART_MAIN);
+        lv_obj_set_style_text_color(s->chevrons[i], app_ui_color(on ? COLOR_TEXT : COLOR_TEXT_DIM), LV_PART_MAIN);
+        if (moved) slide(s->rows[i], (int)i * ROW_H + moved * ROW_H, (int)i * ROW_H); /* the list scrolls one row */
     }
+    const int slot = (int)(selected - top);
+    if (s->bar_slot < 0) lv_obj_set_y(s->bar, slot * ROW_H + 1);
+    else if (slot != s->bar_slot) slide(s->bar, lv_obj_get_y(s->bar), slot * ROW_H + 1);
+    s->bar_slot = slot; s->top = top;
+    /* the scroll bar shows where the window is in the list; there is none when the list fits */
+    const bool scrolls = total > ROWS;
+    app_ui_hide(s->track, !scrolls); app_ui_hide(s->thumb, !scrolls);
+    if (scrolls) {
+        int th = SCROLL_H * ROWS / (int)total;
+        if (th < 6) th = 6;
+        lv_obj_set_height(s->thumb, th);
+        lv_obj_set_y(s->thumb, SCROLL_Y + (SCROLL_H - th) * (int)top / (int)(total - ROWS));
+    }
+}
+static void draw_preview(app_context_t *ctx, state_t *s, size_t selected, size_t total)
+{
+    const app_descriptor_t *a = app_at(ctx, selected);
+    char position[24]; /* two 32-bit numbers and a slash fit even in theory */
+    snprintf(position, sizeof position, "%u/%u", (unsigned)selected + 1U, (unsigned)total);
+    app_ui_text(s->count, position);
+    lv_obj_clean(s->icon);
+    if (a && a->icon) a->icon(s->icon, 0, 0, true);
+    else if (a) app_ui_rect(s->icon, 4, 4, 20, 20, APP_COLOR_MUTED, 4);
 }
 static void render(app_context_t *ctx)
 {
     state_t *s = ctx->state;
-    const size_t selected = app_selection(ctx), page = selected / 3;
-    if (s->previous != selected) {
-        for (unsigned i = 0; i < 3; ++i) {
-            const app_descriptor_t *a = app_at(ctx, page * 3 + i);
-            const bool on = page * 3 + i == selected;
-            lv_obj_clean(s->icons[i]);
-            app_ui_hide(s->plates[i], !a); app_ui_hide(s->icons[i], !a); app_ui_hide(s->titles[i], !a);
-            app_ui_text(s->titles[i], a ? a->title : "");
-            if (a && a->icon) a->icon(s->icons[i], 0, 0, on);
-            else if (a) app_ui_rect(s->icons[i], 4, 4, 20, 20, APP_COLOR_MUTED, 4);
-            colour_plate(s->plates[i], on);
-            lv_obj_set_style_text_color(s->titles[i], app_ui_color(on ? APP_COLOR_ACCENT : COLOR_TEXT_DIM), LV_PART_MAIN);
-        }
-        const int target = tile_x((unsigned)(selected % 3)) - 5;
-        lv_anim_delete(s->cursor, NULL);
-        if (s->page_index != page || s->previous == (size_t)-1) lv_obj_set_x(s->cursor, target);
-        else {
-            lv_anim_t a; lv_anim_init(&a); lv_anim_set_var(&a, s->cursor); lv_anim_set_values(&a, lv_obj_get_x(s->cursor), target);
-            lv_anim_set_exec_cb(&a, arc_x); lv_anim_set_duration(&a, 160); lv_anim_set_path_cb(&a, lv_anim_path_ease_out); lv_anim_start(&a);
-        }
-        if (s->page_index != page) layout_pips(s, page);
-        s->page_index = page; s->previous = selected;
+    const size_t selected = app_selection(ctx), total = app_count(ctx);
+    if (s->seen != selected) {
+        draw_list(ctx, s, selected, total);
+        draw_preview(ctx, s, selected, total);
+        s->seen = selected;
     }
+    /* the confirmation: the bar fills from the left, a gold line grows under it, and the plate takes the gold edge */
     const unsigned hold = app_hold_ms(ctx);
-    app_ui_hide(s->ring, hold == 0);
-    app_ui_progress(s->ring, hold);
+    const int px = (int)((uint64_t)hold * BAR_W / APP_CONFIRM_MS);
+    if (px != s->sweep_px) {
+        s->sweep_px = px;
+        app_ui_hide(s->sweep, px == 0); app_ui_hide(s->edge, px == 0);
+        lv_obj_set_width(s->sweep, px); lv_obj_set_width(s->edge, px);
+        lv_obj_set_style_border_color(s->plate, app_ui_color(px ? APP_COLOR_ACCENT : 0x4A5E9C), LV_PART_MAIN);
+    }
 }
 static void event(app_context_t *ctx, const app_event_t *e)
 {

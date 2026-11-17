@@ -4,6 +4,7 @@
 #include "esphook/app_services.h"
 #include "dino_game.h"
 #include "dino_sprites.h"
+#include "esphook/app_best.h"
 #include "esphook/app_command.h"
 #include "esphook/app_sync.h"
 #include <math.h>
@@ -159,6 +160,7 @@ static void enter(app_context_t *ctx)
 {
     state_t *s = ctx->state;
     dino_start(&s->game, ctx->now_ms, app_random());
+    s->game.best = app_best_get(ctx); /* the record survives leaving the game and a reboot */
     /* Hopping is done by mashing the key, and a press starts a run: three quick presses are never an exit, holding
      * the key for two seconds (a jump never lasts that long) is. */
     app_set_triple_exit(ctx, false);
@@ -170,6 +172,7 @@ static void tick(app_context_t *ctx)
     dino_tick(&s->game, ctx->now_ms);
     dino_view_t view;
     dino_snapshot(&s->game, &view);
+    if (view.phase == DINO_OVER) (void)app_best_record(ctx, view.best);
     app_shared_copy(s_status, view);
 }
 static void leave(app_context_t *ctx)

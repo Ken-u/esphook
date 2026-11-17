@@ -12,7 +12,7 @@ idf_component_register(
          "net_wifi.c" "net_time.c" "beeper.c" "events.c" "http_server.c"
          "input_task.c" "display_task.c"
          "${framework}/core/app_input.c" "${framework}/core/app_manager.c" "${framework}/core/app_protocol.c"
-         "${framework}/core/app_keys.c" "${framework}/core/app_time.c" "${framework}/core/app_alarm.c"
+         "${framework}/core/app_keys.c" "${framework}/core/app_time.c" "${framework}/core/app_alarm.c" "${framework}/core/app_best.c"
          "${framework}/core/app_hardware.c" "${framework}/ports/esp32/hardware_service.c"
          "${framework}/ports/esp32/app_runtime.c" "${framework}/ports/esp32/app_services.c"
          "${framework}/ports/esp32/app_ui.c" "${framework}/ports/esp32/display_port.c"

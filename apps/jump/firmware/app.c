@@ -2,6 +2,7 @@
 #include "esphook/app_gfx.h"
 #include "esphook/app_services.h"
 #include "esphook/app_ui.h"
+#include "esphook/app_best.h"
 #include "esphook/app_command.h"
 #include "esphook/app_sync.h"
 #include "jump_core.h"
@@ -218,6 +219,7 @@ static void enter(app_context_t *ctx)
 {
     state_t *s = ctx->state;
     jp_init(&s->core, app_random() ^ (uint32_t)ctx->now_ms);
+    s->core.best = app_best_get(ctx); /* the record survives leaving the game and a reboot */
     s->last_ms = ctx->now_ms;
     s->snap = 1; s->drop_ms = 4000U; s->seen_cur = s->core.cur;
     int tx, ty;
@@ -241,6 +243,7 @@ static void tick(app_context_t *ctx)
     if (dt > 100U) dt = 100U; /* a stall must not eat a jump */
     const unsigned before = s->core.phase;
     jp_advance(&s->core, dt);
+    if (s->core.phase == JP_OVER) (void)app_best_record(ctx, s->core.best);
     if (s->core.cur != s->seen_cur) { s->seen_cur = s->core.cur; s->drop_ms = 0; }
     else if (s->drop_ms < 4000U) s->drop_ms += dt;
     int tx, ty;

@@ -25,7 +25,7 @@ idf.py build
 | `framework/core/app_input.c` | 25ms 消抖、500ms 确认、800ms 三击、松手消费 |
 | `framework/core/app_time.c` | 墙上时钟换算（公历、星期、时区偏移）的纯函数，闹钟和幸运签用 |
 | `framework/core/app_alarm.c` | 全局闹钟注册表：任何应用登记“到点打开哪个应用并通知它”，框架负责判定、排队、贪睡与唤醒；见“闹钟 API” |
-| `framework/include/esphook/app_ui.h` | LVGL 标签、矩形、图层、字体、确认圆；共享 RGB565 画布 `app_ui_canvas`、底部状态条 `app_ui_band`、按住进度线 `app_ui_hold_bar` |
+| `framework/include/esphook/app_ui.h` | LVGL 标签、矩形、图层、字体、确认圆（`app_ui_ring`，设置等应用用）；共享 RGB565 画布 `app_ui_canvas`、底部状态条 `app_ui_band`、按住进度线 `app_ui_hold_bar` |
 | `framework/include/esphook/app_gfx.h` | 画布软件绘图：线/圆/圆环/椭圆光晕/渐变（抖动）、半透明叠加、调色板点阵、山脉/云/太阳，只在 UI 任务调用 |
 | `framework/include/esphook/app_math.h` | 纯整数数学（无 LVGL/RTOS，可进 `*_core.c`）：abs/clamp/lerp、饱和加、开方、抛物线正弦、哈希、固定步长累加器 |
 | `framework/include/esphook/app_rand.h` | 确定性 xorshift32：种子即序列，主机测试与实机一致 |
@@ -73,7 +73,7 @@ const app_descriptor_t esphook_app_counter = {
 
 ## 公共 API 速查
 
-应用只能 include 白名单里的头文件：C 标准库、cJSON、自己的本地头、`esphook/app*.h`（含 `app_math/rand/sync/command/gfx/ui/haptic/steer/fish/alarm`）、`esphook/radar_view.h` 和 `robot_ui_protocol.h`。`check-apps.py` 对每个应用的 `firmware/` 逐文件检查，FreeRTOS、ESP-IDF、驱动或 `app_runtime.h` 一律拒绝（要什么就由框架出 API，而不是应用越层）。越稳定的 API 越能装更多应用，所以下面这些**不要在应用里再写一份**：
+应用只能 include 白名单里的头文件：C 标准库、cJSON、自己的本地头、`esphook/app*.h`（含 `app_math/rand/sync/command/best/gfx/ui/haptic/steer/fish/alarm`）、`esphook/radar_view.h` 和 `robot_ui_protocol.h`。`check-apps.py` 对每个应用的 `firmware/` 逐文件检查，FreeRTOS、ESP-IDF、驱动或 `app_runtime.h` 一律拒绝（要什么就由框架出 API，而不是应用越层）。越稳定的 API 越能装更多应用，所以下面这些**不要在应用里再写一份**：
 
 | 需求 | 用这个 | 备注 |
 | --- | --- | --- |
@@ -86,6 +86,8 @@ const app_descriptor_t esphook_app_counter = {
 | 按住退出/确认进度线 | `app_ui_hold_bar(parent, y, rgb)` + `app_ui_hold_line()` | 配合 `app_set_exit_hold` |
 | UI 任务发布状态给 USB 任务读 | `app_shared_copy(dst, src)`；多字段/自增用 `app_critical_enter/exit()` | 临界区内只拷贝几个字节；不要 FreeRTOS |
 | 需要解析、较长的共享区 | `app_lock_create/take/give`（互斥锁） | 例：股票传输模型 |
+| 最高分/记录（跨退出、跨重启） | `app_best_get(ctx)`（进入时灌给核心）、`app_best_record(ctx, score)`（一局结束时调用） | 按应用 id 自动分库，只在破纪录时写一次 flash，每帧调用也安全；见“设置存储” |
+| 回到上一个应用 | `app_back(ctx)`；全局手势“双击”已由框架处理 | 见“全局输入与导航” |
 | 回复 USB 文本命令 | `app_command_is/reply/replyf`（一行，至多 `APP_COMMAND_REPLY_MAX` 字节） | `command()` 返回 true 表示这行是你的 |
 | 从命令打开应用/回菜单/问是否前台 | `app_command_open(id)`、`app_command_menu()`、`app_command_active(id)` | 只排队，真正切换在 UI 任务 |
 | 闹钟/定时唤醒 | `app_alarm.h` | 见“闹钟 API” |
@@ -136,8 +138,11 @@ GPIO6 内部上拉、按下接 GND，双边沿 ISR 只唤醒输入任务。通�
 - 导航提交会消费正在按住的键，避免长按进入后松手触发新应用。
 - **可屏蔽三击**：靠连按玩的游戏（开炮、投喂、敲木鱼、跳跃）在 `on_enter` 里调用 `app_set_triple_exit(ctx, false)`，快速三次按下就只是三次普通按下，不会再回菜单；`app_triple_exit(ctx)` 查询当前状态。该开关在**每次切换应用时恢复为开启**，忘记调用不会让下一个应用失去三击，也不用在 `on_leave` 里还原。
 - **屏蔽后的出口**：长按 K1 达到指定时间回菜单，`app_set_exit_hold(ctx, ms)` 开启（1000..10000ms，0 关闭，默认关闭，同样随应用切换复位），`app_exit_hold_progress(ctx)` 给出已按住的毫秒数，`app_ui_hold_line()` 画 2px 进度线（有 500ms 确认时金色先填满，之后红色填到出口；无确认时 600ms 之前不显示，普通按键不闪）。应用仍会收到 DOWN，500ms 时仍有 CONFIRM；到时回菜单并消费这次按住，松手无动作。**框架只统计“按下时出口已开启”的那一按**：战斗中关闭、平静画面开启，那么开局那一按、或战斗里一直按着的开火键在结算画面一松都不会变成退出；按住途中才开启（或关闭后重新开启）要等下一次按下才生效，应用不用再自己记“这一按开始于游戏中”。目前：星际战机、极速赛车、钓鱼、僵尸围城只在平静画面开启（2 秒）；水族箱、木鱼、投篮、小恐龙、黄金矿工随时开启（2 秒），滑雪 3 秒；投篮结算页任何短按仍直接回菜单。跳一跳靠计时按住而不是连按，**保留全局三击**，没有按住退出（蓄力要按住很久）；副屏、闹钟、幸运签也保留三击。
+- **双击回上一个应用**：K1 两次点击间隔不超过 `APP_DOUBLE_MS`（300ms），再安静 300ms（期间没有第三次按下），框架就回到“上一个应用”，所以实际在第二次点击后约 0.3 秒生效。等这 300ms 是为了让快速三击仍然是三击（回菜单）而不是先被双击带走；三次按下落在这 300ms 内就是三击。两次点击都会作为普通按键先送给当前应用（和三击的前两次一样），之后才被带走。三次按下的节奏很不均匀（前两下 ≤0.3s，第二、三下之间却超过约 0.35–0.4s，按的时间越长越宽一点）会被读成双击，匀速三击和间隔 >0.3s 的慢速按键不受影响。
+- “上一个应用”：框架记住最近两个**非菜单**应用，从 B（在 A 之后打开）双击回 A，再双击回 B，是应用切换器的来回切；在菜单里双击回到打开菜单时所在的应用，菜单光标不动（这两下点击本来会让光标走两格，框架会还原）。手势按**起手那一屏**计算：在待机屏上双击，第一下打开菜单、第二下落在菜单里，目标仍是“待机之前用的那个应用”而不是刚离开的待机屏本身；刚开机还没有上一个应用时什么也不发生。回到的若是待机应用，仍按待机屏恢复（短按开菜单、整点报时照响）。`app_back(ctx)` 是同一个动作的程序接口（任何应用都可以做一个“返回”按钮），没有上一个应用时返回 false。
+- **双击和三击一起屏蔽/单独屏蔽**：`app_set_triple_exit(ctx, false)` 同时关掉双击（靠连按的应用两者都不要）；想保留三击、只关双击（例如应用自己要用快速双击）调用 `app_set_double_back(ctx, false)`；`app_double_back(ctx)` 查询当前是否生效。两个开关都在**每次切换应用时恢复**。双击要求点击是真正的点击（按住的 500ms 确认、慢速点击、被 USB 取消的按键都不算），其他键 K2/K3 从不触发。
 - 待机应用中的 K1 短按统一开菜单；非待机入口打开同一应用时由应用处理短按。三击始终保留。
-- 启动器按注册表每页三个图标，短按循环选择，500ms 确认圆填满进入；10s 无输入回当前选定的待机应用。
+- 启动器是一个 iPod 式的列表：左边四行、蓝色高亮条在行间滑动、行数多于四行时列表整行滚动并有一条细滚动条，右边是选中应用的图标预览，顶栏是标题和 `n/N`；短按下移（到底回到第一个），500ms 确认时**高亮条自左向右被填满**并在条下长出一条金线，预览板的描边变金，填满即进入；10s 无输入回当前选定的待机应用。
 
 USB 按住租期为 350ms，SDK 通过 hold/press/poll 每 100ms 续期；失联、失焦或主动 release_keys 产生 CANCEL，不产生 SHORT/CONFIRM。应用用 CANCEL 清理临时按住状态，如恢复 K 线计时，不能成交。映射在下次 DOWN 生效，现有 UP 保留旧映射。详见 [PC 协议](app-pc-protocol.md)。
 
@@ -160,6 +165,8 @@ Hook 的 HTTP `/notify`、`/dismiss`、配对、鉴权和 device link 协议保�
 **唤醒走闹钟 API**：不在屏幕上的应用也能让设备打开它，办法是在框架的全局闹钟注册表里登记一条，见下面的“闹钟 API”。descriptor 没有 `wake` 回调了（也就没有哪个应用自己去轮询时钟）。
 
 **墙上时钟**：设备没有电池时钟，`app_time_read(&t)` 返回本地时间（`valid`、`epoch`、`tz_min`、年月日、时分秒、星期），未校时 `valid` 为 false，应用必须处理这种情况。校时来源是 PC 的 USB `time` 操作（`AppLink.set_time()` / `python run.py time`）和联网后的 SNTP；`app_time_set()` 只由 USB 任务调用。换算在 `framework/core/app_time.c`，是纯函数，主机测试 `./scripts/test-app-time.sh`。
+
+**最高分**：`framework/include/esphook/app_best.h`。每个应用一个 32 位记录，按应用自己的 id 存（`app_storage` 里以 `b_` 开头的键，应用自己的键不要用这个前缀），所以不用起名、也碰不到别人的。进入时 `core.best = app_best_get(ctx)`（没记录是 0），一局结束（结算画面）时 `app_best_record(ctx, core.best)`：它拿 RAM 副本比较，只有比已存的更高才写一次 flash，因此结算画面每帧调用也安全，重开、没破纪录都不写；返回 true 表示破了纪录。写失败（存储满或损坏）时这次开机内仍保留新记录，不会每帧重试。**只在一局结束时记录**，不要在得分每涨一次时记（打一个敌人写一次 flash）。小恐龙、滑雪、黄金矿工、跳一跳、僵尸围城、星际战机、极速赛车已接入；退出再进、重启后标题画面的“最高”都是上次的记录。主机测试 `./scripts/test-app-best.sh`，无屏测试 `check_records` 覆盖七个游戏的退出再进。
 
 **设置存储**：`app_storage_load/save(key, data, size)` 给每个应用几个字节的跨重启设置：key 是 1..15 个 `[a-z0-9_]`，size 至多 `APP_STORAGE_MAX`（64 字节），读取失败（没存过或大小不符）不改动调用者的缓冲区。写 flash 慢：只在玩家明确修改时保存，不要每帧写；数据格式要带版本号和范围校验（读到别人或旧版本的数据就用默认值，闹钟的 `al_config_valid()` 是例子）。
 
@@ -242,7 +249,7 @@ app_alarm_spec_t once = {.owner = "fishing", .target = "alarm", .label = "鱼汛
 | 按键 | USB `app_event` 回传词；复用 Hook 回传服务 |
 | 设置 | 六页：固件版本/构建时间、应用数量、Hook 信息、待机设置、硬件状态、硬件配置 |
 | 示例 | 点击计数、清零、动画、雷达状态和 PC 自定义标题 |
-| 启动器 | 隐藏的系统应用，代码图标、分页、选择动画和确认圆 |
+| 启动器 | 隐藏的系统应用，iPod 式列表、高亮条滑动、滚动条、图标预览和长按填充 |
 
 设置短按循环六页。硬件配置页长按编辑、短按切换、长按保存，再长按重启生效。待机页长按进入编辑，短按切换可选应用，长按保存；三击随时回菜单。固件版本取 ESP-IDF app descriptor，当前版本由 `version.txt` 管理。数量统计已编译的可见应用，默认 22 个，不含系统 launcher；不显示凭据或认证密钥。
 
