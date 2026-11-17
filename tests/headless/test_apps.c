@@ -157,6 +157,63 @@ static void play_ski(const char *out)
     run(700);event(APP_EVENT_DOWN);event(APP_EVENT_UP);assert(game_status("ski","robot ski status","phase=")==1); /* restart */
 }
 #endif
+#ifdef ESPHOOK_TEST_MUYU
+/* True when a label with exactly this text is on screen (it and all its parents are not hidden). */
+static bool shows_text(lv_obj_t *obj,const char *text)
+{
+    if(lv_obj_has_flag(obj,LV_OBJ_FLAG_HIDDEN)) return false;
+    if(lv_obj_check_type(obj,&lv_label_class) && !strcmp(lv_label_get_text(obj),text)) return true;
+    for(uint32_t i=0;i<lv_obj_get_child_count(obj);++i) if(shows_text(lv_obj_get_child(obj,(int32_t)i),text)) return true;
+    return false;
+}
+static void play_muyu(const char *out)
+{
+    assert(app_open(&manager.context,"muyu"));app_manager_commit(&manager);run(300);
+    assert(game_status("muyu","robot muyu status","count=")==0 && game_status("muyu","robot muyu status","auto=")==0);
+    assert(shows_text(lv_screen_active(),"功德 0") && !shows_text(lv_screen_active(),"功德+1"));dump(out,"muyu-idle");
+    event(APP_EVENT_DOWN);event(APP_EVENT_UP);dump(out,"muyu-strike"); /* about 20 ms after the knock: the mallet is landing */
+    assert(game_status("muyu","robot muyu status","count=")==1 && shows_text(lv_screen_active(),"功德 1") && shows_text(lv_screen_active(),"功德+1"));
+    run(70);dump(out,"muyu-impact");run(200);dump(out,"muyu-float");
+    run(500);assert(!shows_text(lv_screen_active(),"功德+1"));dump(out,"muyu-calm"); /* the label has risen and faded away */
+    for(unsigned i=0;i<4;++i) { event(APP_EVENT_DOWN);event(APP_EVENT_UP);run(400); }
+    assert(game_status("muyu","robot muyu status","count=")==5);
+    event(APP_EVENT_CONFIRM);assert(game_status("muyu","robot muyu status","auto=")==1 && shows_text(lv_screen_active(),"自动"));
+    run(2100);assert(game_status("muyu","robot muyu status","count=")==7);dump(out,"muyu-auto");
+    event(APP_EVENT_CONFIRM);assert(game_status("muyu","robot muyu status","auto=")==0);run(2100);
+    assert(game_status("muyu","robot muyu status","count=")==7);
+    for(unsigned i=7;i<107;++i) { event(APP_EVENT_DOWN);event(APP_EVENT_UP); }
+    event(APP_EVENT_DOWN);event(APP_EVENT_UP);run(120);
+    assert(game_status("muyu","robot muyu status","count=")==108 && game_status("muyu","robot muyu status","rounds=")==1);
+    assert(shows_text(lv_screen_active(),"功德圆满") && shows_text(lv_screen_active(),"功德 108"));dump(out,"muyu-round");
+    assert(game_status("muyu","robot muyu status","frames=")>100);
+    event(APP_EVENT_SHORT);assert(!strcmp(app_active_id(&manager.context),"muyu")); /* SHORT is the release of a knock: no navigation */
+}
+#endif
+#ifdef ESPHOOK_TEST_WEDDING
+static unsigned changed_pixels(const uint16_t *a,const uint16_t *b) { unsigned n=0;for(unsigned i=0;i<160*64;++i) n+=a[i]!=b[i];return n; }
+/* The banner scene is a pure function of the time since entry: sample it across both banners and a popper. */
+static void play_wedding(const char *out)
+{
+    assert(app_open(&manager.context,"wedding"));app_manager_commit(&manager);run(100);
+    assert(game_status("wedding","robot wedding status","active=")==1);
+    static const unsigned times[]={100,400,1000,2400,4200,4900,5600,7200,9000};
+    static uint16_t previous[160*80];
+    unsigned now=100,frames=game_status("wedding","robot wedding status","frames=");
+    for(unsigned i=0;i<sizeof times/sizeof times[0];++i) {
+        run(times[i]-now);now=times[i];
+        char name[32];snprintf(name,sizeof name,"wedding-%04u",now);dump(out,name);lv_refr_now(lv_display_get_default());
+        if(i) assert(changed_pixels(previous,framebuffer)>200); /* confetti, ribbons and streamers never stand still */
+        memcpy(previous,framebuffer,sizeof previous);
+        unsigned ink=0; /* the golden banner letters: warm, bright pixels in the middle of the canvas */
+        for(unsigned y=10;y<56;++y) for(unsigned x=20;x<140;++x) { unsigned c=framebuffer[y*160+x],r=(c>>11)*255/31,g=((c>>5)&63)*255/63,b=(c&31)*255/31;ink+=r>220 && g>150 && b<150; }
+        if(i==3 || i==6) assert(ink>250 && game_status("wedding","robot wedding status","page=")==(i==3?0U:1U));
+    }
+    assert(game_status("wedding","robot wedding status","frames=")>frames+150); /* about 25 frames a second */
+    app_event_t wish={.kind=APP_EVENT_MESSAGE,.text="{\"text\":\"祝小明和小红 百年好合 永结同心\"}",.ms=manager.context.now_ms};
+    app_manager_event(&manager,&wish);run(400);dump(out,"wedding-wish"); /* dump() checks every glyph of the new text exists */
+    event(APP_EVENT_SHORT);assert(!strcmp(app_active_id(&manager.context),"launcher"));
+}
+#endif
 void aihook_font_12_set_bitmap(const uint8_t *);
 void aihook_font_16_set_bitmap(const uint8_t *);
 int main(int argc,char **argv)
@@ -169,7 +226,7 @@ int main(int argc,char **argv)
     lv_display_set_buffers(d,draw_buffer,NULL,sizeof draw_buffer,LV_DISPLAY_RENDER_MODE_PARTIAL);lv_display_set_flush_cb(d,flush);
     for(size_t i=0;i<esphook_app_count;++i) if(esphook_apps[i]->init) assert(esphook_apps[i]->init());
     app_platform_t p={.scene_create=scene,.scene_delete=destroy,.save_standby=save};ui=robot_ui_default();
-    assert(app_manager_init(&manager,esphook_apps,esphook_app_count,&p,"face",0));run(100);
+    assert(app_manager_init(&manager,esphook_apps,esphook_app_count,&p,app_manager_default_standby(esphook_apps,esphook_app_count,"face"),0));run(100);
 #ifdef ESPHOOK_TEST_STOCK
     stock_data();
 #endif
@@ -195,6 +252,12 @@ int main(int argc,char **argv)
 #ifdef ESPHOOK_TEST_SKI
     play_ski(out);
 #endif
+#ifdef ESPHOOK_TEST_MUYU
+    play_muyu(out);
+#endif
+#ifdef ESPHOOK_TEST_WEDDING
+    play_wedding(out);
+#endif
     assert(app_open(&manager.context,"settings"));app_manager_commit(&manager);run(20);
     event(APP_EVENT_SHORT);event(APP_EVENT_SHORT);event(APP_EVENT_SHORT);event(APP_EVENT_CONFIRM);
     event(APP_EVENT_SHORT);event(APP_EVENT_CONFIRM);assert(standby[0] && strcmp(standby,"face"));dump(out,"settings-standby");
@@ -203,7 +266,10 @@ int main(int argc,char **argv)
     assert(hardware_profile==APP_PROFILE_AUTO && restarts==0);
     event(APP_EVENT_CONFIRM);assert(restarts==1);
     assert(app_open(&manager.context,"launcher"));app_manager_commit(&manager);run(20);
-    for(size_t i=0;i<app_count(&manager.context);++i) { event(APP_EVENT_SHORT);assert(!strcmp(app_active_id(&manager.context),"launcher")); }
+    for(size_t i=0;i<app_count(&manager.context);++i) {
+        event(APP_EVENT_SHORT);assert(!strcmp(app_active_id(&manager.context),"launcher"));
+        if(i%3==0) { char name[32];snprintf(name,sizeof name,"launcher-page%zu",i/3+1);run(300);dump(out,name); } /* icons of every page */
+    }
 #ifdef ESPHOOK_TEST_DEMO
     assert(app_open(&manager.context,"demo"));app_manager_commit(&manager);event(APP_EVENT_SHORT);
     app_event_t message={.kind=APP_EVENT_MESSAGE,.text="{\"text\":\"PC 自定义标题\"}",.ms=manager.context.now_ms};app_manager_event(&manager,&message);run(20);dump(out,"demo-message");

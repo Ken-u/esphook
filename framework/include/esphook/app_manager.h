@@ -11,6 +11,8 @@ struct app_manager {
     app_context_t context;
     union { max_align_t alignment; unsigned char bytes[APP_STATE_CAPACITY]; } storage;
 };
+/* Id of the app flagged APP_STANDBY|APP_DEFAULT_STANDBY, or `fallback` when the catalog has none. */
+const char *app_manager_default_standby(const app_descriptor_t *const *catalog, size_t count, const char *fallback);
 bool app_manager_init(app_manager_t *m, const app_descriptor_t *const *catalog,
                       size_t count, const app_platform_t *platform,
                       const char *standby_id, uint64_t now_ms);

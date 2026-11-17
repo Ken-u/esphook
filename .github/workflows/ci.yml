@@ -42,6 +42,8 @@ jobs:
         run: ./scripts/test-dino.sh
       - name: Test ski game
         run: ./scripts/test-ski.sh
+      - name: Test wooden fish counter
+        run: ./scripts/test-muyu.sh
       - name: Test universal hardware profiles and optional-driver failure handling
         run: ./scripts/test-hardware.sh
       - name: Install UI protocol test dependency

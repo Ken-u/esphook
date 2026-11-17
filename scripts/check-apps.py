@@ -58,8 +58,12 @@ def check(root, catalog=None):
             flags = re.search(r"\.flags\s*=\s*([^,}]+)", descriptor)
             if not title:
                 raise ValueError("descriptor needs a literal .title")
-            catalog.append(dict(id=app_id, title=title[1], hidden=bool(flags and "APP_HIDDEN" in flags[1]),
-                                standby=bool(flags and "APP_STANDBY" in flags[1])))
+            def has(flag):
+                return bool(flags and re.search(r"\b" + flag + r"\b", flags[1]))
+            if has("APP_DEFAULT_STANDBY") and not has("APP_STANDBY"):
+                raise ValueError("APP_DEFAULT_STANDBY needs APP_STANDBY as well")
+            catalog.append(dict(id=app_id, title=title[1], hidden=has("APP_HIDDEN"), standby=has("APP_STANDBY"),
+                                default=has("APP_DEFAULT_STANDBY")))
             if re.search(r'#\s*include\s*[<"](?:driver/|esp_lcd|esp_http_client|usb_cdc\.h|(?:esphook/)?(?:robot_runtime|motion_ports)\.h)', combined):
                 raise ValueError("apps must use framework device/transport APIs")
         except (KeyError, ValueError, TypeError, OSError) as exc:
@@ -72,6 +76,9 @@ def check(root, catalog=None):
                           "shorten titles, reduce visible apps or enlarge main/usb_cdc.h")
     except (OSError, ValueError) as exc:
         errors.append(f"cannot verify the `list` ack size: {exc}")
+    defaults = [a["id"] for a in catalog if a.get("default")]
+    if len(defaults) > 1:
+        errors.append(f"only one app may set APP_DEFAULT_STANDBY, found {', '.join(defaults)}")
     for required in ("launcher", "face", "settings"):
         if required not in ids:
             errors.append(f"missing required app {required}")

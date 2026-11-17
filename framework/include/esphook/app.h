@@ -21,7 +21,9 @@ typedef struct {
     uint64_t ms;
     const char *text; /* Borrowed until on_event returns. Never retain this pointer. */
 } app_event_t;
-enum { APP_HIDDEN = 1U, APP_STANDBY = 2U, APP_NOTIFICATIONS = 4U };
+/* APP_DEFAULT_STANDBY (together with APP_STANDBY) makes an app the standby used when none is saved in NVS or the
+ * saved one is gone; at most one app may set it, and `face` stays the fallback when none does. */
+enum { APP_HIDDEN = 1U, APP_STANDBY = 2U, APP_NOTIFICATIONS = 4U, APP_DEFAULT_STANDBY = 8U };
 
 /* All lifecycle/event/tick/render callbacks run on the UI task. command is the
  * only exception: called by the USB task; it must enqueue/copy and never use UI. */

@@ -8,6 +8,8 @@ static bool save_ok=true;
 static char saved[24];
 static void *scene(void *u) { (void)u; assert(!scenes); ++scenes; return &scenes; }
 static void destroy(void *root,void *u) { (void)u; assert(root==&scenes && scenes==1); --scenes; }
+static void *scene2(void *u) { (void)u; return &saved; }
+static void destroy2(void *root,void *u) { (void)u; assert(root==&saved); }
 static void release(const char *id,void *u) { (void)id;(void)u;++releases; }
 static bool save(const char *id,void *u) { (void)u;if(save_ok) strcpy(saved,id);return save_ok; }
 static void enter(app_context_t *c) { assert(*(unsigned *)c->state==0);*(unsigned *)c->state=24;++enters; }
@@ -69,5 +71,17 @@ int main(void)
     const app_descriptor_t *bad[]={&launcher,&invalid};app_manager_t unused;
     assert(!app_manager_init(&unused,bad,2,&p,"face",0));
     invalid=face;invalid.api_version=0;assert(!app_manager_init(&unused,bad,2,&p,"face",0));
-    protocol();puts("app framework: lifecycle ownership, catalog, cadence, standby persistence, global input, deferred navigation and bounded protocol passed");
+    /* Boot default: only an APP_STANDBY app that also asks for it counts; everything else falls back. */
+    static const app_descriptor_t wedding=DESC("wedding",APP_STANDBY|APP_DEFAULT_STANDBY), stray=DESC("stray",APP_DEFAULT_STANDBY);
+    const app_descriptor_t *const with_default[]={&launcher,&game,&face,&stray,&wedding,&radar};
+    assert(!strcmp(app_manager_default_standby(apps,4,"face"),"face"));
+    assert(!strcmp(app_manager_default_standby(with_default,6,"face"),"wedding"));
+    assert(!strcmp(app_manager_default_standby(with_default,4,"face"),"face")); /* no standby flag: ignored */
+    assert(!strcmp(app_manager_default_standby(NULL,0,"face"),"face"));
+    app_platform_t p2={.scene_create=scene2,.scene_delete=destroy2}; /* the first manager still owns the single scene above */
+    app_manager_t booted;assert(app_manager_init(&booted,with_default,6,&p2,app_manager_default_standby(with_default,6,"face"),0));
+    active(&booted,"wedding");assert(booted.idle && !strcmp(app_standby_id(&booted.context),"wedding"));
+    key(&booted,true,100);key(&booted,false,150);active(&booted,"launcher");
+    app_manager_tick(&booted,10150);active(&booted,"wedding"); /* the menu timeout returns to the default standby */
+    protocol();puts("app framework: lifecycle ownership, catalog, cadence, standby persistence, default standby, global input, deferred navigation and bounded protocol passed");
 }

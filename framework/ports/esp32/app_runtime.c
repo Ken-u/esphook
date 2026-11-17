@@ -79,7 +79,8 @@ static void boot(uint64_t now)
 {
     char standby[APP_ID_MAX + 1];
     if (config_get_standby(standby, sizeof standby) != ESP_OK || !find_app(standby) ||
-        !(find_app(standby)->flags & APP_STANDBY)) strcpy(standby, "face");
+        !(find_app(standby)->flags & APP_STANDBY))
+        snprintf(standby, sizeof standby, "%s", app_manager_default_standby(esphook_apps, esphook_app_count, "face"));
     app_platform_t platform = {.scene_create = scene_create, .scene_delete = scene_delete,
         .release_services = app_services_release, .save_standby = save_standby};
     ESP_ERROR_CHECK(app_manager_init(&s_manager, esphook_apps, esphook_app_count, &platform, standby, now) ? ESP_OK : ESP_ERR_INVALID_STATE);

@@ -15,4 +15,4 @@ description: Develop native apps and mini games in the esphook ESP32 project usi
 6. 用 `app_hook_read/reply` 复用通知与异步回传。用 `APP_EVENT_MESSAGE` 接收 PC 消息；事件 text 只在回调期间有效。PC 网络、历史数据和大型计算移到 `apps/<id>/pc`，参考 `docs/app-pc-protocol.md`。
 7. 按 `docs/app-framework.md` 的验证步骤运行受影响模型测试、`scripts/check-apps.py`、框架测试和真实 LVGL 无屏测试。需要交付固件时构建机器人和 legacy 两种配置，记录槽位占用。主机渲染通过不等于实机帧率已验证。
 
-给可选应用设置 `APP_STANDBY` 才会出现在待机选择中。`APP_NOTIFICATIONS` 指定待机收到通知时的接收应用，`APP_HIDDEN` 隐藏系统入口。菜单标题保持短小，长正文使用滚动标签。避免每帧分配内存、阻塞等待或联网；共享画布仅当前应用使用。
+给可选应用设置 `APP_STANDBY` 才会出现在待机选择中；再加 `APP_DEFAULT_STANDBY` 可成为未保存选择时的默认待机（全工程最多一个，现为 wedding）。`APP_NOTIFICATIONS` 指定待机收到通知时的接收应用，`APP_HIDDEN` 隐藏系统入口。菜单标题保持短小，长正文使用滚动标签。避免每帧分配内存、阻塞等待或联网；共享画布仅当前应用使用。

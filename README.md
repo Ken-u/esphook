@@ -6,12 +6,14 @@ ESP32-C3 小屏应用与小游戏框架，所有内置应用共用生命周期�
 - [PC SDK 与协议](docs/app-pc-protocol.md)：每个应用的配套位于 `apps/<id>/pc`，共用 USB SDK 位于 `framework/pc`。
 - [安装运行环境（推荐 uv）](docs/usb-environment.md)：独立虚拟环境、固定 USB 依赖及 macOS/Linux/Windows 命令；刷现成固件无需 ESP-IDF。
 - 项目内置 `$esphook-app`、`$esphook-pc`、`$esphook-check`，见 [AGENTS.md](AGENTS.md)。支持项目 skills 的工具可直接使用；其他工具读取对应 SKILL.md 即可。
-- 设置应用可查看固件版本、应用数量、Hook 信息，并选择待机应用（默认表情，保存后重启保留）。
+- 设置应用可查看固件版本、应用数量、Hook 信息，并选择待机应用（默认 **新婚快乐**，也可选表情/Hook/雷达，保存后重启保留）。
 
 > 通用固件同时支持原屏幕/Hook 设备和桌面机器人（ESP32-C3 SuperMini + ST7735 + LD2450 + NHY009）。[下载正式发布包](https://github.com/Ken-u/esphook/releases/latest)，烧录、USB 按键 SDK、映射和硬件状态见 [发布指南](docs/release-kit.md)。
 > 构建、接线及首次 USB 校准见 [机器人调试指南](docs/robot-bringup.md)。默认 auto 不初始化 PWM；机器人需先在设置中选择 robot 并重启，通过 USB 校准后使用 `robot arm` / `robot follow` 开启。
 > 新增 [表情/文字协议与扇形雷达调试页](docs/robot-display-protocol.md)：USB 输入 `robot radar` 切雷达页，`robot face` 返回；JSON 可客制表情和文字。
-> [GPIO6 启动器与全局按键](docs/robot-launcher.md)：待机眼睛动画，短按打开菜单；短按切换、按住 500ms 画圆确认；菜单 10s 无操作回待机；任何页面快速三击回菜单。
+> [GPIO6 启动器与全局按键](docs/robot-launcher.md)：默认待机为新婚快乐彩带屏（可改成眼睛动画等），短按打开菜单；短按切换、按住 500ms 画圆确认；菜单 10s 无操作回待机；任何页面快速三击回菜单。
+> [新婚快乐 / Happy Wedding](docs/robot-wedding.md)：**默认待机应用**。金色“新婚快乐”和“Happy Wedding”交替，顶部彩带飘动，彩纸飘落，左右礼花轮流射出卷曲的彩带，底部滚动祝福语（可由 PC 改写）。
+> [电子木鱼](docs/robot-muyu.md)：按键敲一下，**功德+1**；木槌落下、木鱼弹动、金色涟漪，满 108 下“功德圆满”，长按自动敲。
 > [投篮游戏](docs/robot-basketball.md)：从菜单进入，限时 2 分钟，篮筐随机变速变向、碰壁折返，球飞行时篮筐照常移动，要提前量；每中一球 2 分；竞技场背景、篮网摆动、命中火花和飘字、倒计时条和星级结算。
 > [小恐龙](docs/robot-dino.md)：Chrome 断网小恐龙，昼夜交替的像素画面。按下起跳，**轻点就能越过所有地面障碍**，按住跳得更高；高飞翼龙站着走过，速度越来越快。
 > [滑雪大冒险](docs/robot-ski.md)：横版下坡滑雪。按键起跳，**空中按住连续后空翻，翻满一圈以上有额外加分**和连击；跳过石头和冰缝，捡宝石，天色从白天渐变到夜晚。

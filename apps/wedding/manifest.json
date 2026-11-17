@@ -1,0 +1,8 @@
+{
+  "id": "wedding",
+  "order": "005",
+  "required": false,
+  "sources": [
+    "firmware/app.c"
+  ]
+}

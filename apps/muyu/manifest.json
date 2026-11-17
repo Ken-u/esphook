@@ -1,0 +1,9 @@
+{
+  "id": "muyu",
+  "order": "013",
+  "required": false,
+  "sources": [
+    "firmware/app.c",
+    "firmware/muyu_core.c"
+  ]
+}

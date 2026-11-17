@@ -71,6 +71,13 @@ void app_manager_commit(app_manager_t *m)
     m->ready = true; m->dirty = true; m->activity_ms = m->context.now_ms;
     if (m->context.app->on_enter) m->context.app->on_enter(&m->context);
 }
+const char *app_manager_default_standby(const app_descriptor_t *const *catalog, size_t count, const char *fallback)
+{
+    for (size_t i = 0; catalog && i < count; ++i)
+        if (catalog[i] && (catalog[i]->flags & (APP_STANDBY | APP_DEFAULT_STANDBY)) == (APP_STANDBY | APP_DEFAULT_STANDBY))
+            return catalog[i]->id;
+    return fallback;
+}
 bool app_manager_init(app_manager_t *m, const app_descriptor_t *const *catalog,
                       size_t count, const app_platform_t *platform,
                       const char *standby_id, uint64_t ms)

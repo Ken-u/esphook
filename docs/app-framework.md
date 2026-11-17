@@ -24,7 +24,7 @@ idf.py build
 | `framework/core/app_keys.c` | 实体/USB 输入合并、映射与 USB 租期取消 |
 | `framework/core/app_input.c` | 25ms 消抖、500ms 确认、800ms 三击、松手消费 |
 | `framework/include/esphook/app_ui.h` | LVGL 标签、矩形、图层、字体、确认圆与共享 RGB565 画布 |
-| `framework/include/esphook/app_gfx.h` | 画布软件绘图：线/圆/渐变（抖动）、半透明叠加、调色板点阵、山脉/云/太阳，只在 UI 任务调用 |
+| `framework/include/esphook/app_gfx.h` | 画布软件绘图：线/圆/圆环/椭圆光晕/渐变（抖动）、半透明叠加、调色板点阵、整数开方、山脉/云/太阳，只在 UI 任务调用 |
 | `framework/include/esphook/app_services.h` | 雷达、舵机、Hook、显示协议、设备信息、时钟、随机数、PC 事件 |
 | `framework/ports/esp32` | RTOS 队列、NVS 适配、异步 Hook 回传、LVGL 与 LCD 输出 |
 | `framework/services` | Hook 通知模型、人体跟随/校准、显示协议与雷达投影 |
@@ -63,7 +63,7 @@ const app_descriptor_t esphook_app_counter = {
 
 除 init 和 command 外，回调都由 UI 任务调用。导航 `app_open/menu/idle` 延迟到回调返回提交；不允许把 ctx 或事件临时指针留给后台任务。回调中不等待、联网或执行长计算；传输模型需要跨任务时独立同步，例如 stock_transport 的互斥锁。
 
-所有应用共用 2048 字节会话区，而不是每个应用预留一份。雷达、K 线、小恐龙、滑雪和投篮共用 160×64 的 20,480 字节像素缓冲（`APP_CANVAS_W/H`；雷达和 K 线只用其中 160×48），整屏重绘的游戏用 `app_gfx.h` 里的有裁剪绘图函数。共享画布每次使用都重绘，切出前清理图片缓存，参见雷达/股票的 on_leave。常驻股票上传暂存区仍在应用自己的 transport 中，只有完整数据才提交。
+所有应用共用 2048 字节会话区，而不是每个应用预留一份。雷达、K 线、小恐龙、滑雪、投篮、新婚快乐和电子木鱼共用 160×64 的 20,480 字节像素缓冲（`APP_CANVAS_W/H`；雷达和 K 线只用其中 160×48），整屏重绘的游戏用 `app_gfx.h` 里的有裁剪绘图函数。共享画布每次使用都重绘，切出前清理图片缓存，参见雷达/股票的 on_leave。常驻股票上传暂存区仍在应用自己的 transport 中，只有完整数据才提交。
 
 ## 注册与应用配置
 
@@ -78,7 +78,8 @@ const app_descriptor_t esphook_app_counter = {
 | flags | 语义 |
 | --- | --- |
 | `APP_HIDDEN` | 系统应用，不占启动器、设置应用计数；launcher 使用此标记 |
-| `APP_STANDBY` | 可作为待机应用，当前有 face、hook、radar |
+| `APP_STANDBY` | 可作为待机应用，当前有 wedding、face、hook、radar |
+| `APP_DEFAULT_STANDBY` | 与 `APP_STANDBY` 一起使用：NVS 没有保存待机、或保存的应用已不存在时的默认待机，当前是 wedding；整个工程最多一个，没有则回退 face |
 | `APP_NOTIFICATIONS` | 待机收到通知时切到此应用，当前由 hook 使用；进行中的游戏、设置不会被抢占 |
 
 ## 全局输入与导航
@@ -94,7 +95,7 @@ GPIO6 内部上拉、按下接 GND，双边沿 ISR 只唤醒输入任务。通�
 
 USB 按住租期为 350ms，SDK 通过 hold/press/poll 每 100ms 续期；失联、失焦或主动 release_keys 产生 CANCEL，不产生 SHORT/CONFIRM。应用用 CANCEL 清理临时按住状态，如恢复 K 线计时，不能成交。映射在下次 DOWN 生效，现有 UP 保留旧映射。详见 [PC 协议](app-pc-protocol.md)。
 
-待机 id 保存在 NVS `apps/standby`，默认 face。保存失败不更新内存设置；如果升级后 id 不存在或不支持待机，启动时回退 face。恢复出厂也清理该设置。
+待机 id 保存在 NVS `apps/standby`；没有保存时使用带 `APP_DEFAULT_STANDBY` 的应用（现在是 wedding，`app_manager_default_standby()` 解析），没有这样的应用则回退 face。保存失败不更新内存设置；如果升级后保存的 id 不存在或不支持待机，启动时同样取默认待机。恢复出厂也清理该设置。
 
 ## 硬件与 Hook 服务
 
@@ -114,6 +115,8 @@ Hook 的 HTTP `/notify`、`/dismiss`、配对、鉴权和 device link 协议保�
 | 投篮 | 设备端纯 C 规则，两分钟、随机速度、计分；共享画布绘制竞技场、篮网、火花，见 [robot-basketball.md](robot-basketball.md) |
 | 小恐龙 | 单键跳跃跑酷；轻点即可越过地面障碍；纯 C 固定步长规则，共享画布点阵绘制（昼夜、视差、尘土），见 [robot-dino.md](robot-dino.md) |
 | 滑雪大冒险 | 横版下坡，单键起跳、空中按住连续翻转、翻圈加分；纯 C 规则，共享画布绘制，见 [robot-ski.md](robot-ski.md) |
+| 新婚快乐 | 默认待机：金色“新婚快乐/Happy Wedding”交替、彩带、礼花、彩纸，滚动祝福语可由 PC 消息改写，见 [robot-wedding.md](robot-wedding.md) |
+| 电子木鱼 | 按键敲击，功德+1，木槌/涟漪动画，满 108 下功德圆满，长按自动敲；纯 C 计数核心，见 [robot-muyu.md](robot-muyu.md) |
 | 做 T | PC 行情/均线/交易/结算；设备端 RAM 数据、图表和按键协议 |
 | 雷达 | 三目标扇形调试图，服务快照 |
 | Hook | 通知展示、未读信息、选择回复词及确认回传 |
@@ -122,7 +125,7 @@ Hook 的 HTTP `/notify`、`/dismiss`、配对、鉴权和 device link 协议保�
 | 示例 | 点击计数、清零、动画、雷达状态和 PC 自定义标题 |
 | 启动器 | 隐藏的系统应用，代码图标、分页、选择动画和确认圆 |
 
-设置短按循环六页。硬件配置页长按编辑、短按切换、长按保存，再长按重启生效。待机页长按进入编辑，短按切换可选应用，长按保存；三击随时回菜单。固件版本取 ESP-IDF app descriptor，当前版本由 `version.txt` 管理。数量统计已编译的可见应用，默认 10 个，不含系统 launcher；不显示凭据或认证密钥。
+设置短按循环六页。硬件配置页长按编辑、短按切换、长按保存，再长按重启生效。待机页长按进入编辑，短按切换可选应用，长按保存；三击随时回菜单。固件版本取 ESP-IDF app descriptor，当前版本由 `version.txt` 管理。数量统计已编译的可见应用，默认 12 个，不含系统 launcher；不显示凭据或认证密钥。
 
 PC 的运行入口和协议见 [app-pc-protocol.md](app-pc-protocol.md)。旧投篮命令仍可用，start 排队打开新局，stop 回菜单，status 查询最近快照；`robot menu` 通用开菜单。
 
@@ -140,6 +143,7 @@ python3 apps/key_report/pc/test_bridge.py
 ./scripts/test-basketball.sh
 ./scripts/test-dino.sh
 ./scripts/test-ski.sh
+./scripts/test-muyu.sh
 ./scripts/test-robot-ui.sh
 python3 apps/stock/pc/test_stock_t.py
 python3 apps/hook/pc/test_hooks.py
@@ -155,6 +159,6 @@ git clone --depth 1 --branch v9.5.0 https://github.com/lvgl/lvgl.git /tmp/esphoo
 LVGL_SOURCE_DIR=/tmp/esphook-lvgl ./scripts/test-app-ui.sh
 ```
 
-它使用现有 fontdata 和 64KB LVGL 堆，遍历所有 manifest 应用、重复切换、检查根节点释放、设置持久化回调与 PC 消息，并实际玩一遍投篮（出手、命中/未进、时间到结算）、小恐龙和滑雪（起跳/翻转、落地、结束、重开）；每次截图前检查屏幕上每个 label 的每个字都在固件字库里（缺字会显示成空白），并断言 LVGL 堆占用低于 80%（可设 `ESPHOOK_HEAP_REPORT=1` 打印各应用占用）。输出 PPM 屏幕帧。CI 上传这些帧，额外构建 ESP-IDF 5.5.4 默认通用配置与禁用机器人驱动的旧 Hook 配置。可选应用的完整硬件行为仍需要实机确认；主机 UI 测试不会驱动舵机，也不能证明实际 FPS。
+它使用现有 fontdata 和 64KB LVGL 堆，遍历所有 manifest 应用、重复切换、检查根节点释放、设置持久化回调与 PC 消息，并实际玩一遍投篮（出手、命中/未进、时间到结算）、小恐龙和滑雪（起跳/翻转、落地、结束、重开）、电子木鱼（敲击、浮字、自动、第 108 下）和新婚快乐（两种横幅、礼花、祝福语消息）；每次截图前检查屏幕上每个 label 的每个字都在固件字库里（缺字会显示成空白），并断言 LVGL 堆占用低于 80%（可设 `ESPHOOK_HEAP_REPORT=1` 打印各应用占用）。输出 PPM 屏幕帧。CI 上传这些帧，额外构建 ESP-IDF 5.5.4 默认通用配置与禁用机器人驱动的旧 Hook 配置。可选应用的完整硬件行为仍需要实机确认；主机 UI 测试不会驱动舵机，也不能证明实际 FPS。
 
 `APP_UI_BUILD_DIR` / `APP_UI_FRAMES_DIR` 可覆盖无屏测试目录。CI 的固件尺寸检查沿用两个 OTA 槽；先看实际体积再决定是否取消 OTA。未新增固件图片或大型游戏依赖。

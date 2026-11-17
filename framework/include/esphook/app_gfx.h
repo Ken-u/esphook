@@ -102,6 +102,42 @@ static inline void gfx_disc(uint16_t *px, int cx, int cy, int r, uint16_t c)
         for (int x = -r; x <= r; ++x)
             if (x * x + y * y <= r * r + r / 2) gfx_plot(px, cx + x, cy + y, c);
 }
+/* Integer square root (rounded down); the device has no FPU, so scene code uses this instead of sqrtf. */
+static inline uint32_t gfx_isqrt(uint32_t v)
+{
+    uint32_t root = 0, bit = 1U << 30;
+    while (bit > v) bit >>= 2;
+    while (bit) {
+        if (v >= root + bit) { v -= root + bit; root = (root >> 1) + bit; }
+        else root >>= 1;
+        bit >>= 2;
+    }
+    return root;
+}
+/* One pixel thick circle outline of radius r, blended with the 0xRRGGBB color at `alpha` (256 = solid). */
+static inline void gfx_ring(uint16_t *px, int cx, int cy, int r, uint32_t rgb, unsigned alpha)
+{
+    if (r < 1) return;
+    for (int y = -r; y <= r; ++y) {
+        int inner = r * r - r - y * y, outer = r * r + r - y * y;
+        if (outer < 0) continue;
+        int xo = (int)gfx_isqrt((uint32_t)outer), xi = inner > 0 ? (int)gfx_isqrt((uint32_t)inner) : 0;
+        if (inner > 0 && xi * xi < inner) ++xi; /* first column inside the band */
+        for (int x = xi; x <= xo; ++x) {
+            gfx_tint_plot(px, cx + x, cy + y, rgb, alpha);
+            if (x) gfx_tint_plot(px, cx - x, cy + y, rgb, alpha);
+        }
+    }
+}
+/* Filled ellipse (radii rx, ry) blended with the 0xRRGGBB color at `alpha`: halos, glows and soft shadows. */
+static inline void gfx_tint_ellipse(uint16_t *px, int cx, int cy, int rx, int ry, uint32_t rgb, unsigned alpha)
+{
+    if (rx < 1 || ry < 1) return;
+    for (int dy = -ry; dy <= ry; ++dy) {
+        int half = rx * (int)gfx_isqrt((uint32_t)(ry * ry - dy * dy)) / ry;
+        gfx_tint(px, cx - half, cy + dy, half * 2 + 1, 1, rgb, alpha);
+    }
+}
 /* Filled triangle pointing up: apex at (cx, top), base `base_w` wide on row top + h - 1. */
 static inline void gfx_peak(uint16_t *px, int cx, int top, int base_w, int h, uint16_t c)
 {
