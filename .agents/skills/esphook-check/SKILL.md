@@ -13,6 +13,11 @@ description: Validate esphook framework and app changes with manifest checks, li
 4. 设置 `LVGL_SOURCE_DIR` 为 v9.5.0 源码，运行 `scripts/test-app-ui.sh`。它编译全部已启用应用并用真实 LVGL/中文字体在 64KB UI 堆上反复切换；查看屏幕帧、控件裁剪和退出后的对象释放。新增应用也由同一 manifest 发现。
 5. 运行 `tests/test_app_sdk.py` 和 `tests/test_scaffold.py`，受影响的 `apps/<id>/pc` 测试、`--dry-run`；原 Hook 回归位于 `apps/hook/pc/test_*.py`。
 6. 用 ESP-IDF 5.5.4 构建默认通用配置和 `CONFIG_DESKTOP_FOLLOW_ROBOT=n` 配置，或查看仓库 CI。查看应用分区剩余空间后再决定是否移除 OTA，不能仅看源码大小。
+7. **CI 全绿后每次都要刷固件**（推送即自动发布 Release，默认分支）：
+   1. `ls /dev/cu.usbmodem*` 找串口，`lsof <串口>` 确认没有 monitor/bridge 等进程占用。
+   2. `gh release view --repo <owner>/<repo> --json tagName,targetCommitish`，确认最新 Release 的 `targetCommitish` 等于刚推送的提交；不是则等发布完成，或改用该次 CI run 的 artifact。
+   3. 下载 `esphook-full-flash.zip` 和 `SHA256SUMS`，`shasum -a 256 -c` 校验后解压；在解压目录 `uv venv --python 3.11 --seed .esphook-venv`，`uv pip install --python .esphook-venv/bin/python -r tools/requirements-flash.txt`，先 `python flash.py --dry-run`，再 `python flash.py --port <串口>`。
+   4. 刷后用 `AppLink` 查 `status` 和 `hardware`（含 `usb_tx_drops`）确认启动，按改动实测相关功能，最后 `open face` 回待机。
 
 回归已通过且没有新证据时停止重复测试。交付时说明分支/提交、实际通过的检查、固件体积，以及需要硬件确认的帧率、按键手感和电源/舵机表现。
 
