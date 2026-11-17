@@ -16,8 +16,10 @@ WORDS = "status plugin plain invert gap save mhz raw start stop"
 def command_line(words):
     return " ".join(["robot screentest"] + list(words)).strip()
 
+REPLIES = (b"OK", b"ERR", b"invert=")
+
 def ask(link, line, wait=2.0):
-    """First plain-text (non-JSON) reply line, which is how apps answer `robot <app> ...`."""
+    """The device's plain-text reply to `robot screentest ...`; log lines on the same port are skipped."""
     link.serial.reset_input_buffer()
     link.send_line(line)
     end = time.monotonic() + wait
@@ -26,7 +28,7 @@ def ask(link, line, wait=2.0):
         buf += link.serial.read(link.serial.in_waiting or 1)
         for raw in buf.split(b"\n")[:-1]:
             text = raw.strip()
-            if text and not text.startswith(b"{"):
+            if text.startswith(REPLIES):
                 return text.decode(errors="replace")
     return None
 
