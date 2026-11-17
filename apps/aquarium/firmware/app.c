@@ -12,10 +12,11 @@
  * sweeps back and forth above the water; a press drops a pinch of food where it is. The simulation lives in
  * aquarium_core.c; this file only draws it and turns key presses into feeding. */
 #define BAND_Y 64
+#define EXIT_HOLD_MS 2000U
 
 typedef struct {
     aq_t tank;
-    lv_obj_t *plot, *band, *line, *fed, *eaten, *hint;
+    lv_obj_t *plot, *band, *line, *hold, *fed, *eaten, *hint;
     lv_image_dsc_t image;
     uint64_t last_ms;
     uint32_t shown_fed, shown_eaten;
@@ -333,13 +334,15 @@ static void build(state_t *s, lv_obj_t *root)
     s->band = app_ui_rect(root, 0, BAND_Y, APP_WIDTH, APP_HEIGHT - BAND_Y, 0x2A1B10, 0); /* the wooden stand */
     s->line = app_ui_rect(root, 0, BAND_Y, APP_WIDTH, 1, 0x8A6034, 0);
     app_ui_rect(root, 0, BAND_Y + 1, APP_WIDTH, 1, 0x4A3018, 0);
-    s->fed = app_ui_label(s->band, &aihook_font_12, 4, 2, 52, 14, LV_LABEL_LONG_MODE_CLIP);
-    s->eaten = app_ui_label(s->band, &aihook_font_12, 58, 2, 54, 14, LV_LABEL_LONG_MODE_CLIP);
-    s->hint = app_ui_label(s->band, &aihook_font_12, 109, 2, 51, 14, LV_LABEL_LONG_MODE_CLIP);
+    s->fed = app_ui_label(s->band, &aihook_font_12, 3, 2, 46, 14, LV_LABEL_LONG_MODE_CLIP);
+    s->eaten = app_ui_label(s->band, &aihook_font_12, 47, 2, 46, 14, LV_LABEL_LONG_MODE_CLIP);
+    s->hint = app_ui_label(s->band, &aihook_font_12, 93, 2, 67, 14, LV_LABEL_LONG_MODE_CLIP);
     lv_obj_set_style_text_color(s->fed, app_ui_color(0xF4D9A4), LV_PART_MAIN);
     lv_obj_set_style_text_color(s->eaten, app_ui_color(0xFFB4C6), LV_PART_MAIN);
     lv_obj_set_style_text_color(s->hint, app_ui_color(0xB5A488), LV_PART_MAIN);
-    app_ui_text(s->hint, "按键投食");
+    app_ui_text(s->hint, "按住2秒退出");
+    s->hold = app_ui_rect(root, 0, BAND_Y, 0, 2, APP_COLOR_ACCENT, 0); /* the hold towards the exit */
+    app_ui_hide(s->hold, true);
 }
 static void publish(const state_t *s, bool active, bool frame)
 {
@@ -353,6 +356,8 @@ static void enter(app_context_t *ctx)
 {
     state_t *s = ctx->state;
     aq_init(&s->tank, app_random() ^ (uint32_t)ctx->now_ms);
+    app_set_triple_exit(ctx, false); /* food is thrown by mashing the key; holding it for two seconds is the way out */
+    app_set_exit_hold(ctx, EXIT_HOLD_MS);
     s->last_ms = ctx->now_ms;
     s->shown_fed = s->shown_eaten = 0xFFFFFFFFU;
     portENTER_CRITICAL(&s_lock); s_status = (status_t){0}; portEXIT_CRITICAL(&s_lock);
@@ -392,6 +397,7 @@ static void render(app_context_t *ctx)
         app_ui_text(s->eaten, text);
         s->shown_eaten = s->tank.eaten;
     }
+    app_ui_hold_line(s->hold, app_exit_hold_progress(ctx), false, EXIT_HOLD_MS);
     draw_scene(app_ui_pixels(), &s->tank, (unsigned)ctx->now_ms);
     app_ui_plot_refresh(s->plot, &s->image);
     publish(s, true, true);

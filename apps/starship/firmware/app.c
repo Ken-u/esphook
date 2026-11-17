@@ -19,13 +19,15 @@
 #define HY 25     /* the horizon: where everything at eye level converges */
 #define FOC 90    /* focal length in world units per pixel at z = 1 */
 #define DASH_Y 52
+#define EXIT_HOLD_MS 2000U
+#define HINT_SLOT_MS 2600U
 
 typedef struct { int cam, ox, oy; } view_t;
 typedef struct {
     ss_t core;
     steer_t steer;
     haptic_t haptic;
-    lv_obj_t *plot, *band, *line, *msg, *score, *tag, *tag_text, *title, *sub;
+    lv_obj_t *plot, *band, *line, *hold, *msg, *score, *tag, *tag_text, *title, *sub;
     lv_image_dsc_t image;
     uint64_t last_ms;
     int prev_cam;
@@ -350,6 +352,8 @@ static void build(state_t *s, lv_obj_t *root)
     s->score = app_ui_label(s->band, &aihook_font_12, 128, 2, 32, 14, LV_LABEL_LONG_MODE_CLIP);
     lv_obj_set_style_text_color(s->msg, app_ui_color(0xCFE0F8), LV_PART_MAIN);
     lv_obj_set_style_text_color(s->score, app_ui_color(0xFFD84A), LV_PART_MAIN);
+    s->hold = app_ui_rect(root, 0, BAND_Y, 0, 2, APP_COLOR_ACCENT, 0); /* the hold towards the exit */
+    app_ui_hide(s->hold, true);
     s->tag = app_ui_rect(root, 128, 5, 29, 14, 0x2E8B57, 5);
     s->tag_text = app_ui_label(s->tag, &aihook_font_12, 0, 1, 29, 12, LV_LABEL_LONG_MODE_CLIP);
     app_ui_center(s->tag_text);
@@ -385,8 +389,19 @@ static void enter(app_context_t *ctx)
     steer_init(&s->steer);
     haptic_init(&s->haptic);
     s->last_ms = ctx->now_ms;
+    app_set_triple_exit(ctx, false); /* a cannon is fired by mashing the key: three quick presses are never an exit */
     portENTER_CRITICAL(&s_lock); s_status = (status_t){0}; portEXIT_CRITICAL(&s_lock);
     publish(s, true, false);
+}
+static bool idle_screen(const state_t *s)
+{
+    return s->core.phase == SS_TITLE || (s->core.phase == SS_OVER && s->core.over_age_ms > 800U);
+}
+/* The way out is a two second hold on the title or game over screen, and only for a press that began there: a gun
+ * held down through a long fight must not leave the moment the ship is lost. */
+static void sync_exit(app_context_t *ctx, const state_t *s)
+{
+    app_set_exit_hold(ctx, idle_screen(s) && !s->down_in_play ? EXIT_HOLD_MS : 0U);
 }
 static void tick(app_context_t *ctx)
 {
@@ -396,6 +411,7 @@ static void tick(app_context_t *ctx)
     app_radar_read(&radar);
     if (radar.available && radar.online) steer_radar(&s->steer, now, true, radar.frame.targets);
     ss_steer(&s->core, steer_tick(&s->steer, now));
+    sync_exit(ctx, s);
     s->prev_cam = s->core.cam_x;
     ss_advance(&s->core, now > s->last_ms ? (uint32_t)(now - s->last_ms) : 0U);
     s->last_ms = now;
@@ -411,10 +427,6 @@ static void leave(app_context_t *ctx)
     haptic_stop(&s->haptic); /* the framework disarms the servo it leased to this app */
     if (s->plot) app_ui_plot_refresh(s->plot, &s->image); /* The shared canvas goes to the next app. */
     portENTER_CRITICAL(&s_lock); s_status.active = false; portEXIT_CRITICAL(&s_lock);
-}
-static bool idle_screen(const state_t *s)
-{
-    return s->core.phase == SS_TITLE || (s->core.phase == SS_OVER && s->core.over_age_ms > 800U);
 }
 static void event(app_context_t *ctx, const app_event_t *e)
 {
@@ -450,9 +462,10 @@ static void event(app_context_t *ctx, const app_event_t *e)
         break;
     default: break;
     }
+    sync_exit(ctx, s);
     publish(s, true, false);
 }
-static void sync_hud(state_t *s)
+static void sync_hud(state_t *s, uint64_t now, unsigned hold_ms)
 {
     const ss_t *g = &s->core;
     const haptic_state_t hs = haptic_state();
@@ -463,7 +476,9 @@ static void sync_hud(state_t *s)
     case SS_DYING: msg = "战机被击毁!"; break;
     default: msg = g->over_age_ms > 800U ? "按键再战" : "战机损毁"; break;
     }
-    const uint32_t key = (uint32_t)g->phase << 8 | (uint32_t)hs << 4 | (g->phase == SS_OVER && g->over_age_ms > 800U ? 1U : 0U);
+    const bool idle = idle_screen(s), exit_slot = idle && (now / HINT_SLOT_MS) % 2U == 1U; /* the hint of the way out alternates */
+    if (exit_slot) msg = "按住2秒退出";
+    const uint32_t key = (uint32_t)g->phase << 8 | (uint32_t)hs << 4 | (idle ? 1U : 0U) | (exit_slot ? 2U : 0U);
     if (key != s->shown_key) { app_ui_text(s->msg, msg); s->shown_key = key; }
     if (s->shown_score != g->score) {
         char text[16];
@@ -471,6 +486,7 @@ static void sync_hud(state_t *s)
         app_ui_text(s->score, text);
         s->shown_score = g->score;
     }
+    app_ui_hold_line(s->hold, hold_ms, hs == HAPTIC_READY, EXIT_HOLD_MS);
     app_ui_hide(s->tag, hs != HAPTIC_ARMED);
     const bool card = g->phase == SS_TITLE || g->phase == SS_OVER;
     app_ui_hide(s->title, !card);
@@ -488,7 +504,7 @@ static void render(app_context_t *ctx)
 {
     state_t *s = ctx->state;
     if (!s->plot) build(s, ctx->root);
-    sync_hud(s);
+    sync_hud(s, ctx->now_ms, app_exit_hold_progress(ctx));
     draw_scene(app_ui_pixels(), s, (unsigned)ctx->now_ms);
     app_ui_plot_refresh(s->plot, &s->image);
     publish(s, true, true);

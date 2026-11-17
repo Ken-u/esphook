@@ -12,6 +12,8 @@
 /* Layout: an 8 px sky strip, the 64 row pixel canvas (screen y 8..71), an 8 px snow strip. HUD pills float over the
  * canvas. The rider's reference ground is canvas row GROUND_ROW; a full hop leaves ~14 rows of head room. */
 #define CANVAS_Y 8
+#define EXIT_HOLD_MS 3000U
+#define HINT_SLOT_MS 2600U
 #define GROUND_ROW 44
 #define THEME_CYCLE_PX 7200.0
 #define THEME_HOLD_PX 1800.0
@@ -19,7 +21,7 @@
 
 typedef struct {
     ski_game_t game;
-    lv_obj_t *top, *plot, *bottom, *score_pill, *score, *gem_pill, *gem_count, *combo, *combo_text, *popup, *popup_text, *panel,
+    lv_obj_t *top, *plot, *bottom, *hold, *score_pill, *score, *gem_pill, *gem_count, *combo, *combo_text, *popup, *popup_text, *panel,
         *title, *line1, *line2;
     lv_image_dsc_t image;
     uint32_t sky_rgb, snow_rgb;
@@ -271,6 +273,10 @@ static void enter(app_context_t *ctx)
 {
     state_t *s = ctx->state;
     ski_start(&s->game, ctx->now_ms, app_random());
+    /* Jumping and spinning are done with the key, and a press starts a run: three quick presses are never an exit.
+     * Holding it for three seconds (a spin ends long before that) is. */
+    app_set_triple_exit(ctx, false);
+    app_set_exit_hold(ctx, EXIT_HOLD_MS);
 }
 static void tick(app_context_t *ctx)
 {
@@ -325,6 +331,8 @@ static void build(state_t *s, lv_obj_t *root)
     s->popup_text = app_ui_label(s->popup, &aihook_font_12, 3, 2, 94, 14, LV_LABEL_LONG_MODE_CLIP);
     app_ui_center(s->popup_text);
     lv_obj_set_style_text_color(s->popup_text, app_ui_color(0xFFE066), LV_PART_MAIN);
+    s->hold = app_ui_rect(root, 0, 0, 0, 2, APP_COLOR_ACCENT, 0); /* the hold towards the exit */
+    app_ui_hide(s->hold, true);
     s->panel = pill(root, 58, 12, 100, 54, 0x0B1630, 205);
     s->title = app_ui_label(s->panel, &aihook_font_16, 0, 4, 100, 20, LV_LABEL_LONG_MODE_CLIP);
     s->line1 = app_ui_label(s->panel, &aihook_font_12, 0, 25, 100, 14, LV_LABEL_LONG_MODE_CLIP);
@@ -347,6 +355,8 @@ static void render(app_context_t *ctx)
     snprintf(text, sizeof text, "x%u", v.gems);
     app_ui_text(s->gem_count, text);
     bool play = v.phase == SKI_PLAY;
+    app_ui_hold_line(s->hold, app_exit_hold_progress(ctx), false, EXIT_HOLD_MS);
+    const bool exit_hint = (ctx->now_ms / HINT_SLOT_MS) % 2U == 1U; /* the hint of the way out alternates */
     app_ui_hide(s->score_pill, !play);
     app_ui_hide(s->gem_pill, !play || v.gems == 0);
     app_ui_hide(s->combo, !play || v.combo < 2);
@@ -366,14 +376,14 @@ static void render(app_context_t *ctx)
         lv_obj_set_style_text_color(s->title, app_ui_color(APP_COLOR_ACCENT), LV_PART_MAIN);
         app_ui_text(s->line1, "按键跳 按住翻转");
         snprintf(text, sizeof text, "最高 %05u", v.best);
-        app_ui_text(s->line2, text);
+        app_ui_text(s->line2, exit_hint ? "按住3秒退出" : text);
     } else if (v.phase == SKI_OVER) {
         app_ui_text(s->title, v.new_best ? "新纪录!" : v.crash == SKI_CRASH_ROCK ? "撞到石头" : v.crash == SKI_CRASH_FALL ? "掉进冰缝" : "落地失败");
         lv_obj_set_style_text_color(s->title, app_ui_color(v.new_best ? APP_COLOR_ACCENT : 0xFF8A7A), LV_PART_MAIN);
         snprintf(text, sizeof text, "得分 %u  翻转 %u", v.score, v.flips);
         app_ui_text(s->line1, text);
-        snprintf(text, sizeof text, v.can_restart ? "按键重来 三击菜单" : "最高 %05u", v.best);
-        app_ui_text(s->line2, text);
+        snprintf(text, sizeof text, "最高 %05u", v.best);
+        app_ui_text(s->line2, !v.can_restart ? text : exit_hint ? "按住3秒退出" : "按键重来");
     }
     draw_scene(app_ui_pixels(), &v, (unsigned)ctx->now_ms);
     app_ui_plot_refresh(s->plot, &s->image);

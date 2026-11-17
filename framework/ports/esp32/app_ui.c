@@ -50,5 +50,21 @@ lv_obj_t *app_ui_ring(lv_obj_t *parent, int x, int y, int size)
     lv_obj_set_style_arc_color(ring, app_ui_color(APP_COLOR_ACCENT), LV_PART_INDICATOR); return ring;
 }
 void app_ui_progress(lv_obj_t *ring, unsigned ms) { lv_arc_set_value(ring, ms > APP_CONFIRM_MS ? APP_CONFIRM_MS : ms); }
+void app_ui_hold_line(lv_obj_t *line, unsigned hold_ms, bool confirm, unsigned exit_ms)
+{
+    const unsigned start = confirm ? APP_CONFIRM_MS : 600U;
+    int width = 0;
+    bool red = false;
+    if (confirm && hold_ms > 120U && hold_ms <= APP_CONFIRM_MS) width = (int)(hold_ms * APP_WIDTH / APP_CONFIRM_MS);
+    else if (exit_ms > start && hold_ms > start) {
+        red = true;
+        width = (int)(((hold_ms > exit_ms ? exit_ms : hold_ms) - start) * APP_WIDTH / (exit_ms - start));
+    }
+    app_ui_hide(line, width <= 0);
+    if (width <= 0) return;
+    lv_obj_set_width(line, width);
+    const lv_color_t colour = app_ui_color(red ? 0xE4572E : APP_COLOR_ACCENT);
+    if (!lv_color_eq(lv_obj_get_style_bg_color(line, LV_PART_MAIN), colour)) lv_obj_set_style_bg_color(line, colour, LV_PART_MAIN);
+}
 void app_ui_plot_refresh(lv_obj_t *image, const lv_image_dsc_t *descriptor)
 { lv_image_cache_drop(descriptor); lv_obj_invalidate(image); }

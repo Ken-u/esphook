@@ -34,7 +34,8 @@ bool app_runtime_menu(void) { app_menu(&manager.context);return true; }
 /* The radar sees one person and the servo is a plain recorder: a game can be steered and its servo requests inspected. */
 static ld2450_target_t radar_target={.valid=true,.x_mm=1000,.y_mm=1500};
 static bool radar_online=true;
-void app_radar_read(app_radar_t *r) { memset(r,0,sizeof *r);r->available=true;r->online=radar_online;r->range_mm=6000;r->frame.targets[0]=radar_target; }
+void app_radar_read(app_radar_t *r) { memset(r,0,sizeof *r);r->available=true;r->online=radar_online;r->range_mm=6000;r->frame.targets[0]=radar_target;r->frame.targets[0].x_mm=(int16_t)-radar_target.x_mm; }
+/* radar_target.x_mm is where the player stands to their own right; the sensor's +X is the player's left, so the frame is mirrored. */
 static app_servo_t servo_state={.available=true,.tracking=ROBOT_IDLE,.limit_deg=30,.speed_dps=35};
 static struct { unsigned arm,disarm,angle; int last,lo,hi; } servo_log;
 void app_servo_read(app_servo_t *s) { *s=servo_state; }
@@ -105,6 +106,13 @@ static void dump(const char *directory,const char *name)
     fclose(f);
 }
 static void event(app_event_kind_t kind) { app_event_t e={.kind=kind,.ms=manager.context.now_ms};app_manager_event(&manager,&e);run(20); }
+/* K1 through the framework's gesture layer, and the two ways out of a game that switched the triple off. */
+__attribute__((unused)) static void k1(bool down) { app_manager_key(&manager,0,down,manager.context.now_ms);run(20); }
+__attribute__((unused)) static bool left(const char *id) { return strcmp(app_active_id(&manager.context),id)!=0; }
+/* Three quick presses; true when they went back to the menu. */
+__attribute__((unused)) static bool mash_leaves(const char *id) { for(unsigned i=0;i<3;++i) { k1(true);run(60);k1(false);run(60); } return left(id); }
+/* Holds K1 for `ms` and lets go; true when the hold itself went back to the menu. */
+__attribute__((unused)) static bool hold_leaves(const char *id,unsigned ms) { k1(true);run(ms);const bool out=left(id);k1(false);return out; }
 #ifdef ESPHOOK_TEST_STOCK
 static void stock_data(void)
 {
@@ -137,11 +145,17 @@ static bool shows_text(lv_obj_t *obj,const char *text)
     for(uint32_t i=0;i<lv_obj_get_child_count(obj);++i) if(shows_text(lv_obj_get_child(obj,(int32_t)i),text)) return true;
     return false;
 }
+/* The hint line of a game that switched the triple off alternates with the way out: either may be on screen. */
+static bool shows_hint(const char *hint) { return shows_text(lv_screen_active(),hint) || shows_text(lv_screen_active(),"按住2秒退出"); }
 static unsigned changed_pixels(const uint16_t *a,const uint16_t *b) { unsigned n=0;for(unsigned i=0;i<160*64;++i) n+=a[i]!=b[i];return n; }
 #ifdef ESPHOOK_TEST_BASKETBALL
 /* Shoots until it has seen a make and a miss, then lets the clock run out. Frames are for eyes only. */
 static void play_basketball(const char *out)
 {
+    assert(app_open(&manager.context,"basketball"));app_manager_commit(&manager);run(100);
+    /* shots come fast: three quick presses are shots, and only holding the key for two seconds leaves mid-game */
+    assert(!mash_leaves("basketball") && game_status("basketball","robot game status","shots=")>=1);
+    assert(!hold_leaves("basketball",1900) && hold_leaves("basketball",2100) && !strcmp(app_active_id(&manager.context),"launcher"));
     assert(app_open(&manager.context,"basketball"));app_manager_commit(&manager);run(100);
     assert(game_status("basketball","robot game status","phase=")==1);dump(out,"basketball-idle");
     unsigned made=0;bool saw_hit=false,saw_miss=false;
@@ -170,6 +184,9 @@ static void play_dino(const char *out)
     assert(game_status("dino","robot dino status","phase=")==2);run(700);dump(out,"dino-over");
     assert(game_status("dino","robot dino status","best=")>0);
     run(600);event(APP_EVENT_DOWN);event(APP_EVENT_UP);assert(game_status("dino","robot dino status","phase=")==1); /* restart */
+    /* a hopping game: three quick presses are hops, holding the key for two seconds is the way out */
+    k1(true);run(1500);dump(out,"dino-exit-hold");k1(false);
+    assert(!mash_leaves("dino") && !hold_leaves("dino",1900) && hold_leaves("dino",2100) && !strcmp(app_active_id(&manager.context),"launcher"));
 }
 #endif
 #ifdef ESPHOOK_TEST_SKI
@@ -183,6 +200,8 @@ static void play_ski(const char *out)
     assert(game_status("ski","robot ski status","phase=")==2);run(400);dump(out,"ski-over");
     assert(game_status("ski","robot ski status","best=")>0);
     run(700);event(APP_EVENT_DOWN);event(APP_EVENT_UP);assert(game_status("ski","robot ski status","phase=")==1); /* restart */
+    /* a jumping game: three quick presses are jumps, holding the key for three seconds is the way out */
+    assert(!mash_leaves("ski") && !hold_leaves("ski",2900) && hold_leaves("ski",3100) && !strcmp(app_active_id(&manager.context),"launcher"));
 }
 #endif
 #ifdef ESPHOOK_TEST_MUYU
@@ -211,6 +230,7 @@ static void play_muyu(const char *out)
     assert(shows_text(lv_screen_active(),"功德圆满") && shows_text(lv_screen_active(),"功德 108"));dump(out,"muyu-round");
     assert(game_status("muyu","robot muyu status","frames=")>100);
     event(APP_EVENT_SHORT);assert(!strcmp(app_active_id(&manager.context),"muyu")); /* SHORT is the release of a knock: no navigation */
+    assert(!mash_leaves("muyu") && !hold_leaves("muyu",1900) && hold_leaves("muyu",2100) && !strcmp(app_active_id(&manager.context),"launcher"));
 }
 #endif
 #ifdef ESPHOOK_TEST_AQUARIUM
@@ -231,6 +251,7 @@ static void play_aquarium(const char *out)
     char text[32];snprintf(text,sizeof text,"进食 %u",game_status("aquarium","robot aquarium status","eaten="));assert(shows_text(lv_screen_active(),text));
     assert(game_status("aquarium","robot aquarium status","frames=")>300);
     event(APP_EVENT_SHORT);assert(!strcmp(app_active_id(&manager.context),"aquarium")); /* a press is a feeding, never navigation */
+    assert(!mash_leaves("aquarium") && !hold_leaves("aquarium",1900) && hold_leaves("aquarium",2100) && !strcmp(app_active_id(&manager.context),"launcher"));
 }
 #endif
 #ifdef ESPHOOK_TEST_FISHING
@@ -267,22 +288,22 @@ static void play_fishing(const char *out)
 {
     assert(app_open(&manager.context,"fishing"));app_manager_commit(&manager);run(300);
     assert(game_status("fishing","robot fishing status","phase=")==0 && game_status("fishing","robot fishing status","servo=")==1);
-    assert(shows_text(lv_screen_active(),"按键抛竿 长按启用舵机") && shows_text(lv_screen_active(),"钓0"));dump(out,"fishing-idle");
+    assert(shows_hint("按键抛竿 长按启用舵机") && shows_text(lv_screen_active(),"钓0"));dump(out,"fishing-idle");
     event(APP_EVENT_DOWN);event(APP_EVENT_UP);run(300);
     assert(game_status("fishing","robot fishing status","phase=")==1 && game_status("fishing","robot fishing status","casts=")==1);dump(out,"fishing-cast");
     for(unsigned i=0;i<60 && game_status("fishing","robot fishing status","phase=")!=2;++i) run(50);
-    assert(game_status("fishing","robot fishing status","phase=")==2 && shows_text(lv_screen_active(),"等待鱼儿上钩…"));dump(out,"fishing-wait");
+    assert(game_status("fishing","robot fishing status","phase=")==2 && shows_hint("盯住鱼漂 等它下沉"));dump(out,"fishing-wait");
     for(unsigned i=0;i<120 && game_status("fishing","robot fishing status","phase=")!=3;++i) run(50);
-    assert(game_status("fishing","robot fishing status","phase=")==3 && shows_text(lv_screen_active(),"咬钩了! 快按!"));run(120);dump(out,"fishing-bite");
+    assert(game_status("fishing","robot fishing status","phase=")==3 && shows_text(lv_screen_active(),"鱼漂下沉! 快按!"));run(120);dump(out,"fishing-bite");
     assert(servo_log.arm==0 && servo_log.angle==0); /* nothing moves the servo until it has been enabled on purpose */
     event(APP_EVENT_DOWN);event(APP_EVENT_UP);
     assert(game_status("fishing","robot fishing status","phase=")==4);run(200);dump(out,"fishing-fight");
     const unsigned need=game_status("fishing","robot fishing status","need=");
     assert(fishing_fight(out,true)>=need);
     const unsigned phase=game_status("fishing","robot fishing status","phase=");
-    assert(phase==5 || phase==6);run(300);dump(out,"fishing-land");run(1000);
+    assert(phase==5 || phase==6);run(300);dump(out,"fishing-land");run(380);dump(out,"fishing-lift");run(620);
     assert(game_status("fishing","robot fishing status","phase=")==6 && game_status("fishing","robot fishing status","caught=")==1);
-    assert(shows_text(lv_screen_active(),"钓1") && shows_text(lv_screen_active(),"按键再钓一次"));dump(out,"fishing-result");
+    assert(shows_text(lv_screen_active(),"钓1") && shows_hint("按键再钓一次"));dump(out,"fishing-result");
     assert(servo_log.arm==0 && servo_log.angle==0);
     /* a long hold enables the servo: from then on the pulls shake it, inside its limits */
     run(800);event(APP_EVENT_DOWN);event(APP_EVENT_UP);event(APP_EVENT_CONFIRM);
@@ -300,6 +321,14 @@ static void play_fishing(const char *out)
     assert(game_status("fishing","robot fishing status","frames=")>300);
     servo_state.armed=false;
     event(APP_EVENT_SHORT);assert(!strcmp(app_active_id(&manager.context),"fishing"));
+    /* three quick presses are casts and strikes, never an exit; holding for two seconds leaves while the line is calm */
+    assert(!mash_leaves("fishing") && !hold_leaves("fishing",1900) && hold_leaves("fishing",2100) && !strcmp(app_active_id(&manager.context),"launcher"));
+    /* ...but a hold that began with the bite belongs to the fight, however long it lasts */
+    assert(app_open(&manager.context,"fishing"));app_manager_commit(&manager);run(300);
+    event(APP_EVENT_DOWN);event(APP_EVENT_UP);
+    for(unsigned i=0;i<200 && game_status("fishing","robot fishing status","phase=")!=3;++i) run(50);
+    assert(game_status("fishing","robot fishing status","phase=")==3);
+    k1(true);run(2600);assert(!left("fishing"));k1(false);
 }
 #endif
 #ifdef ESPHOOK_TEST_STARSHIP
@@ -357,7 +386,7 @@ static void play_starship(const char *out)
     servo_state.armed=false;memset(&servo_log,0,sizeof servo_log);radar_online=true;radar_target.x_mm=1000;
     assert(app_open(&manager.context,"starship"));app_manager_commit(&manager);run(400);
     assert(SS_STATUS("phase=")==0 && SS_STATUS("servo=")==1 && SS_STATUS("hp=")==3 && SS_STATUS("objs=")==0);
-    assert(shows_text(lv_screen_active(),"星际战机") && shows_text(lv_screen_active(),"按键出击 长按启用舵机"));dump(out,"starship-title");
+    assert(shows_text(lv_screen_active(),"星际战机") && shows_hint("按键出击 长按启用舵机"));dump(out,"starship-title");
     tap();assert(SS_STATUS("phase=")==1 && shows_text(lv_screen_active(),"按住开火 雷达转向") && !shows_text(lv_screen_active(),"星际战机"));
     /* the key is the gun: holding it for more than half a second is shooting, never the servo confirmation */
     key(0,true);run(700);assert(SS_STATUS("shots=")>=3);dump(out,"starship-fire");key(0,false);
@@ -378,7 +407,7 @@ static void play_starship(const char *out)
     run(600);dump(out,"starship-dying"); /* the blast fills the canopy */
     for(unsigned i=0;i<100 && SS_STATUS("phase=")!=3;++i) run(50);
     run(1000);
-    assert(SS_STATUS("phase=")==3 && shows_text(lv_screen_active(),"战机损毁") && shows_text(lv_screen_active(),"按键再战"));
+    assert(SS_STATUS("phase=")==3 && shows_text(lv_screen_active(),"战机损毁") && shows_hint("按键再战"));
     char card[64];snprintf(card,sizeof card,"击落 %u 最高 %u",SS_STATUS("kills="),SS_STATUS("best="));assert(shows_text(lv_screen_active(),card));
     dump(out,"starship-over");
     assert(SS_STATUS("best=")>0 && SS_STATUS("best=")>=SS_STATUS("score="));
@@ -407,6 +436,24 @@ static void play_starship(const char *out)
     assert(SS_STATUS("frames=")>1000);
     radar_online=true;
     pose_starship(out);
+}
+/* The two ways out of a cannon: never three quick presses, and a two second hold only from the title or game over. */
+static void guard_starship(const char *out)
+{
+    servo_state.armed=false;memset(&servo_log,0,sizeof servo_log);radar_online=false;
+    assert(app_open(&manager.context,"starship"));app_manager_commit(&manager);run(300);
+    k1(true);run(1300);dump(out,"starship-exit-hold");k1(false); /* the red line fills towards the exit, the gold one has served the servo */
+    assert(SS_STATUS("phase=")==0 && !hold_leaves("starship",1900) && SS_STATUS("phase=")==0); /* a hold is not "start" */
+    assert(hold_leaves("starship",2100) && !strcmp(app_active_id(&manager.context),"launcher"));
+    assert(app_open(&manager.context,"starship"));app_manager_commit(&manager);run(300);tap();assert(SS_STATUS("phase=")==1);
+    assert(!mash_leaves("starship") && SS_STATUS("shots=")>=3);
+    assert(!hold_leaves("starship",3000) && SS_STATUS("phase=")==1); /* firing for three seconds is play */
+    /* a trigger held through the loss of the ship does not leave on the game over screen: that press began in play */
+    k1(true);
+    for(unsigned i=0;i<4000 && SS_STATUS("phase=")!=3;++i) run(50);
+    assert(SS_STATUS("phase=")==3);run(3000);assert(!left("starship"));k1(false);
+    assert(hold_leaves("starship",2100) && !strcmp(app_active_id(&manager.context),"launcher"));
+    radar_online=true;
 }
 #endif
 #ifdef ESPHOOK_TEST_RACING
@@ -459,7 +506,7 @@ static void play_racing(const char *out)
     servo_state.armed=false;memset(&servo_log,0,sizeof servo_log);radar_online=true;radar_target.x_mm=1000;
     assert(app_open(&manager.context,"racing"));app_manager_commit(&manager);run(400);
     assert(RC_STATUS("phase=")==0 && RC_STATUS("servo=")==1 && RC_STATUS("time=")==45);
-    assert(shows_text(lv_screen_active(),"极速赛车") && shows_text(lv_screen_active(),"按键出发 长按启用舵机"));dump(out,"racing-title");
+    assert(shows_text(lv_screen_active(),"极速赛车") && shows_hint("按键出发 长按启用舵机"));dump(out,"racing-title");
     /* the half-second hold enables the servo, and does not start the race */
     rkey(0,true);run(700);rkey(0,false);
     assert(RC_STATUS("phase=")==0 && servo_log.arm==1 && RC_STATUS("servo=")==2);
@@ -491,7 +538,7 @@ static void play_racing(const char *out)
     assert(RC_STATUS("phase=")==3);assert(shows_text(lv_screen_active(),"时间到!"));
     for(unsigned i=0;i<100 && RC_STATUS("phase=")!=4;++i) run(50);
     run(1100);
-    assert(RC_STATUS("phase=")==4 && shows_text(lv_screen_active(),"时间到") && shows_text(lv_screen_active(),"按键再来"));
+    assert(RC_STATUS("phase=")==4 && shows_text(lv_screen_active(),"时间到") && shows_hint("按键再来"));
     char card[64];snprintf(card,sizeof card,"里程 %u米 最高 %u",RC_STATUS("dist="),RC_STATUS("best="));assert(shows_text(lv_screen_active(),card));
     assert(RC_STATUS("best=")>0 && RC_STATUS("best=")>=RC_STATUS("score="));dump(out,"racing-over");
     rkey(0,true);run(100);rkey(0,false);
@@ -507,6 +554,23 @@ static void play_racing(const char *out)
     rkey(0,false);
     radar_online=true;
     pose_racing(out);
+}
+/* The same for the car: never three quick presses, a two second hold only from the title or game over. */
+static void guard_racing(void)
+{
+    servo_state.armed=false;memset(&servo_log,0,sizeof servo_log);radar_online=false;
+    assert(app_open(&manager.context,"racing"));app_manager_commit(&manager);run(300);
+    assert(RC_STATUS("phase=")==0 && !hold_leaves("racing",1900) && RC_STATUS("phase=")==0);
+    assert(hold_leaves("racing",2100) && !strcmp(app_active_id(&manager.context),"launcher"));
+    assert(app_open(&manager.context,"racing"));app_manager_commit(&manager);run(300);rkey(0,true);run(100);rkey(0,false);assert(RC_STATUS("phase=")==1);
+    assert(!mash_leaves("racing"));
+    for(unsigned i=0;i<100 && RC_STATUS("phase=")!=2;++i) run(50);
+    assert(RC_STATUS("phase=")==2 && !hold_leaves("racing",3000)); /* the pedal is down for the whole race */
+    rkey(0,true);
+    for(unsigned i=0;i<4000 && RC_STATUS("phase=")!=4;++i) run(50);
+    assert(RC_STATUS("phase=")==4);run(3000);assert(!left("racing"));rkey(0,false); /* that press began in the race */
+    assert(hold_leaves("racing",2100) && !strcmp(app_active_id(&manager.context),"launcher"));
+    radar_online=true;
 }
 #endif
 #ifdef ESPHOOK_TEST_WEDDING
@@ -585,9 +649,11 @@ int main(int argc,char **argv)
 #endif
 #ifdef ESPHOOK_TEST_STARSHIP
     play_starship(out);
+    guard_starship(out);
 #endif
 #ifdef ESPHOOK_TEST_RACING
     play_racing(out);
+    guard_racing();
 #endif
     assert(app_open(&manager.context,"settings"));app_manager_commit(&manager);run(20);
     event(APP_EVENT_SHORT);event(APP_EVENT_SHORT);event(APP_EVENT_SHORT);event(APP_EVENT_CONFIRM);

@@ -15,6 +15,8 @@
  * steering wheel once it has been enabled (hold a key for 0.5 s on the title or game over screen; it is never enabled
  * on its own) and gives a short shake in a crash. Game rules live in racing_core.c. */
 #define BAND_Y 64
+#define EXIT_HOLD_MS 2000U
+#define HINT_SLOT_MS 2600U
 #define CX 80
 #define HY 22            /* the horizon */
 #define KY 261000        /* distance in mm of a road row = KY / (row - HY) */
@@ -25,7 +27,7 @@ typedef struct {
     rc_t core;
     steer_t steer;
     haptic_t haptic;
-    lv_obj_t *plot, *band, *line, *msg, *score, *tag, *tag_text, *title, *sub;
+    lv_obj_t *plot, *band, *line, *hold, *msg, *score, *tag, *tag_text, *title, *sub;
     lv_image_dsc_t image;
     uint64_t last_ms, last_up_ms;
     int bg16;
@@ -413,6 +415,8 @@ static void build(state_t *s, lv_obj_t *root)
     lv_obj_set_style_text_color(s->msg, app_ui_color(0xF0E0C8), LV_PART_MAIN);
     lv_obj_set_style_text_color(s->score, app_ui_color(0xFFD84A), LV_PART_MAIN);
     lv_obj_set_style_text_align(s->score, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
+    s->hold = app_ui_rect(root, 0, BAND_Y, 0, 2, APP_COLOR_ACCENT, 0); /* the hold towards the exit */
+    app_ui_hide(s->hold, true);
     s->tag = app_ui_rect(root, 128, 5, 29, 14, 0x2E8B57, 5);
     s->tag_text = app_ui_label(s->tag, &aihook_font_12, 0, 1, 29, 12, LV_LABEL_LONG_MODE_CLIP);
     app_ui_center(s->tag_text);
@@ -447,8 +451,19 @@ static void enter(app_context_t *ctx)
     steer_init(&s->steer);
     haptic_init(&s->haptic);
     s->last_ms = ctx->now_ms;
+    app_set_triple_exit(ctx, false); /* the pedal is pumped for nitro: three quick presses are never an exit */
     portENTER_CRITICAL(&s_lock); s_status = (status_t){0}; portEXIT_CRITICAL(&s_lock);
     publish(s, true, false);
+}
+static bool idle_screen(const state_t *s)
+{
+    return s->core.phase == RC_TITLE || (s->core.phase == RC_OVER && s->core.over_age_ms > 800U);
+}
+/* The way out is a two second hold on the title or game over screen, and only for a press that began there: a pedal
+ * held down through a long race must not leave the moment the time runs out. */
+static void sync_exit(app_context_t *ctx, const state_t *s)
+{
+    app_set_exit_hold(ctx, idle_screen(s) && !s->down_in_race ? EXIT_HOLD_MS : 0U);
 }
 static void tick(app_context_t *ctx)
 {
@@ -460,6 +475,7 @@ static void tick(app_context_t *ctx)
     if (radar.available && radar.online) steer_radar(&s->steer, now, true, radar.frame.targets);
     const int steer = steer_tick(&s->steer, now);
     rc_steer(&s->core, steer);
+    sync_exit(ctx, s);
     rc_advance(&s->core, dt);
     s->last_ms = now;
     s->bg16 -= (int)((int64_t)rc_curve_at(&s->core, s->core.pos_mm) * (int)rc_speed_kmh(&s->core) * (int)(dt > 200U ? 200U : dt) / 165000);
@@ -477,10 +493,6 @@ static void leave(app_context_t *ctx)
     haptic_stop(&s->haptic); /* the framework disarms the servo it leased to this app */
     if (s->plot) app_ui_plot_refresh(s->plot, &s->image); /* The shared canvas goes to the next app. */
     portENTER_CRITICAL(&s_lock); s_status.active = false; portEXIT_CRITICAL(&s_lock);
-}
-static bool idle_screen(const state_t *s)
-{
-    return s->core.phase == RC_TITLE || (s->core.phase == RC_OVER && s->core.over_age_ms > 800U);
 }
 static void event(app_context_t *ctx, const app_event_t *e)
 {
@@ -521,9 +533,10 @@ static void event(app_context_t *ctx, const app_event_t *e)
         break;
     default: break;
     }
+    sync_exit(ctx, s);
     publish(s, true, false);
 }
-static void sync_hud(state_t *s)
+static void sync_hud(state_t *s, uint64_t now, unsigned hold_ms)
 {
     const rc_t *r = &s->core;
     const haptic_state_t hs = haptic_state();
@@ -538,8 +551,10 @@ static void sync_hud(state_t *s)
     case RC_FINISH: msg = "时间到!"; break;
     default: msg = r->over_age_ms > 800U ? "按键再来" : "时间到!"; break;
     }
+    const bool idle = idle_screen(s), exit_slot = idle && (now / HINT_SLOT_MS) % 2U == 1U; /* the hint of the way out alternates */
+    if (exit_slot) msg = "按住2秒退出";
     const uint32_t key = (uint32_t)r->phase << 8 | (uint32_t)hs << 4 | (bonus ? 4U : 0U) | (ready && r->nitro_ms <= 0 ? 2U : 0U) |
-                         (r->phase == RC_OVER && r->over_age_ms > 800U ? 1U : 0U);
+                         (idle ? 1U : 0U) | (exit_slot ? 8U : 0U);
     if (key != s->shown_key) { app_ui_text(s->msg, msg); s->shown_key = key; }
     const uint32_t score = rc_score(r);
     if (s->shown_score != score) {
@@ -548,6 +563,7 @@ static void sync_hud(state_t *s)
         app_ui_text(s->score, text);
         s->shown_score = score;
     }
+    app_ui_hold_line(s->hold, hold_ms, hs == HAPTIC_READY, EXIT_HOLD_MS);
     app_ui_hide(s->tag, hs != HAPTIC_ARMED);
     const bool card = r->phase == RC_TITLE || r->phase == RC_OVER;
     app_ui_hide(s->title, !card);
@@ -566,7 +582,7 @@ static void render(app_context_t *ctx)
 {
     state_t *s = ctx->state;
     if (!s->plot) build(s, ctx->root);
-    sync_hud(s);
+    sync_hud(s, ctx->now_ms, app_exit_hold_progress(ctx));
     draw_scene(app_ui_pixels(), s, (unsigned)ctx->now_ms);
     app_ui_plot_refresh(s->plot, &s->image);
     publish(s, true, true);

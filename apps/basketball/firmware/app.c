@@ -22,10 +22,11 @@
 #define FLOOR_TOP 0xCF9250U
 #define FLOOR_LOW 0x8C5A2BU
 #define TRAIL 4
+#define EXIT_HOLD_MS 2000U
 
 typedef struct {
     basketball_game_t game;
-    lv_obj_t *top, *plot, *bottom, *hud, *results;
+    lv_obj_t *top, *plot, *bottom, *hold, *hud, *results;
     lv_obj_t *clock_pill, *clock_label, *score_pill, *score_label, *bar, *shots_pill, *shots_label, *hint_pill, *hint, *float_label;
     lv_obj_t *title, *result_score, *result_line, *result_hint;
     lv_image_dsc_t image;
@@ -39,11 +40,18 @@ _Static_assert(sizeof(state_t) <= APP_STATE_CAPACITY, "basketball state too larg
 static basketball_view_t s_status;
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 
-static void enter(app_context_t *ctx) { state_t *s=ctx->state; basketball_start(&s->game, ctx->now_ms, app_random()); }
+static void enter(app_context_t *ctx)
+{
+    state_t *s=ctx->state; basketball_start(&s->game, ctx->now_ms, app_random());
+    /* Shots come fast: no global exit during the two minutes (it is back on the result screen, where any short press
+     * leaves anyway). Holding the key for two seconds, which a shot never does, leaves at any time. */
+    app_set_exit_hold(ctx, EXIT_HOLD_MS);
+}
 static void tick(app_context_t *ctx)
 {
     state_t *s=ctx->state; basketball_tick(&s->game, ctx->now_ms);
     basketball_view_t view; basketball_snapshot(&s->game, ctx->now_ms, &view);
+    app_set_triple_exit(ctx, view.phase != BASKETBALL_PLAY);
     portENTER_CRITICAL(&s_lock); s_status=view; portEXIT_CRITICAL(&s_lock);
 }
 static void leave(app_context_t *ctx)
@@ -268,6 +276,8 @@ static void build(state_t *s, lv_obj_t *root)
     s->score_pill = pill(s->hud, 97, 10, 60, 15, 0x0B0820, 200);
     s->score_label = centered(app_ui_label(s->score_pill, &aihook_font_12, 0, 1, 60, 14, LV_LABEL_LONG_MODE_CLIP));
     lv_obj_set_style_text_color(s->score_label, app_ui_color(APP_COLOR_ACCENT), LV_PART_MAIN);
+    s->hold = app_ui_rect(s->hud, 0, 0, 0, 2, APP_COLOR_ACCENT, 0); /* the hold towards the exit */
+    app_ui_hide(s->hold, true);
     s->shots_pill = pill(s->hud, 3, 65, 56, 14, 0x0B0820, 150);
     s->shots_label = centered(app_ui_label(s->shots_pill, &aihook_font_12, 0, 0, 56, 14, LV_LABEL_LONG_MODE_CLIP));
     s->hint_pill = pill(s->hud, 63, 65, 94, 14, 0x2A1A5A, 190);
@@ -334,7 +344,9 @@ static void render(app_context_t *ctx)
         snprintf(text, sizeof text, "进 %lu/%lu", (unsigned long)game->made, (unsigned long)game->shots);
         app_ui_text(s->shots_label, text);
         /* The outcome is decided at release but shown only when the ball reaches the moving rim. */
-        app_ui_text(s->hint, !game->in_flight ? "按键投篮" : !game->reached_rim ? "球飞行中"
+        app_ui_hold_line(s->hold, app_exit_hold_progress(ctx), false, EXIT_HOLD_MS);
+        const bool exit_hint = game->seconds_left >= BASKETBALL_DURATION_MS / 1000U - 8U && (ctx->now_ms / 1500U) % 2U == 1U; /* said at the start */
+        app_ui_text(s->hint, !game->in_flight ? (exit_hint ? "按住2秒退出" : "按键投篮") : !game->reached_rim ? "球飞行中"
             : game->last_hit ? "命中! +2" : "没进");
         lv_obj_set_style_text_color(s->hint, app_ui_color(game->reached_rim
             ? game->last_hit ? 0x47E6AE : 0xFF8A94 : 0xC9A8FF), LV_PART_MAIN);

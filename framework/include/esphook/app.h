@@ -70,3 +70,17 @@ bool app_set_standby(app_context_t *ctx, const char *id);
 unsigned app_hold_ms(const app_context_t *ctx);
 size_t app_selection(const app_context_t *ctx);
 void app_select_next(app_context_t *ctx);
+/* The global exit: three quick presses of K1 go back to the menu. A game that is played by mashing the key (a cannon,
+ * a pedal, a mallet) can switch it off while it needs every press, and must switch it on again whenever the player
+ * has another way out (a title or game over screen, or its own long press that calls app_menu). It is on by default
+ * and restored on every app change, so a forgotten call never leaves the next app without it. While it is off the
+ * three presses are plain presses: DOWN/UP/SHORT/CONFIRM arrive as usual and nothing navigates. */
+void app_set_triple_exit(app_context_t *ctx, bool enabled);
+bool app_triple_exit(const app_context_t *ctx);
+/* The deliberate way out for a game that switched the triple exit off: holding K1 for `ms` (1000..10000, 0 turns it
+ * off, which is the default) goes back to the menu. The app still sees DOWN, and CONFIRM at 500 ms, like any hold, so
+ * pick a time no normal play reaches and only enable it where the press that starts the hold does not itself change
+ * the screen. Restored (off) on every app change; the release afterwards is consumed. */
+void app_set_exit_hold(app_context_t *ctx, unsigned ms);
+/* How long K1 has been held towards that exit (0 when it is off or the key is up), for a progress line. */
+unsigned app_exit_hold_progress(const app_context_t *ctx);

@@ -4,6 +4,8 @@
  * Radar: the first person found in front of the sensor defines the centre (lean left or right from where you
  * started), the nearest person wins, and a person who steps out of view keeps their last steering for a moment
  * before it relaxes to the centre. Output is steer in -256 (hard left) .. +256 (hard right), smoothed.
+ * The player faces the machine, so the sensor's +X (its own right) is the player's left: positions are mirrored here
+ * and leaning to your own right steers right.
  * Everything is a function of the timestamps passed in. No hardware access: feed it the radar snapshot. */
 #include <stdbool.h>
 #include <stdint.h>
@@ -40,19 +42,20 @@ static inline void steer_radar(steer_t *s, uint64_t now_ms, bool online, const l
     int best_score = 0x7FFFFFFF;
     for (int i = 0; i < LD2450_TARGETS; ++i) {
         const ld2450_target_t *t = &targets[i];
+        const int px = -(int)t->x_mm; /* the player's own left/right */
         if (!t->valid || t->y_mm < STEER_NEAR_MM || t->y_mm > STEER_FAR_MM || t->x_mm < -STEER_SIDE_MM || t->x_mm > STEER_SIDE_MM)
             continue;
         int score;
         if (s->locked) {
-            int d = t->x_mm - s->target_mm;
+            int d = px - s->target_mm;
             score = d < 0 ? -d : d;
             if (score > STEER_MATCH_MM) continue; /* somebody else walking by */
         } else score = t->y_mm; /* the nearest person is the player */
         if (score < best_score) { best_score = score; best = t; }
     }
     if (!best) return;
-    if (!s->have_centre) { s->centre_mm = best->x_mm; s->have_centre = true; }
-    s->target_mm = best->x_mm;
+    if (!s->have_centre) { s->centre_mm = -(int)best->x_mm; s->have_centre = true; }
+    s->target_mm = -(int)best->x_mm;
     s->locked = true;
     s->seen_ms = now_ms;
 }

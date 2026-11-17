@@ -11,7 +11,7 @@ ESP32-C3 小屏应用与小游戏框架，所有内置应用共用生命周期�
 > 通用固件同时支持原屏幕/Hook 设备和桌面机器人（ESP32-C3 SuperMini + ST7735 + LD2450 + NHY009）。[下载正式发布包](https://github.com/Ken-u/esphook/releases/latest)，烧录、USB 按键 SDK、映射和硬件状态见 [发布指南](docs/release-kit.md)。
 > 构建、接线及首次 USB 校准见 [机器人调试指南](docs/robot-bringup.md)。默认 auto 不初始化 PWM；机器人需先在设置中选择 robot 并重启，通过 USB 校准后使用 `robot arm` / `robot follow` 开启。
 > 新增 [表情/文字协议与扇形雷达调试页](docs/robot-display-protocol.md)：USB 输入 `robot radar` 切雷达页，`robot face` 返回；JSON 可客制表情和文字。
-> [GPIO6 启动器与全局按键](docs/robot-launcher.md)：默认待机为新婚快乐彩带屏（可改成眼睛动画等），短按打开菜单；短按切换、按住 500ms 画圆确认；菜单 10s 无操作回待机；任何页面快速三击回菜单。
+> [GPIO6 启动器与全局按键](docs/robot-launcher.md)：默认待机为新婚快乐彩带屏（可改成眼睛动画等），短按打开菜单；短按切换、按住 500ms 画圆确认；菜单 10s 无操作回待机；快速三击回菜单（靠连按的游戏屏蔽三击，改按住 2 秒退出）。
 > [新婚快乐 / Happy Wedding](docs/robot-wedding.md)：**默认待机应用**。金色“新婚快乐”和“Happy Wedding”交替，顶部彩带飘动，彩纸飘落，左右礼花轮流射出卷曲的彩带，底部滚动祝福语（可由 PC 改写）。
 > [电子木鱼](docs/robot-muyu.md)：按键敲一下，**功德+1**；木槌落下、木鱼弹动、金色涟漪，满 108 下“功德圆满”，长按自动敲。
 > [水族箱](docs/robot-aquarium.md)：按键扔一撮鱼食，鱼群追食、吃饱，水草、气泡、光柱。

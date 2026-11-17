@@ -153,7 +153,7 @@ static void radar(steer_t *s, uint64_t now, int x, int y, bool valid)
 {
     ld2450_target_t t[LD2450_TARGETS];
     memset(t, 0, sizeof t);
-    t[0].x_mm = (int16_t)x;
+    t[0].x_mm = (int16_t)-x; /* x is how far the player is to their own right; the sensor's +X is the player's left */
     t[0].y_mm = (int16_t)y;
     t[0].valid = valid;
     steer_radar(s, now, true, t);
@@ -215,12 +215,12 @@ static void test_steer_selection(void)
     t[1] = (ld2450_target_t){.x_mm = 100, .y_mm = 2500, .valid = true};
     t[2] = (ld2450_target_t){.x_mm = -50, .y_mm = 1200, .valid = true};
     steer_radar(&s, 100, true, t);
-    assert(s.locked && s.target_mm == -50);
+    assert(s.locked && s.target_mm == 50); /* the sensor's -50 is 50 mm to the player's right */
     /* somebody else walking by does not steal the lock */
     t[2].x_mm = -60;
     t[0] = (ld2450_target_t){.x_mm = 900, .y_mm = 900, .valid = true};
     steer_radar(&s, 200, true, t);
-    assert(s.target_mm == -60);
+    assert(s.target_mm == 60);
     t[0] = (ld2450_target_t){.x_mm = 0, .y_mm = 6000, .valid = true};
     t[1].valid = t[2].valid = false;
     steer_init(&s);
@@ -229,6 +229,21 @@ static void test_steer_selection(void)
     steer_radar(&s, 300, false, t); /* offline radar: ignored */
     steer_radar(&s, 300, true, NULL);
     assert(!s.locked);
+    /* The player faces the machine: stepping to their own right is towards the sensor's -X, and that steers right. */
+    steer_init(&s);
+    uint64_t now = 1000;
+    for (int i = 0; i < 12; ++i, now += 50) {
+        t[0] = (ld2450_target_t){.x_mm = (int16_t)(-30 * i), .y_mm = 1500, .valid = true};
+        steer_radar(&s, now, true, t);
+        (void)steer_tick(&s, now);
+    }
+    assert(s.steer > 100);
+    for (int i = 0; i < 24; ++i, now += 50) {
+        t[0] = (ld2450_target_t){.x_mm = (int16_t)(-330 + 30 * i), .y_mm = 1500, .valid = true};
+        steer_radar(&s, now, true, t);
+        (void)steer_tick(&s, now);
+    }
+    assert(s.steer < -100); /* and the sensor's +X steers left */
 }
 static void test_steer_keys(void)
 {

@@ -4,8 +4,9 @@
 struct app_manager {
     const app_descriptor_t *const *catalog;
     size_t catalog_count, active, standby, selected, pending;
-    bool idle, pending_idle, pending_set, ready, dirty;
+    bool idle, pending_idle, pending_set, ready, dirty, triple_blocked;
     uint64_t activity_ms, rendered_ms;
+    unsigned exit_hold_ms;
     app_input_t input[3];
     app_platform_t platform;
     app_context_t context;

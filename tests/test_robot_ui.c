@@ -80,13 +80,16 @@ static void radar_tests(void)
 {
     int x, y;
     ld2450_target_t t = {.x_mm = 0, .y_mm = 6000, .valid = true};
-    assert(radar_view_project(&t, 6000, &x, &y) && x == 54 && y == 2);
+    assert(radar_view_project(&t, 6000, &x, &y) && x == 54 && y == 63); /* the far end of the range is the bottom */
     t.y_mm = 3000;
-    assert(radar_view_project(&t, 6000, &x, &y) && x == 54 && y == 32);
+    assert(radar_view_project(&t, 6000, &x, &y) && x == 54 && y == 33);
+    t.y_mm = 600;
+    assert(radar_view_project(&t, 6000, &x, &y) && y == 9); /* near the machine, which sits at the top */
+    /* The viewer faces the machine, so the sensor's +X (its own right) is on the viewer's left. */
     t.x_mm = -2000; t.y_mm = 2000;
-    assert(radar_view_project(&t, 6000, &x, &y) && x < 54);
-    t.x_mm = 2000;
     assert(radar_view_project(&t, 6000, &x, &y) && x > 54);
+    t.x_mm = 2000;
+    assert(radar_view_project(&t, 6000, &x, &y) && x < 54);
     t.x_mm = 0; t.y_mm = 6100;
     assert(!radar_view_project(&t, 6000, &x, &y));
     t.y_mm = -1;

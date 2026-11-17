@@ -26,7 +26,7 @@ static void render(app_context_t *ctx)
     state_t *s=ctx->state; app_radar_t radar; app_radar_read(&radar); unsigned count=0;
     for (unsigned i=0; i<3; ++i) {
         const ld2450_target_t *t=&radar.frame.targets[i]; char value[32];
-        if (radar.online && t->valid) { ++count; snprintf(value,sizeof value,"%u%+.1f\nY%4.1f",i+1,t->x_mm/1000.0,t->y_mm/1000.0); }
+        if (radar.online && t->valid) { ++count; snprintf(value,sizeof value,"%u%+.1f\nY%4.1f",i+1,-(int)t->x_mm/1000.0,t->y_mm/1000.0); /* X as the viewer sees it: right is + */ }
         else snprintf(value,sizeof value,"%u --\nY --",i+1);
         app_ui_text(s->labels[i],value);
     }
@@ -42,14 +42,16 @@ static void leave(app_context_t *ctx) { state_t *s=ctx->state; app_ui_plot_refre
 static void event(app_context_t *ctx,const app_event_t *e) { if(e->kind==APP_EVENT_SHORT) app_menu(ctx); }
 static void icon(void *parent,int x,int y,bool selected)
 {
+    /* The machine at the top, its beam opening downwards towards the person in front of it. */
     uint32_t color=selected?APP_COLOR_ACCENT:0x47E6AE;
     for(int k=0;k<3;++k) {
-        lv_obj_t *arc=lv_arc_create(parent); lv_obj_set_size(arc,28-k*8,28-k*8); lv_obj_set_pos(arc,x+k*4,y+k*4);
+        lv_obj_t *arc=lv_arc_create(parent); lv_obj_set_size(arc,28-k*8,28-k*8); lv_obj_set_pos(arc,x+k*4,y-9+k*4);
         lv_obj_remove_style(arc,NULL,LV_PART_KNOB); lv_obj_clear_flag(arc,LV_OBJ_FLAG_CLICKABLE);
-        lv_arc_set_bg_angles(arc,180,360); lv_arc_set_range(arc,0,100); lv_arc_set_value(arc,0);
+        lv_arc_set_bg_angles(arc,0,180); lv_arc_set_range(arc,0,100); lv_arc_set_value(arc,0);
         lv_obj_set_style_arc_color(arc,app_ui_color(color),LV_PART_MAIN); lv_obj_set_style_arc_width(arc,2,LV_PART_MAIN);
     }
-    app_ui_rect(parent,x+13,y,2,14,color,0);
+    app_ui_rect(parent,x+13,y+5,2,15,color,0);
+    app_ui_rect(parent,x+8,y+1,12,5,0xC8D2E0,2);
 }
 static bool command(const char *line)
 {

@@ -18,6 +18,10 @@ void app_ui_hide(lv_obj_t *obj, bool hide);
 void app_ui_center(lv_obj_t *obj);
 lv_obj_t *app_ui_ring(lv_obj_t *parent, int x, int y, int size);
 void app_ui_progress(lv_obj_t *ring, unsigned ms);
+/* A 2 px progress line for holds. `line` is any rectangle the app created (full width, hidden by default). With
+ * `confirm` it fills gold during the 500 ms confirmation; the exit hold (see app_set_exit_hold) then fills a red one
+ * up to `exit_ms`. Without `confirm` nothing shows until 600 ms, so ordinary presses never flicker. */
+void app_ui_hold_line(lv_obj_t *line, unsigned hold_ms, bool confirm, unsigned exit_ms);
 /* One framework-owned RGB565 scratch canvas of APP_CANVAS_W x APP_CANVAS_H, reused between applications.
  * Radar and stock use its first 48 rows, games use all of it. Repaint before invalidating the image;
  * never retain across an app transition. */

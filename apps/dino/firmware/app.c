@@ -13,6 +13,8 @@
 /* Layout: an 8 px sky strip, the 64 row pixel canvas (screen y 8..71), an 8 px dirt strip. The ground line is canvas
  * row GROUND_ROW, so a full 38 px jump puts the dino's head on canvas row 0. HUD pills float over the canvas. */
 #define CANVAS_Y 8
+#define EXIT_HOLD_MS 2000U
+#define HINT_SLOT_MS 2600U
 #define GROUND_ROW 56
 #define CYCLE_PX 6000.0
 #define HOLD_PX 2200.0
@@ -20,7 +22,7 @@
 
 typedef struct {
     dino_game_t game;
-    lv_obj_t *top, *plot, *bottom, *hud, *best, *score, *panel, *title, *line, *hint_pill, *hint;
+    lv_obj_t *top, *plot, *bottom, *hold, *hud, *best, *score, *panel, *title, *line, *hint_pill, *hint;
     lv_image_dsc_t image;
     uint32_t top_rgb, dirt_rgb;
 } state_t;
@@ -159,6 +161,10 @@ static void enter(app_context_t *ctx)
 {
     state_t *s = ctx->state;
     dino_start(&s->game, ctx->now_ms, app_random());
+    /* Hopping is done by mashing the key, and a press starts a run: three quick presses are never an exit, holding
+     * the key for two seconds (a jump never lasts that long) is. */
+    app_set_triple_exit(ctx, false);
+    app_set_exit_hold(ctx, EXIT_HOLD_MS);
 }
 static void tick(app_context_t *ctx)
 {
@@ -201,6 +207,8 @@ static void build(state_t *s, lv_obj_t *root)
     lv_image_set_src(s->plot, &s->image);
     s->bottom = app_ui_rect(root, 0, CANVAS_Y + APP_CANVAS_H, APP_WIDTH, APP_HEIGHT - CANVAS_Y - APP_CANVAS_H, DAY.dirt, 0);
     s->top_rgb = DAY.top; s->dirt_rgb = DAY.dirt;
+    s->hold = app_ui_rect(root, 0, 0, 0, 2, APP_COLOR_ACCENT, 0); /* the hold towards the exit */
+    app_ui_hide(s->hold, true);
     s->hud = pill(root, 44, 10, 113, 15, 0x0B1630, 130);
     s->best = app_ui_label(s->hud, &aihook_font_12, 4, 1, 66, 14, LV_LABEL_LONG_MODE_CLIP);
     lv_obj_set_style_text_color(s->best, app_ui_color(APP_COLOR_MUTED), LV_PART_MAIN);
@@ -236,6 +244,8 @@ static void render(app_context_t *ctx)
     app_ui_text(s->score, text);
     bool blink = play && v.score >= 100U && v.score % 100U < 8U && ((ctx->now_ms / 90U) & 1U); /* flashes at every 100 */
     lv_obj_set_style_text_color(s->score, app_ui_color(blink ? APP_COLOR_ACCENT : APP_COLOR_TEXT), LV_PART_MAIN);
+    app_ui_hold_line(s->hold, app_exit_hold_progress(ctx), false, EXIT_HOLD_MS);
+    const bool exit_hint = (ctx->now_ms / HINT_SLOT_MS) % 2U == 1U; /* the hint of the way out alternates */
     app_ui_hide(s->hud, !play);
     app_ui_hide(s->panel, play);
     app_ui_hide(s->hint_pill, play || (v.phase == DINO_OVER && !v.can_restart));
@@ -244,13 +254,13 @@ static void render(app_context_t *ctx)
         lv_obj_set_style_text_color(s->title, app_ui_color(APP_COLOR_ACCENT), LV_PART_MAIN);
         snprintf(text, sizeof text, "最高 %05u", v.best);
         app_ui_text(s->line, text);
-        app_ui_text(s->hint, "按键起跳 按住跳更高");
+        app_ui_text(s->hint, exit_hint ? "按住2秒退出" : "按键起跳 按住跳更高");
     } else if (v.phase == DINO_OVER) {
         app_ui_text(s->title, v.new_best ? "新纪录!" : "游戏结束");
         lv_obj_set_style_text_color(s->title, app_ui_color(v.new_best ? APP_COLOR_ACCENT : 0xFF8A7A), LV_PART_MAIN);
         snprintf(text, sizeof text, "得分 %u  最高 %u", v.score, v.best);
         app_ui_text(s->line, text);
-        app_ui_text(s->hint, "按键重来 三击菜单");
+        app_ui_text(s->hint, exit_hint ? "按住2秒退出" : "按键重来");
     }
     draw_scene(app_ui_pixels(), &v, &t, (unsigned)ctx->now_ms);
     app_ui_plot_refresh(s->plot, &s->image);

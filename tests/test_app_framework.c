@@ -65,6 +65,33 @@ int main(void)
     unsigned baseline=shorts;
     for(unsigned i=0;i<3;++i) { app_manager_key(&m,1,true,34000+i*100);app_manager_key(&m,1,false,34050+i*100); }
     active(&m,"game");assert(shorts==baseline+3); /* K2 never triggers global K1 triple. */
+    /* A game that needs every press can switch the global exit off: six quick presses stay plain presses. */
+    assert(app_triple_exit(&m.context));
+    app_set_triple_exit(&m.context,false);assert(!app_triple_exit(&m.context));
+    baseline=shorts;
+    for(unsigned i=0;i<6;++i) { key(&m,true,36000+i*100);key(&m,false,36050+i*100); }
+    active(&m,"game");assert(shorts==baseline+6);
+    app_set_triple_exit(&m.context,true); /* switched back on, the next three quick presses leave again */
+    key(&m,true,37000);key(&m,false,37050);key(&m,true,37150);key(&m,false,37200);key(&m,true,37300);active(&m,"launcher");key(&m,false,37350);
+    assert(app_open(&m.context,"game"));app_manager_commit(&m);active(&m,"game");
+    app_set_triple_exit(&m.context,false);assert(app_open(&m.context,"face"));app_manager_commit(&m);
+    assert(app_triple_exit(&m.context)); /* restored on every app change */
+    assert(app_open(&m.context,"game"));app_manager_commit(&m);active(&m,"game");
+    /* The deliberate exit of a game without the triple: hold K1 for the chosen time; shorter holds are only holds. */
+    assert(app_exit_hold_progress(&m.context)==0);
+    app_set_triple_exit(&m.context,false);app_set_exit_hold(&m.context,2000);
+    key(&m,true,40000);app_manager_tick(&m,40600);assert(app_exit_hold_progress(&m.context)==600);
+    app_manager_tick(&m,41900);active(&m,"game");key(&m,false,41950);assert(app_exit_hold_progress(&m.context)==0);
+    app_manager_tick(&m,43000);active(&m,"game"); /* released at 1.95 s: nothing */
+    key(&m,true,44000);app_manager_tick(&m,45999);active(&m,"game");assert(app_exit_hold_progress(&m.context)==1999);
+    app_manager_tick(&m,46000);active(&m,"launcher");key(&m,false,46100);active(&m,"launcher"); /* its release goes nowhere */
+    assert(app_open(&m.context,"game"));app_manager_commit(&m);active(&m,"game");
+    key(&m,true,47000);app_manager_tick(&m,60000);active(&m,"game"); /* off by default and after every app change */
+    key(&m,false,60100);
+    app_set_exit_hold(&m.context,50); /* clamped to one second so a mistake cannot make a tap an exit */
+    key(&m,true,61000);app_manager_tick(&m,61900);active(&m,"game");app_manager_tick(&m,62000);active(&m,"launcher");key(&m,false,62100);
+    assert(app_open(&m.context,"game"));app_manager_commit(&m);active(&m,"game");
+    app_set_exit_hold(&m.context,2000);app_set_exit_hold(&m.context,0);key(&m,true,63000);app_manager_tick(&m,70000);active(&m,"game");key(&m,false,70100);
     app_event_t msg={.kind=APP_EVENT_MESSAGE,.text="{\"text\":\"hi\"}",.ms=35000};app_manager_event(&m,&msg);active(&m,"launcher");
     assert(enters==leaves+1 && scenes==1 && releases==leaves);
     app_descriptor_t invalid=face;invalid.state_size=APP_STATE_CAPACITY+1;

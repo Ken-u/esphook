@@ -28,6 +28,7 @@
 #define GRIP_EXTRA 8
 #define FLOAT_MS 700U
 #define FLOAT_RISE 10
+#define EXIT_HOLD_MS 2000U
 
 typedef struct {
     muyu_t core;
@@ -292,6 +293,8 @@ static void enter(app_context_t *ctx)
 {
     state_t *s = ctx->state;
     muyu_start(&s->core, ctx->now_ms);
+    app_set_triple_exit(ctx, false); /* a mallet is swung by mashing the key; holding for two seconds is the way out */
+    app_set_exit_hold(ctx, EXIT_HOLD_MS);
     portENTER_CRITICAL(&s_lock); s_status = (status_t){0}; portEXIT_CRITICAL(&s_lock);
     publish(s, true, false);
 }
@@ -324,10 +327,9 @@ static void sync_hud(state_t *s, const muyu_view_t *v, unsigned hold_ms)
     unsigned width = 36 + digits * 7;
     if (width != s->hud_width) { lv_obj_set_width(s->hud, (int)width); s->hud_width = width; }
     app_ui_hide(s->tag, !v->auto_on);
-    app_ui_text(s->hint, v->auto_on ? "自动中 长按停止 三击退出" : "按键敲 长按自动 三击退出");
-    int bar = hold_ms > 120U ? (int)(hold_ms > APP_CONFIRM_MS ? APP_CONFIRM_MS : hold_ms) * APP_WIDTH / (int)APP_CONFIRM_MS : 0;
-    app_ui_hide(s->hold, bar == 0);
-    if (bar) lv_obj_set_width(s->hold, bar);
+    app_ui_text(s->hint, v->auto_on ? "自动中 长按停止 按住2秒退出" : "按键敲 长按自动 按住2秒退出");
+    /* The gold line fills in half a second (auto on/off); holding on, a red one fills until the app exits. */
+    app_ui_hold_line(s->hold, hold_ms, true, EXIT_HOLD_MS);
     const unsigned latest = v->count & 1U; /* the slot of the newest knock */
     for (unsigned i = 0; i < 2U; ++i) { /* the floating 功德+1: appears on the landing and rises while it fades */
         bool show = v->shown[i] && v->age_ms[i] >= MUYU_SWING_MS && v->age_ms[i] - MUYU_SWING_MS < FLOAT_MS;
@@ -350,7 +352,7 @@ static void render(app_context_t *ctx)
     if (!s->plot) build(s, ctx->root);
     muyu_view_t v;
     muyu_snapshot(&s->core, &v);
-    sync_hud(s, &v, app_hold_ms(ctx));
+    sync_hud(s, &v, app_exit_hold_progress(ctx));
     draw_scene(app_ui_pixels(), &v, (unsigned)ctx->now_ms);
     app_ui_plot_refresh(s->plot, &s->image);
     publish(s, true, true);
