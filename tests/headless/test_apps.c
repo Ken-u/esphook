@@ -3,6 +3,7 @@
 #include "esphook/app_runtime.h"
 #include "esphook/app_sync.h"
 #include "esphook/app_services.h"
+#include "esphook/app_screen.h"
 #include "esphook/app_ui.h"
 #ifdef ESPHOOK_TEST_STOCK
 #include "stock_transport.h"
@@ -76,6 +77,21 @@ bool app_storage_save(const char *key,const void *data,size_t size)
     return false;
 }
 bool app_transport_write(const char *s) { snprintf(output,sizeof output,"%s",s);return true; }
+/* The panel tuning is a plain record: the screen test is checked by what it asks the service for. */
+static struct { app_screen_t now;unsigned applies,saves,raws;uint8_t raw[APP_SCREEN_RAW_MAX];size_t raw_length;bool busy; } screen={.now={.invert=true,.x_gap=1,.y_gap=26,.mhz=20,.saved_mhz=20}};
+void app_screen_read(app_screen_t *s) { *s=screen.now; }
+bool app_screen_apply(const app_screen_t *w,bool save)
+{
+    if(screen.busy || !app_screen_valid(w)) return false;
+    ++screen.applies;screen.now.invert=w->invert;screen.now.x_gap=w->x_gap;screen.now.y_gap=w->y_gap;
+    if(save) { ++screen.saves;screen.now.saved_mhz=w->mhz; }
+    return true;
+}
+bool app_screen_raw(const uint8_t *b,size_t n)
+{
+    if(screen.busy || !b || !n || n>APP_SCREEN_RAW_MAX) return false;
+    memcpy(screen.raw,b,n);screen.raw_length=n;++screen.raws;return true;
+}
 bool app_command_active(const char *id) { return !strcmp(app_active_id(&manager.context),id); }
 bool app_command_open(const char *id) { return app_open(&manager.context,id); }
 bool app_command_menu(void) { app_menu(&manager.context);return true; }
@@ -246,6 +262,59 @@ static void check_menu(const char *out)
     k1(false);run(100);
     assert(app_open(&manager.context,APP_LAUNCHER));app_manager_commit(&manager);run(20);
 }
+#ifdef ESPHOOK_TEST_SCREENTEST
+/* The test pattern and its two ways to set a new 0.96" module right: K1 on the device, text commands from the PC. */
+static const char *screen_line(const char *line)
+{
+    output[0]=0;
+    for(size_t i=0;i<esphook_app_count;++i) if(!strcmp(esphook_apps[i]->id,"screentest")) { assert(esphook_apps[i]->command && esphook_apps[i]->command(line));return output; }
+    assert(!"screentest is not in the catalog");return output;
+}
+static void play_screentest(const char *out)
+{
+    assert(app_open(&manager.context,"screentest"));app_manager_commit(&manager);run(300);
+    dump(out,"screentest");
+    assert(shows_text(lv_screen_active(),"plugin INV") && shows_text(lv_screen_active(),"gap 1,26  20MHz")); /* what the firmware was written on */
+    /* A short press inverts, a hold swaps the offsets; nothing is stored while the pattern is up. */
+    event(APP_EVENT_SHORT);run(200);
+    assert(!screen.now.invert && screen.now.x_gap==1 && screen.now.y_gap==26 && screen.saves==0);
+    assert(shows_text(lv_screen_active(),"custom NORM"));
+    event(APP_EVENT_CONFIRM);run(200);dump(out,"screentest-plain");
+    assert(!screen.now.invert && screen.now.x_gap==0 && screen.now.y_gap==24 && screen.saves==0);
+    assert(shows_text(lv_screen_active(),"plain NORM") && shows_text(lv_screen_active(),"gap 0,24  20MHz"));
+    event(APP_EVENT_CONFIRM);assert(screen.now.x_gap==1 && screen.now.y_gap==26);
+    event(APP_EVENT_CONFIRM);assert(screen.now.x_gap==0 && screen.now.y_gap==24);
+    /* Leaving stores it, once; leaving a pattern nobody touched stores nothing. */
+    assert(app_open(&manager.context,APP_LAUNCHER));app_manager_commit(&manager);run(30);
+    assert(screen.saves==1 && screen.now.saved_mhz==20 && !screen.now.invert && screen.now.y_gap==24);
+    assert(app_open(&manager.context,"screentest"));app_manager_commit(&manager);run(100);
+    assert(app_open(&manager.context,APP_LAUNCHER));app_manager_commit(&manager);run(30);
+    assert(screen.saves==1);
+    /* The PC side. */
+    assert(!strncmp(screen_line("robot screentest"),"invert=0 x=0 y=24 mhz=20 saved_mhz=20 variant=plain",54));
+    assert(strstr(screen_line("robot screentest plugin"),"OK") && screen.now.invert && screen.now.x_gap==1 && screen.now.y_gap==26 && screen.saves==1);
+    assert(strstr(screen_line("robot screentest invert 0"),"OK") && !screen.now.invert && screen.now.y_gap==26);
+    assert(strstr(screen_line("robot screentest gap 2 25"),"variant=custom") && screen.now.x_gap==2 && screen.now.y_gap==25);
+    assert(strstr(screen_line("robot screentest plain"),"variant=plain") && screen.saves==1);
+    assert(strstr(screen_line("robot screentest save"),"OK saved") && screen.saves==2 && screen.now.saved_mhz==20);
+    assert(strstr(screen_line("robot screentest mhz 10"),"power cycle") && screen.saves==3 && screen.now.saved_mhz==10 && screen.now.mhz==20);
+    assert(strstr(screen_line("robot screentest save"),"saved_mhz=10") && screen.now.saved_mhz==10); /* a plain save keeps the stored clock */
+    assert(strstr(screen_line("robot screentest raw 2A 00 01 00 A0"),"OK sent") && screen.raws==1 && screen.raw_length==5 && screen.raw[0]==0x2A && screen.raw[4]==0xA0);
+    assert(strstr(screen_line("robot screentest gap 99 0"),"ERR") && strstr(screen_line("robot screentest blink"),"ERR") && screen.raws==1);
+    screen.busy=true; /* the display task has not taken the last request yet */
+    assert(strstr(screen_line("robot screentest plugin"),"ERR busy") && strstr(screen_line("robot screentest save"),"ERR busy") && strstr(screen_line("robot screentest raw 21"),"ERR busy"));
+    assert(!screen.now.invert && screen.now.y_gap==24 && screen.raws==1);
+    screen.busy=false;
+    for(size_t i=0;i<esphook_app_count;++i) if(!strcmp(esphook_apps[i]->id,"screentest")) assert(!esphook_apps[i]->command("robot zombie status") && !esphook_apps[i]->command("robot screen"));
+    /* start shows the pattern, stop goes back to the menu. */
+    assert(strstr(screen_line("robot screentest start"),"queued"));app_manager_commit(&manager);run(50);
+    assert(!strcmp(app_active_id(&manager.context),"screentest"));
+    assert(strstr(screen_line("robot screentest stop"),"OK"));app_manager_commit(&manager);run(50);
+    assert(!strcmp(app_active_id(&manager.context),"launcher"));
+    /* put the panel back for whoever looks at it next */
+    screen.now=(app_screen_t){.invert=true,.x_gap=1,.y_gap=26,.mhz=20,.saved_mhz=20};
+}
+#endif
 /* The best score outlives the game (app_best.h): a game that finished a run is left and entered again, and its record is
  * still on the title screen; a game that was never finished has none. Entering the others in between makes the framework
  * read the store again instead of answering from its RAM copy, which is also what a reboot looks like. */
@@ -1293,6 +1362,9 @@ int main(int argc,char **argv)
     play_mirror(out);
 #endif
     check_records();
+#ifdef ESPHOOK_TEST_SCREENTEST
+    play_screentest(out);
+#endif
     assert(app_open(&manager.context,"settings"));app_manager_commit(&manager);run(20);
     event(APP_EVENT_SHORT);event(APP_EVENT_SHORT);event(APP_EVENT_SHORT);event(APP_EVENT_CONFIRM);
     event(APP_EVENT_SHORT);event(APP_EVENT_CONFIRM);assert(standby[0] && strcmp(standby,"face"));dump(out,"settings-standby");

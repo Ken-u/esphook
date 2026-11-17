@@ -60,6 +60,8 @@ jobs:
         run: ./scripts/test-app-util.sh
       - name: Test persistent best scores
         run: ./scripts/test-app-best.sh
+      - name: Test screen tuning commands
+        run: ./scripts/test-app-screen.sh
       - name: Test lucky slip game
         run: ./scripts/test-fortune.sh
       - name: Test framework alarm registry
@@ -114,6 +116,7 @@ jobs:
           python3 apps/alarm/pc/main.py --dry-run
           python3 apps/key_report/pc/main.py --dry-run
           python3 apps/key_report/pc/bridge.py --dry-run
+          python3 apps/screentest/pc/main.py --dry-run plain
           ./install.sh --help
       - name: Check patch whitespace
         run: git diff --check

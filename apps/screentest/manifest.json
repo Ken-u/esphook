@@ -1,0 +1,8 @@
+{
+  "id": "screentest",
+  "order": "090",
+  "required": false,
+  "sources": [
+    "firmware/app.c"
+  ]
+}

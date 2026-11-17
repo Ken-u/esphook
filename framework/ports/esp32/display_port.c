@@ -1,4 +1,5 @@
 #include "display_view.h"
+#include "config_store.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_vendor.h"
@@ -10,6 +11,7 @@
 #include "freertos/task.h"
 #include "lvgl.h"
 #include <stdint.h>
+#include <string.h>
 static const char *TAG = "dv";
 
 #define PIN_CS  0
@@ -19,8 +21,17 @@ static const char *TAG = "dv";
 #define PIN_SDA 5
 #define PIN_BLK 1
 
-#define X_GAP 1
-#define Y_GAP 26
+/* 0.96" 80x160 ST7735 modules differ in colour polarity and RAM offsets (app_screen.h). The defaults are the flavour
+ * this firmware was written on ("plugin"); a module of the other flavour is switched with `robot screentest plain` or
+ * from the screentest app and the choice is kept in NVS. */
+#define TUNE_KEY "screen"
+#define TUNE_VERSION 1U
+typedef struct { uint8_t version, invert, x_gap, y_gap, mhz; } tune_blob_t;
+static app_screen_t s_tune = {.invert = true, .x_gap = 1, .y_gap = 26, .mhz = 20, .saved_mhz = 20};
+/* Written by the display task and read by the USB task; requests flow the other way through the two slots below. */
+static portMUX_TYPE s_tune_lock = portMUX_INITIALIZER_UNLOCKED;
+static struct { app_screen_t want; bool save, pending; } s_tune_req;
+static struct { uint8_t bytes[APP_SCREEN_RAW_MAX]; size_t length; bool pending; } s_raw_req;
 
 #define ST7735_CASET 0x2A
 #define ST7735_RASET 0x2B
@@ -56,10 +67,10 @@ static void lvgl_flush_cb(lv_display_t *display, const lv_area_t *area,
         lv_display_get_user_data(display);
     const int width = area->x2 - area->x1 + 1;
     const int height = area->y2 - area->y1 + 1;
-    const uint16_t x_start = (uint16_t)(area->x1 + X_GAP);
-    const uint16_t x_end = (uint16_t)(area->x2 + X_GAP);
-    const uint16_t y_start = (uint16_t)(area->y1 + Y_GAP);
-    const uint16_t y_end = (uint16_t)(area->y2 + Y_GAP);
+    const uint16_t x_start = (uint16_t)(area->x1 + s_tune.x_gap);
+    const uint16_t x_end = (uint16_t)(area->x2 + s_tune.x_gap);
+    const uint16_t y_start = (uint16_t)(area->y1 + s_tune.y_gap);
+    const uint16_t y_end = (uint16_t)(area->y2 + s_tune.y_gap);
     const uint8_t caset[] = {
         (uint8_t)(x_start >> 8), (uint8_t)x_start,
         (uint8_t)(x_end >> 8), (uint8_t)x_end,
@@ -81,8 +92,89 @@ static void lvgl_tick_cb(void *arg)
     lv_tick_inc(LVGL_TICK_PERIOD_MS);
 }
 
+static void tune_load(void)
+{
+    tune_blob_t blob;
+    size_t length = sizeof blob;
+    if (config_app_blob_get(TUNE_KEY, &blob, &length) != ESP_OK || length != sizeof blob || blob.version != TUNE_VERSION
+        || blob.invert > 1U) return;
+    const app_screen_t stored = {.invert = blob.invert != 0U, .x_gap = blob.x_gap, .y_gap = blob.y_gap,
+                                 .mhz = blob.mhz, .saved_mhz = blob.mhz};
+    if (app_screen_valid(&stored)) s_tune = stored;
+}
+
+void dv_screen_read(app_screen_t *out)
+{
+    if (!out) return;
+    portENTER_CRITICAL(&s_tune_lock);
+    *out = s_tune;
+    portEXIT_CRITICAL(&s_tune_lock);
+}
+
+bool dv_screen_apply(const app_screen_t *want, bool save)
+{
+    if (!app_screen_valid(want)) return false;
+    bool queued = false;
+    portENTER_CRITICAL(&s_tune_lock);
+    if (!s_tune_req.pending) { s_tune_req.want = *want; s_tune_req.save = save; s_tune_req.pending = true; queued = true; }
+    portEXIT_CRITICAL(&s_tune_lock);
+    return queued;
+}
+
+bool dv_screen_raw(const uint8_t *bytes, size_t length)
+{
+    if (!bytes || length < 1U || length > APP_SCREEN_RAW_MAX) return false;
+    bool queued = false;
+    portENTER_CRITICAL(&s_tune_lock);
+    if (!s_raw_req.pending) { memcpy(s_raw_req.bytes, bytes, length); s_raw_req.length = length; s_raw_req.pending = true; queued = true; }
+    portEXIT_CRITICAL(&s_tune_lock);
+    return queued;
+}
+
+/* Display task: carries out what the USB task or the screentest app asked for. */
+static void tune_poll(void)
+{
+    if (!s_panel) return;
+    app_screen_t want = {0};
+    uint8_t raw[APP_SCREEN_RAW_MAX] = {0};
+    size_t raw_length = 0;
+    bool apply = false, save = false;
+    portENTER_CRITICAL(&s_tune_lock);
+    if (s_tune_req.pending) { want = s_tune_req.want; save = s_tune_req.save; apply = true; s_tune_req.pending = false; }
+    if (s_raw_req.pending) { memcpy(raw, s_raw_req.bytes, s_raw_req.length); raw_length = s_raw_req.length; s_raw_req.pending = false; }
+    portEXIT_CRITICAL(&s_tune_lock);
+
+    if (apply) {
+        ESP_ERROR_CHECK(esp_lcd_panel_invert_color(s_panel, want.invert));
+        ESP_ERROR_CHECK(esp_lcd_panel_set_gap(s_panel, want.x_gap, want.y_gap));
+        portENTER_CRITICAL(&s_tune_lock);
+        s_tune.invert = want.invert;
+        s_tune.x_gap = want.x_gap;
+        s_tune.y_gap = want.y_gap;
+        portEXIT_CRITICAL(&s_tune_lock);
+        if (save) {
+            const tune_blob_t blob = {.version = TUNE_VERSION, .invert = want.invert ? 1U : 0U, .x_gap = want.x_gap,
+                                      .y_gap = want.y_gap, .mhz = want.mhz};
+            if (config_app_blob_set(TUNE_KEY, &blob, sizeof blob) == ESP_OK) {
+                portENTER_CRITICAL(&s_tune_lock);
+                s_tune.saved_mhz = want.mhz;
+                portEXIT_CRITICAL(&s_tune_lock);
+            } else {
+                ESP_LOGW(TAG, "screen tuning not saved");
+            }
+        }
+    }
+    if (raw_length) {
+        const esp_err_t err = esp_lcd_panel_io_tx_param(s_io, raw[0], raw_length > 1U ? raw + 1 : NULL, raw_length - 1U);
+        if (err != ESP_OK) ESP_LOGW(TAG, "raw screen command failed: %s", esp_err_to_name(err));
+    }
+    /* A new polarity or offset only shows once every pixel is sent again. */
+    if ((apply || raw_length) && s_display) lv_obj_invalidate(lv_screen_active());
+}
+
 esp_err_t dv_init(void)
 {
+    tune_load();
     gpio_set_direction(PIN_BLK, GPIO_MODE_OUTPUT);
     gpio_set_level(PIN_BLK, 1);
     s_screen_awake = true;
@@ -100,7 +192,7 @@ esp_err_t dv_init(void)
         .cs_gpio_num = PIN_CS,
         .dc_gpio_num = PIN_DC,
         .spi_mode = 0,
-        .pclk_hz = 20 * 1000 * 1000,
+        .pclk_hz = (unsigned)s_tune.mhz * 1000U * 1000U,
         .trans_queue_depth = 10,
         .lcd_cmd_bits = 8,
         .lcd_param_bits = 8,
@@ -148,8 +240,8 @@ esp_err_t dv_init(void)
     esp_lcd_panel_swap_xy(s_panel, true);
     /* MV=1 交换行列后，物理上下方向对应逻辑 MX。 */
     esp_lcd_panel_mirror(s_panel, false, true);
-    esp_lcd_panel_set_gap(s_panel, X_GAP, Y_GAP);
-    esp_lcd_panel_invert_color(s_panel, true);
+    esp_lcd_panel_set_gap(s_panel, s_tune.x_gap, s_tune.y_gap);
+    esp_lcd_panel_invert_color(s_panel, s_tune.invert);
     esp_lcd_panel_disp_on_off(s_panel, true);
 
     lv_init();
@@ -180,8 +272,9 @@ esp_err_t dv_init(void)
     ESP_ERROR_CHECK(esp_timer_start_periodic(s_lv_tick_timer, LVGL_TICK_PERIOD_MS * 1000));
 
     s_initialized=true;
-    ESP_LOGI(TAG, "LVGL ST7735 initialized %dx%d, partial=%d lines",
-             DV_WIDTH, DV_HEIGHT, LVGL_DRAW_BUF_LINES);
+    ESP_LOGI(TAG, "LVGL ST7735 initialized %dx%d, partial=%d lines, %s invert=%d gap=%u,%u %u MHz",
+             DV_WIDTH, DV_HEIGHT, LVGL_DRAW_BUF_LINES, app_screen_variant(&s_tune), s_tune.invert,
+             (unsigned)s_tune.x_gap, (unsigned)s_tune.y_gap, (unsigned)s_tune.mhz);
     return ESP_OK;
 }
 
@@ -213,6 +306,7 @@ void dv_activity(void)
 
 void dv_process(void)
 {
+    tune_poll();
     if (s_screen_awake &&
         esp_timer_get_time() - s_last_activity_us >= DISPLAY_IDLE_TIMEOUT_US) {
         /* ST7735 关闭显示输出，同时关闭独立背光 GPIO，避免白白耗电。 */

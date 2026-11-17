@@ -23,6 +23,7 @@ idf.py build
 | `framework/core/app_manager.c` | 纯 C 生命周期、状态 arena、导航与渲染节拍 |
 | `framework/core/app_keys.c` | 实体/USB 输入合并、映射与 USB 租期取消 |
 | `framework/core/app_input.c` | 25ms 消抖、500ms 确认、800ms 三击、松手消费 |
+| `framework/core/app_screen.c` | 面板版本（plugin/plain）和 `robot screentest` 命令的纯函数解析，主机测试 `./scripts/test-app-screen.sh` |
 | `framework/core/app_time.c` | 墙上时钟换算（公历、星期、时区偏移）的纯函数，闹钟和幸运签用 |
 | `framework/core/app_alarm.c` | 全局闹钟注册表：任何应用登记“到点打开哪个应用并通知它”，框架负责判定、排队、贪睡与唤醒；见“闹钟 API” |
 | `framework/include/esphook/app_ui.h` | LVGL 标签、矩形、图层、字体、确认圆（`app_ui_ring`，设置等应用用）；共享 RGB565 画布 `app_ui_canvas`、底部状态条 `app_ui_band`、按住进度线 `app_ui_hold_bar` |
@@ -73,7 +74,7 @@ const app_descriptor_t esphook_app_counter = {
 
 ## 公共 API 速查
 
-应用只能 include 白名单里的头文件：C 标准库、cJSON、自己的本地头、`esphook/app*.h`（含 `app_math/rand/sync/command/best/gfx/ui/haptic/steer/fish/alarm`）、`esphook/radar_view.h` 和 `robot_ui_protocol.h`。`check-apps.py` 对每个应用的 `firmware/` 逐文件检查，FreeRTOS、ESP-IDF、驱动或 `app_runtime.h` 一律拒绝（要什么就由框架出 API，而不是应用越层）。越稳定的 API 越能装更多应用，所以下面这些**不要在应用里再写一份**：
+应用只能 include 白名单里的头文件：C 标准库、cJSON、自己的本地头、`esphook/app*.h`（含 `app_math/rand/sync/command/best/screen/gfx/ui/haptic/steer/fish/alarm`）、`esphook/radar_view.h` 和 `robot_ui_protocol.h`。`check-apps.py` 对每个应用的 `firmware/` 逐文件检查，FreeRTOS、ESP-IDF、驱动或 `app_runtime.h` 一律拒绝（要什么就由框架出 API，而不是应用越层）。越稳定的 API 越能装更多应用，所以下面这些**不要在应用里再写一份**：
 
 | 需求 | 用这个 | 备注 |
 | --- | --- | --- |
@@ -86,6 +87,7 @@ const app_descriptor_t esphook_app_counter = {
 | 按住退出/确认进度线 | `app_ui_hold_bar(parent, y, rgb)` + `app_ui_hold_line()` | 配合 `app_set_exit_hold` |
 | UI 任务发布状态给 USB 任务读 | `app_shared_copy(dst, src)`；多字段/自增用 `app_critical_enter/exit()` | 临界区内只拷贝几个字节；不要 FreeRTOS |
 | 需要解析、较长的共享区 | `app_lock_create/take/give`（互斥锁） | 例：股票传输模型 |
+| 面板调整（颜色反相、RAM 偏移、SPI 时钟，跨重启） | `app_screen_read/apply/raw`（`esphook/app_screen.h`，线程安全，USB 任务也能调）和 `app_screen_parse`（`robot screentest ...` 文本命令的解析） | 新屏模块的两种版本见 `docs/hardware.md`；`screentest` 应用是它的界面 |
 | 最高分/记录（跨退出、跨重启） | `app_best_get(ctx)`（进入时灌给核心）、`app_best_record(ctx, score)`（一局结束时调用） | 按应用 id 自动分库，只在破纪录时写一次 flash，每帧调用也安全；见“设置存储” |
 | 回到上一个应用 | `app_back(ctx)`；全局手势“双击”已由框架处理 | 见“全局输入与导航” |
 | 回复 USB 文本命令 | `app_command_is/reply/replyf`（一行，至多 `APP_COMMAND_REPLY_MAX` 字节） | `command()` 返回 true 表示这行是你的 |

@@ -1,10 +1,12 @@
 #include "app_services.h"
 #include "app_sync.h"
+#include "app_screen.h"
 #include "robot_runtime.h"
 #include "robot_ui.h"
 #include "app_runtime.h"
 #include "config_store.h"
 #include "device_link.h"
+#include "display_view.h"
 #include "display_model.h"
 #include "events.h"
 #include "usb_cdc.h"
@@ -164,6 +166,9 @@ bool app_storage_save(const char *key, const void *data, size_t size)
     if (!data || !size || size > APP_STORAGE_MAX || !storage_key_ok(key)) return false;
     return config_app_blob_set(key, data, size) == ESP_OK;
 }
+void app_screen_read(app_screen_t *out) { dv_screen_read(out); }
+bool app_screen_apply(const app_screen_t *want, bool save) { return dv_screen_apply(want, save); }
+bool app_screen_raw(const uint8_t *bytes, size_t length) { return dv_screen_raw(bytes, length); }
 bool app_transport_write(const char *line) { return cdc_write(line) == ESP_OK; }
 bool app_host_event(const app_context_t *ctx, const char *action, unsigned key, const char *text)
 {
