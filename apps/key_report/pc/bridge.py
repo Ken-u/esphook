@@ -1,19 +1,31 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.9"
+# dependencies = ["pyserial==3.5", "pynput==1.8.1"]
+# ///
 """Listen to the PC keyboard in real time and forward it to the ESP as USB virtual keys.
+
+By default Space is the board's K1: press Space = press the key, hold Space = hold it,
+three quick presses = the global triple-click. `uv run apps/key_report/pc/bridge.py`
+installs the dependencies by itself and keeps listening until F12 or Ctrl+C.
 
 Every forwarded action and every device event (key_report, apps, game buttons) is
 printed as one JSON line on stdout, so the output can be piped or logged.
 Keys are never injected into other programs; the device decides taps, 500ms
 confirmations and the global triple-click.
 
-  terminal  (default) needs only a TTY. A terminal cannot report key release, so
-            each key is a tap; `h` then a key is a 550ms hold, `t` is a triple tap
-            on K1, `m` opens the menu, `r` cancels held keys, `q`/Esc quits.
-  pynput    optional global listener with real press/release, so a physical hold
-            is a device hold. It sees every key system-wide and cannot swallow
-            them, so bind dedicated keys (see bridge.example.json).
+  auto      (default) the global listener when pynput is installed, else terminal.
+  pynput    global listener with real press/release, so a physical hold is a device
+            hold. It works while any window has focus, sees every key system-wide and
+            cannot swallow them (Space still types where you are). macOS needs the
+            terminal allowed under Privacy & Security > Input Monitoring.
+  terminal  needs only a TTY. A terminal cannot report key release, so each key is a
+            tap and the operating system's auto-repeat is ignored; `h` then a key is a
+            550ms hold, `t` is a triple tap on K1, `m` opens the menu, `r` cancels
+            held keys, `q`/Esc quits.
 """
 import argparse
+import importlib.util
 import json
 import os
 import queue
@@ -26,7 +38,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "framework" / "pc")
 from esphook_sdk import AppLink
 from esphook_sdk.keys import bindings
 
-TERMINAL_DIGITS = {"1": 0, "2": 1, "3": 2}
+DEFAULT_KEYMAP = {"space": 0}
+PYNPUT_HINT = "install pynput for global listening with real press/release: uv run apps/key_report/pc/bridge.py"
 TERMINAL_COMMANDS = {"h": "hold prefix", "t": "triple K1", "m": "menu", "r": "release", "q": "quit"}
 CSI_NAMES = {"A": "up", "B": "down", "C": "right", "D": "left"}
 CHAR_NAMES = {" ": "space", "\r": "enter", "\n": "enter", "\t": "tab", "\x7f": "backspace", "\x04": "quit"}
@@ -77,12 +90,30 @@ class TerminalCommands:
         return None
 
 
+class RepeatFilter:
+    """Drops a key that repeats faster than a person can tap: the operating system's auto-repeat.
+
+    A held key arrives as one character, a pause (the initial repeat delay, 0.25-1 s), then a
+    steady stream. The stream is dropped here; the first repeat after the pause is
+    indistinguishable from a deliberate second tap, which is why real holds need press/release.
+    """
+
+    def __init__(self, window=0.12, clock=time.monotonic):
+        self.window, self.clock, self.last = window, clock, {}
+
+    def accept(self, name):
+        now = self.clock()
+        previous, self.last[name] = self.last.get(name), now  # a steady stream keeps extending the window
+        return previous is None or now - previous >= self.window
+
+
 class TerminalKeys:
     """Non-blocking keyboard reader for a POSIX terminal (cbreak) or the Windows console."""
 
-    def __init__(self, keymap, stream=None):
+    def __init__(self, keymap, stream=None, repeat=None):
         self.stream = stream or sys.stdin
         self.commands = TerminalCommands(keymap)
+        self.repeat = repeat or RepeatFilter()
         self.pending = deque()
         self.saved = None
 
@@ -123,7 +154,10 @@ class TerminalKeys:
         if not self.pending:
             self.pending.extend(decode(self._read()))
         while self.pending:
-            command = self.commands.feed(self.pending.popleft())
+            name = self.pending.popleft()
+            if not self.repeat.accept(name):
+                continue
+            command = self.commands.feed(name)
             if command:
                 return command
         return None
@@ -132,13 +166,13 @@ class TerminalKeys:
 class PynputKeys:
     """Global keyboard listener with real press/release events (optional pynput package)."""
 
-    def __init__(self, quit_key="f12"):
+    def __init__(self, quit_key="f12", warn=None):
         try:
             from pynput import keyboard
         except ImportError as exc:
-            raise RuntimeError("--backend pynput needs the pynput package: "
-                               "uv run --with pyserial --with pynput python run.py bridge --backend pynput "
-                               "(macOS: allow Input Monitoring for the terminal)") from exc
+            raise RuntimeError(f"global listening needs the pynput package ({exc}); {PYNPUT_HINT} "
+                               "or uv run --with pyserial --with pynput python run.py bridge") from exc
+        self.warn = warn or (lambda message: print(f"warning: {message}", file=sys.stderr))
         self.quit_key = quit_key.casefold()
         self.events = queue.Queue()
         self.listener = keyboard.Listener(on_press=lambda key: self._put("down", key),
@@ -163,6 +197,13 @@ class PynputKeys:
 
     def __enter__(self):
         self.listener.start()
+        wait = getattr(self.listener, "wait", None)
+        if wait:
+            wait()  # the macOS listener decides here whether this process is trusted
+        if getattr(self.listener, "IS_TRUSTED", True) is False:
+            self.warn("macOS has not allowed this terminal to monitor the keyboard, so key presses may never "
+                      "arrive: System Settings > Privacy & Security > Input Monitoring (and Accessibility), "
+                      "allow the terminal app, then restart this program")
         return self
 
     def __exit__(self, *exc):
@@ -173,6 +214,10 @@ class PynputKeys:
         try:
             return self.events.get_nowait()
         except queue.Empty:
+            alive = getattr(self.listener, "is_alive", None)
+            if alive is not None and not alive():  # e.g. the system refused the keyboard tap
+                raise RuntimeError("the global keyboard listener stopped; check the operating system's "
+                                   "keyboard-monitoring permission for this terminal")
             return None
 
 
@@ -254,16 +299,49 @@ class KeyBridge:
 def banner(backend, keymap, hold_ms, quit_key):
     names = ", ".join(f"{name}=K{usb + 1}" for name, usb in sorted(keymap.items()))
     if backend == "terminal":
-        return (f"Forwarding terminal keys: {names}. Each key is a tap; h+key holds {hold_ms}ms, "
-                "t = triple K1, m = menu, r = release, q/Esc/Ctrl+C = quit.")
-    return f"Forwarding global keys with real press/release: {names}. Press {quit_key} or Ctrl+C to stop."
+        return (f"Forwarding terminal keys: {names}. A terminal cannot see key release: each key is one tap "
+                f"(auto-repeat ignored); h+key holds {hold_ms}ms, t = triple K1, m = menu, r = release, "
+                "q/Esc/Ctrl+C = quit.")
+    return (f"Forwarding global keys with real press/release: {names}. Listening while any window has focus; "
+            f"press {quit_key} or Ctrl+C to stop.")
+
+
+def terminal_keymap(keymap, warn):
+    """Drop bindings on keys the terminal backend reserves for its own commands."""
+    keymap = dict(keymap)
+    for name in sorted(set(keymap) & set(TERMINAL_COMMANDS)):
+        warn(f"terminal key '{name}' is reserved for {TERMINAL_COMMANDS[name]}; its binding is ignored")
+        keymap.pop(name)
+    return keymap
+
+
+def resolve_backend(requested):
+    """What `auto` means on this machine, without opening anything."""
+    if requested == "auto":
+        return "pynput" if importlib.util.find_spec("pynput") else "terminal"
+    return requested
+
+
+def pick_source(requested, keymap, quit_key, warn):
+    """Returns (backend, source, keymap); `auto` falls back to the terminal with an explanation."""
+    if resolve_backend(requested) == "pynput":
+        try:
+            return "pynput", PynputKeys(quit_key, warn), keymap
+        except RuntimeError as exc:
+            if requested == "pynput":
+                raise
+            warn(f"{exc}; using terminal keys instead")
+    else:
+        warn(f"pynput is not installed, so a held key cannot be detected; {PYNPUT_HINT}")
+    keymap = terminal_keymap(keymap, warn)
+    return "terminal", TerminalKeys(keymap), keymap
 
 
 def main(argv=None, link_factory=AppLink, sources=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--port")
-    p.add_argument("--backend", choices=("terminal", "pynput"), default="terminal")
-    p.add_argument("--config", type=Path, help="PC bindings JSON (see bindings.example.json)")
+    p.add_argument("--backend", choices=("auto", "pynput", "terminal"), default="auto")
+    p.add_argument("--config", type=Path, help="PC bindings JSON replacing the default space=K1 (see bridge.example.json)")
     p.add_argument("--app", help="open this app before forwarding")
     p.add_argument("--hold-ms", type=int, default=550, help="duration of h+key in terminal mode")
     p.add_argument("--quit-key", default="f12", help="global stop key for the pynput backend")
@@ -272,34 +350,36 @@ def main(argv=None, link_factory=AppLink, sources=None):
     a = p.parse_args(argv)
     if a.hold_ms < 500:
         p.error("--hold-ms must be at least 500 for a confirmation")
-    keymap = bindings(a.config)
-    if a.backend == "terminal":
-        if a.config is None:
-            keymap = dict(keymap, **TERMINAL_DIGITS)
-        for name in sorted(set(keymap) & set(TERMINAL_COMMANDS)):
-            print(f"warning: terminal key '{name}' is reserved for {TERMINAL_COMMANDS[name]}; its binding is ignored", file=sys.stderr)
-            keymap.pop(name)
+    warn = lambda message: print(f"warning: {message}", file=sys.stderr)
+    keymap = bindings(a.config if a.config else DEFAULT_KEYMAP)
     if a.dry_run:
-        print(json.dumps(dict(backend=a.backend, bindings=keymap, hold_ms=a.hold_ms, app=a.app,
-                              quit_key=a.quit_key if a.backend == "pynput" else None), ensure_ascii=False))
+        backend = resolve_backend(a.backend)
+        print(json.dumps(dict(backend=a.backend, resolved=backend, hold_ms=a.hold_ms, app=a.app,
+                              bindings=terminal_keymap(keymap, warn) if backend == "terminal" else keymap,
+                              quit_key=a.quit_key if backend == "pynput" else None), ensure_ascii=False))
         return 0
-    if sources is not None:
+    if sources is not None:  # tests supply their own key source
+        backend = "terminal" if a.backend == "auto" else a.backend
         source = sources(keymap)
     else:
-        source = TerminalKeys(keymap) if a.backend == "terminal" else PynputKeys(a.quit_key)
+        backend, source, keymap = pick_source(a.backend, keymap, a.quit_key, warn)
     link = link_factory(a.port)
+    code = 0
     try:
         if a.app:
             link.open(a.app)
             link.wait_active(a.app)
         bridge = KeyBridge(link, keymap, hold_ms=a.hold_ms, show_events=not a.no_events)
-        print(banner(a.backend, keymap, a.hold_ms, a.quit_key), file=sys.stderr)
+        print(banner(backend, keymap, a.hold_ms, a.quit_key), file=sys.stderr)
         bridge.run(source)
     except KeyboardInterrupt:
         pass
+    except RuntimeError as exc:  # the keyboard source failed (no terminal, listener stopped)
+        print(f"bridge: {exc}", file=sys.stderr)
+        code = 1
     finally:
         link.close()  # cancels any key still held
-    return 0
+    return code
 
 
 if __name__ == "__main__":

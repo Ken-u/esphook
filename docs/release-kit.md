@@ -77,12 +77,15 @@ python run.py keys --config apps/key_report/pc/bindings.example.json
 ```
 
 ```bash
-python run.py bridge                       # 终端实时转发：space/enter/tab 或 1/2/3 为 K1/K2/K3 短按，h+键长按，t 三击，m 菜单，q 退出
+uv run apps/key_report/pc/bridge.py       # 推荐：自动装 pyserial/pynput，持续全局监听，空格 = 开发板 K1，F12 / Ctrl+C 退出
+python run.py bridge                       # 已装 pynput 时同上；没有时退回终端（只有短按，见下）
 python run.py bridge --app key_report      # 先打开应用，再转发，并打印设备回传事件
-uv run --with pyserial --with pynput python run.py bridge --backend pynput --config apps/key_report/pc/bridge.example.json
+python run.py bridge --config apps/key_report/pc/bridge.example.json   # 换成自己的键位（例：F9/F10/F11 = K1/K2/K3）
 ```
 
-bridge 不依赖 Tkinter。终端后端看不到按键松开，所以每个键是一次短按；全局 pynput 后端有真实按下/松开，能做出真实长按，但会监听整台电脑的键盘且不能吞键，务必绑定专用键。
+默认只绑定空格 = K1：按下空格 = 按下开发板按键，按住空格 = 设备端按住（500ms 确认），快速三次 = 全局三击。全局后端（pynput）拿到真实的按下/松开，窗口在不在前台都能用；它不能吞键，所以空格仍会输入到当前窗口，需要时用 `--config` 绑定专用键。macOS 首次运行要在“系统设置 › 隐私与安全性 › 输入监控（和辅助功能）”允许所用终端，之后重启程序；缺权限时程序会提示。
+
+bridge 不依赖 Tkinter。没有 pynput 时自动退回终端后端：终端看不到按键松开，每个键是一次短按并忽略系统自动重复（按住不会连发），真实长按用 `h` 再按空格（550ms）；`t` 三击、`m` 菜单、`r` 取消按住、`q`/Esc 退出。
 
 keys 打开一个仅在自身窗口有焦点时接收键盘的控制器，需要 Python Tkinter；没有 Tkinter 仍可用 input 命令和 SDK。默认 Space 对应 K1、Return 对应 K2、Tab 对应 K3，例子可将 Space/Return 都绑定到 K1。USB 模拟的是原始按下/松开，设备统一判定短按、500ms 长按和快速三击。实体键和 USB 键各自记录状态，某一边松开不会把另一边仍按住的键松开。
 
