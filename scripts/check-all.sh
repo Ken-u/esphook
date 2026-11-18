@@ -103,6 +103,7 @@ check cmake-scan cmake -P tests/test_cmake_scan.cmake
 check release-package py tests/test_release_package.py
 check size-report py tests/test_size_report.py
 check fontdata py tests/test_fontdata.py
+check net-check py tests/test_net_check.py
 check stock-pc py apps/stock/pc/test_stock_t.py
 check hook-pc py apps/hook/pc/test_hooks.py
 check device-link py apps/hook/pc/test_device_link.py

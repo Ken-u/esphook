@@ -43,6 +43,7 @@ idf.py build
 | `cmake/apps.cmake` | 按 manifest 自动生成注册表，固件与无屏测试共用 |
 | `main/aihook_font.c` / `main/fontdata.bin` | 两个中文字体（12px 1bpp、16px 2bpp 压缩）的 LVGL 描述；位图、字形表、字符映射都在固定 `fontdata` 分区，启动时逐项校验后原地使用，不占 OTA 槽也不复制进 RAM；映射不可用时回退内置 ASCII 小字体 |
 | `tools/make_fontdata.py` | 由 `lv_font_conv --format lvgl` 的两份 C 输出生成 `main/fontdata.bin`（格式 v2），并检查放得进分区表里的 `fontdata`；测试 `tests/test_fontdata.py` |
+| `tools/net_check.py` | 在板子所在 Wi-Fi 的电脑上做实机网络检查：`/health`、`/`、`/notify`、按键后板子向回调地址 POST `/keyevent`、可选 OTA 与重启；脚本自身用回环上的假板子测试（`tests/test_net_check.py`） |
 
 `main/` 只保留启动、配置/网络/HTTP/USB 接入、字体资源与任务入口。`display_task` 不知道具体应用 id，也不再调用应用专用渲染函数。`input_task` 只提交消抖后的按下/松手，不执行 Hook 或游戏逻辑。原 `host/*.py` 三个入口及已注册的 `host/hooks` adapter 保留兼容跳转，新代码放 apps 中。
 

@@ -19,6 +19,7 @@ description: Validate esphook framework and app changes with manifest checks, li
    2. `gh release view --repo <owner>/<repo> --json tagName,targetCommitish`，确认最新 Release 的 `targetCommitish` 等于刚推送的提交；不是则等发布完成，或改用该次 CI run 的 artifact。
    3. 下载 `esphook-full-flash.zip` 和 `SHA256SUMS`，`shasum -a 256 -c` 校验后解压；在解压目录 `uv venv --python 3.11 --seed .esphook-venv`，`uv pip install --python .esphook-venv/bin/python -r tools/requirements-flash.txt`，先 `python flash.py --dry-run`，再 `python flash.py --port <串口>`。
    4. 刷后用 `AppLink` 查 `status` 和 `hardware`（含 `usb_tx_drops`）确认启动，按改动实测相关功能，最后回到默认待机应用（带 `APP_DEFAULT_STANDBY` 的应用，现在是 `wedding`；先 `release_keys()`、`menu()` 再 `open` 它，并用 `status` 确认 `active` 和 `standby`）。
+   5. 改动碰到 Wi-Fi/HTTP/OTA/Hook 回键时，还要在**板子所在的 Wi-Fi 网段**里跑 `python3 tools/net_check.py --device <板子 IP> [--ota <新固件.bin>]`（`PYTHONPATH=framework/pc`；它检查 `/health`、`/`、`/notify`、按键后板子向回调地址 POST `/keyevent`，以及可选的 OTA 重启）。板子 IP 看 `status` 的 `ip=`；板子联的是哪个 SSID 看开机日志。电脑不在同一网段就连不上，那时如实写“网络路径未实机验证”，不要把主机测试当成实机结果。
 
 回归已通过且没有新证据时停止重复测试。交付时说明分支/提交、实际通过的检查、固件体积，以及需要硬件确认的帧率、按键手感和电源/舵机表现。
 
