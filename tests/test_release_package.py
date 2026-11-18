@@ -21,7 +21,7 @@ def fixture(folder):
     for source,dest in (("main/fontdata.bin","main/fontdata.bin"),("partitions_aihook.csv","partitions_aihook.csv"),("dependencies.lock","dependencies.lock")):
         shutil.copy2(ROOT/source,resources/dest)
     (firmware/"flasher_args.json").write_text(json.dumps(dict(flash_files={"0x0":"bootloader/bootloader.bin","0x8000":"partition_table/partition-table.bin",
-        "0xf000":"ota_data_initial.bin","0x20000":"supermini-aihook.bin","0x379000":"../main/fontdata.bin"},flash_settings=dict(flash_mode="dio",flash_size="4MB",flash_freq="80m"))))
+        "0xf000":"ota_data_initial.bin","0x20000":"supermini-aihook.bin","0x340000":"../main/fontdata.bin"},flash_settings=dict(flash_mode="dio",flash_size="4MB",flash_freq="80m"))))
 
 class PackageTests(unittest.TestCase):
     @classmethod
@@ -40,7 +40,7 @@ class PackageTests(unittest.TestCase):
         kit=self.root/"esphook-kit";sdk=self.root/"esphook-sdk"
         info=json.loads(self.run_python(kit,"run.py","doctor"));self.assertTrue(info["sdk"] and info["firmware"])
         command=json.loads(self.run_python(kit,"run.py","flash","--port","COM_TEST","--dry-run"))
-        self.assertIn("esp32c3",command);self.assertIn("0x379000",command);self.assertNotIn("--erase-all",command)
+        self.assertIn("esp32c3",command);self.assertIn("0x340000",command);self.assertNotIn("--erase-all",command)
         self.run_python(kit,"run.py","input","tap","--dry-run")
         self.assertEqual(json.loads(self.run_python(kit,"run.py","bridge","--dry-run"))["bindings"]["space"],0)
         self.run_python(kit,"run.py","stock","--demo","--dry-run")

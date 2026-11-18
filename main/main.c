@@ -58,7 +58,8 @@ void app_main(void)
 
     /* 显示 */
     dm_init();
-    ESP_ERROR_CHECK(font_store_init());
+    /* A missing or old font image is not fatal: the UI falls back to the built-in ASCII font until a full USB flash. */
+    if (font_store_init() != ESP_OK) cdc_write("font image unusable: full USB flash required");
     ESP_ERROR_CHECK(dv_init());
     dv_flush();
 

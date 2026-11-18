@@ -42,7 +42,7 @@
 - [ ] 标题/正文滚动节奏(LVGL `SCROLL_CIRCULAR`):实机调速度和停顿
 - [ ] 蜂鸣器音调/时长(`beeper.c`):NOTIFY/KEY/ERROR 三种,实机听感调
 - [x] **屏幕布局重做**(`display_view.c`):LVGL 大字号状态/标题/正文布局已落地,剩余只做实机微调
-- [x] **中文通知显示**:中文字库编译进字体 C 文件并由 `fontdata` 固定分区加载
+- [x] **中文通知显示**:字库位图、字形表和字符映射都在 `fontdata` 固定分区（`tools/make_fontdata.py` 生成，`main/aihook_font.c` 校验后原地使用）
 
 ## 已完成
 

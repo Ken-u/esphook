@@ -7,7 +7,7 @@
 #define APP_COLOR_TEXT 0xEDF4FB
 #define APP_COLOR_MUTED 0x8A8196
 #define APP_COLOR_ACCENT 0xFDB927
-extern const lv_font_t aihook_font_12, aihook_font_16;
+extern lv_font_t aihook_font_12, aihook_font_16; /* loaded from the fontdata partition, see main/aihook_font.h */
 lv_color_t app_ui_color(uint32_t rgb);
 void app_ui_plain(lv_obj_t *obj);
 lv_obj_t *app_ui_layer(lv_obj_t *parent);

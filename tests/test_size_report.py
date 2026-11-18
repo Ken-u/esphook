@@ -37,7 +37,7 @@ MAP = """\
  .rodata.other.str1.4
                 0x3c000100       0x40 esp-idf/main/libmain.a(app.c.obj)
  .rodata.glyph_dsc
-                0x3c000800      0x400 esp-idf/main/libmain.a(aihook_font_12.c.obj)
+                0x3c000800      0x400 esp-idf/main/libmain.a(aihook_font.c.obj)
  .rodata.tab    0x3c000c00      0x200 esp-idf/main/libmain.a(a_core.c.obj)
 """
 
@@ -62,7 +62,7 @@ class SizeReportTest(unittest.TestCase):
         write(self.map, MAP)
         self.partitions = os.path.join(self.root, "partitions.csv")
         write(self.partitions, "# Name, Type, SubType, Offset, Size\nnvs, data, nvs, 0x9000, 0x6000\n"
-                               "ota_0, app, ota_0, 0x20000, 1700K\nota_1, app, ota_1, , 1600K\nfontdata, data, 0x40, , 512K\n")
+                               "ota_0, app, ota_0, 0x20000, 1700K\nota_1, app, ota_1, , 1600K\nfontdata, data, 0x40, , 768K\n")
         self.image = os.path.join(self.root, "fw.bin")
         with open(self.image, "wb") as handle:
             handle.write(b"\0" * (1500 * 1024))
@@ -93,7 +93,7 @@ class SizeReportTest(unittest.TestCase):
         rodata = sum(size for out, _, size, _ in items if out == ".flash.rodata")
         self.assertEqual(rodata, 0x800 + 0x400 + 0x200)  # the 0x40 piece lives inside the first lump
         cats = size_report.categories(items, self.root)
-        self.assertEqual(cats["built-in font tables"], 0x400)
+        self.assertEqual(cats["framework + main"], 0x400)
         self.assertEqual(cats["LVGL"], 0x500)
         self.assertEqual(cats["Wi-Fi, lwip, TLS, HTTP"], 0x200)
 

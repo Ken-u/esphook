@@ -77,7 +77,7 @@ Windows 用 `--port COM4`。电脑上只有一个 Espressif 串口时可以省�
 
 - **USB**：重新下载新版 kit，再跑一遍 `run.py flash`。设置不会丢。
 - **Wi-Fi OTA**（板子已经配过网）：把 `esphook-firmware.bin` 上传到设备网页的 `Firmware OTA`，或
-  `curl --fail --data-binary @esphook-firmware.bin -H 'Content-Type: application/octet-stream' http://<设备 IP>/ota`。OTA 只更新应用分区，不动字库、分区表和 NVS；要换字库或分区表就走 USB。限制和认证见 [ota.md](docs/ota.md)。
+  `curl --fail --data-binary @esphook-firmware.bin -H 'Content-Type: application/octet-stream' http://<设备 IP>/ota`。OTA 只更新应用分区，不动字库、分区表和 NVS；要换字库或分区表就走 USB（从旧的 1700 KiB 槽布局升级到现在的 1600 KiB 槽 + 768 KiB 字库布局，要先 USB 完整刷一次，细节见 [ota.md](docs/ota.md#从旧分区布局升级只需一次)）。限制和认证见 [ota.md](docs/ota.md)。
 - 固件版本在设置应用的第一页；Release 里的 `release.json` 记录了版本和 `source_commit`。
 
 更多发布包细节见 [发布指南](docs/release-kit.md)、[快速安装](docs/quick-install.md)。
@@ -276,7 +276,7 @@ python3 scripts/check-apps.py                             # 检查 manifest 与 
 
 ### 7.3 构建
 
-固件**以 GitHub Actions 为准**：`.github/workflows/ci.yml` 在每次 push 和 PR 时跑全部主机测试，并用 ESP-IDF v5.5.4 构建 ESP32-C3 固件（通用配置，以及禁用机器人驱动的旧 Hook 配置），检查应用能放进 1700 KiB 的 OTA 槽；默认分支成功后自动发布 `v<version.txt>-<run number>` Release（版本号在 `version.txt`）。
+固件**以 GitHub Actions 为准**：`.github/workflows/ci.yml` 在每次 push 和 PR 时跑全部主机测试，并用 ESP-IDF v5.5.4 构建 ESP32-C3 固件（通用配置，以及禁用机器人驱动的旧 Hook 配置），检查应用能放进 1600 KiB 的 OTA 槽；默认分支成功后自动发布 `v<version.txt>-<run number>` Release（版本号在 `version.txt`）。
 
 本地构建需要自己装 ESP-IDF 5.5.4：
 

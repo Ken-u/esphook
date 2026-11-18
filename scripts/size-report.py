@@ -135,7 +135,7 @@ def per_app(items, root):
 
 def categories(items, root):
     extra = extra_objects(root)
-    cats = {"apps + app cores/models": 0, "built-in font tables": 0, "framework + main": 0, "LVGL": 0,
+    cats = {"apps + app cores/models": 0, "framework + main": 0, "LVGL": 0,
             "Wi-Fi, lwip, TLS, HTTP": 0, "string literals (merged, all objects)": 0, "ESP-IDF core, libc, drivers": 0}
     for out, name, size, path in items:
         if out not in (".flash.text", ".flash.rodata", ".iram0.text", ".dram0.data"):
@@ -143,8 +143,6 @@ def categories(items, root):
         lib, obj = archive_of(path)
         if re.search(r"\.str1\.[14]$", name) and size > 50000:
             cats["string literals (merged, all objects)"] += size
-        elif lib == "libmain" and obj and obj.startswith("aihook_font_"):
-            cats["built-in font tables"] += size
         elif lib == "libmain":
             cats["apps + app cores/models" if obj == "app.c.obj" or obj in extra else "framework + main"] += size
         elif lib == "liblvgl__lvgl":

@@ -1,43 +1,23 @@
 /* main/font_store.c
  *
- * 字库位图不放进 OTA app 槽，而是作为固定的 fontdata 数据分区映射到
- * LVGL 的字体描述中。这样 app OTA 只会改 ota_0/ota_1，字库只在整机
- * USB 烧录时更新。
+ * Glyph bitmaps, glyph records and character maps of the two Chinese LVGL fonts are not part of the OTA app slots.
+ * They live once in the fixed `fontdata` data partition, which is memory mapped here and handed to
+ * aihook_font_load(). An app OTA therefore only touches ota_0/ota_1 and the fonts only change with a full USB flash.
  */
 #include "font_store.h"
+#include "aihook_font.h"
 #include "esp_log.h"
 #include "esp_partition.h"
-#include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
-
-void aihook_font_12_set_bitmap(const uint8_t *bitmap);
-void aihook_font_16_set_bitmap(const uint8_t *bitmap);
+#include <stdint.h>
 
 static const char *TAG = "font_store";
 
 #define FONT_PARTITION_LABEL "fontdata"
-#define FONT_DATA_MAGIC 0x44464841U /* bytes: AHFD */
-#define FONT_DATA_VERSION 1U
-
-typedef struct {
-    uint32_t magic;
-    uint32_t version;
-    uint32_t header_size;
-    uint32_t total_size;
-    uint32_t font12_offset;
-    uint32_t font12_size;
-    uint32_t font16_offset;
-    uint32_t font16_size;
-} font_data_header_t;
 
 static esp_partition_mmap_handle_t s_map_handle;
 static bool s_initialized;
-
-static bool range_is_valid(uint32_t offset, uint32_t size, uint32_t limit)
-{
-    return offset <= limit && size <= limit - offset;
-}
 
 esp_err_t font_store_init(void)
 {
@@ -59,28 +39,15 @@ esp_err_t font_store_init(void)
         return err;
     }
 
-    const font_data_header_t *header = (const font_data_header_t *)mapped;
-    if (header->magic != FONT_DATA_MAGIC ||
-        header->version != FONT_DATA_VERSION ||
-        header->header_size < sizeof(*header) ||
-        header->header_size > header->total_size ||
-        header->total_size > partition->size ||
-        header->font12_offset < header->header_size ||
-        header->font16_offset < header->header_size ||
-        !range_is_valid(header->font12_offset, header->font12_size, header->total_size) ||
-        !range_is_valid(header->font16_offset, header->font16_size, header->total_size)) {
-        ESP_LOGE(TAG, "invalid fontdata header in '%s'", FONT_PARTITION_LABEL);
+    if (!aihook_font_load((const uint8_t *)mapped, partition->size)) {
+        ESP_LOGE(TAG, "'%s' does not hold a usable font image (old layout or damaged); "
+                      "full USB flash is required, using the built-in ASCII font", FONT_PARTITION_LABEL);
         esp_partition_munmap(s_map_handle);
         s_map_handle = 0;
-        return ESP_ERR_INVALID_SIZE;
+        return ESP_ERR_INVALID_VERSION;
     }
-
-    const uint8_t *base = (const uint8_t *)mapped;
-    aihook_font_12_set_bitmap(base + header->font12_offset);
-    aihook_font_16_set_bitmap(base + header->font16_offset);
     s_initialized = true;
-
-    ESP_LOGI(TAG, "mapped Chinese fonts: 12px=%u bytes, 16px=%u bytes",
-             (unsigned)header->font12_size, (unsigned)header->font16_size);
+    ESP_LOGI(TAG, "mapped Chinese fonts from '%s' (%u KiB partition)", FONT_PARTITION_LABEL,
+             (unsigned)(partition->size / 1024));
     return ESP_OK;
 }

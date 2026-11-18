@@ -5,6 +5,7 @@
 #include "esphook/app_services.h"
 #include "esphook/app_screen.h"
 #include "esphook/app_ui.h"
+#include "aihook_font.h"
 #ifdef ESPHOOK_TEST_STOCK
 #include "stock_transport.h"
 #endif
@@ -1492,15 +1493,75 @@ static void play_wedding(const char *out)
     event(APP_EVENT_SHORT);assert(!strcmp(app_active_id(&manager.context),"launcher"));
 }
 #endif
-void aihook_font_12_set_bitmap(const uint8_t *);
-void aihook_font_16_set_bitmap(const uint8_t *);
+/* A fingerprint of everything the two Chinese fonts answer for every code point: whether the glyph exists, which glyph
+ * record it maps to and that record's metrics. It pins the fontdata image and its loader to the tables that used to be
+ * compiled into the firmware. */
+static uint64_t fnv(uint64_t h,uint32_t v) { for(int i=0;i<4;++i) { h^=(v>>(8*i))&255u;h*=1099511628211ULL; } return h; }
+static uint64_t font_fingerprint(const lv_font_t *font)
+{
+    uint64_t h=1469598103934665603ULL;
+    for(uint32_t cp=0;cp<0x20000;++cp) {
+        lv_font_glyph_dsc_t g;memset(&g,0,sizeof g);
+        bool ok=lv_font_get_glyph_dsc(font,&g,cp,0);
+        h=fnv(h,ok);
+        if(ok) { h=fnv(h,g.adv_w);h=fnv(h,g.box_w);h=fnv(h,g.box_h);h=fnv(h,(uint32_t)g.ofs_x);h=fnv(h,(uint32_t)g.ofs_y);h=fnv(h,g.format);h=fnv(h,g.gid.index); }
+    }
+    return h;
+}
+/* The real image through the real loader, then damaged copies of it. Every copy lives in an exactly sized heap block so
+ * AddressSanitizer notices a single byte read past its end. A damaged image has to be rejected, or, when the damage
+ * left it self-consistent, still be safe to query for every code point. */
+static void check_font_image(uint8_t *image,size_t size)
+{
+    assert(aihook_font_load(image,size) && aihook_font_ready());
+    unsigned long long f12=font_fingerprint(&aihook_font_12),f16=font_fingerprint(&aihook_font_16);
+    if(getenv("ESPHOOK_FONT_REPORT")) fprintf(stderr,"font fingerprints 12px=0x%016llx 16px=0x%016llx\n",f12,f16);
+    assert(f12==0x6096b5fe5723ebc5ULL && f16==0x36ef25aa9392b743ULL); /* the tables that used to be compiled into the firmware */
+    lv_font_glyph_dsc_t glyph;memset(&glyph,0,sizeof glyph);
+    assert(lv_font_get_glyph_dsc(&aihook_font_16,&glyph,0x65B0 /* 新 */,0) && glyph.box_w>8);
+
+    size_t cuts[]={0,3,4,16,79,80,81,200,size/3,size/2,size-1};
+    for(size_t i=0;i<sizeof cuts/sizeof cuts[0];++i) {
+        uint8_t *copy=malloc(cuts[i]?cuts[i]:1);assert(copy);memcpy(copy,image,cuts[i]);
+        assert(!aihook_font_load(copy,cuts[i]) && !aihook_font_ready());
+        free(copy);
+    }
+    assert(!aihook_font_load(NULL,size) && !aihook_font_load(image+1,size-1));
+    uint32_t version=2,bad=3;
+    uint8_t *copy=malloc(size);assert(copy);
+    memcpy(copy,image,size);memcpy(copy+4,&bad,4);assert(!aihook_font_load(copy,size));memcpy(copy+4,&version,4);
+    unsigned accepted=0,rejected=0,swept=0;
+    uint32_t cmap_at[2],cmap_len[2];
+    for(unsigned f=0;f<2;++f) { memcpy(&cmap_at[f],image+16+32*f+16,4);memcpy(&cmap_len[f],image+16+32*f+20,4);cmap_len[f]*=28; }
+    srand(12345);
+    for(unsigned round=0;round<1500;++round) {
+        memcpy(copy,image,size);
+        unsigned flips=1+(unsigned)rand()%3;
+        for(unsigned k=0;k<flips;++k) {
+            size_t at;
+            switch(round%3) { /* the header, the character-map records, anywhere */
+            case 0: at=(size_t)rand()%80;break;
+            case 1: { unsigned f=(unsigned)rand()%2;at=cmap_at[f]+(size_t)rand()%cmap_len[f];break; }
+            default: at=(size_t)rand()%size;break;
+            }
+            copy[at]^=(uint8_t)(1u<<(rand()%8));
+        }
+        if(aihook_font_load(copy,size)) {
+            ++accepted;
+            if(swept<40) { ++swept;for(uint32_t cp=0;cp<0x10000;++cp) { lv_font_glyph_dsc_t g;memset(&g,0,sizeof g);(void)lv_font_get_glyph_dsc(&aihook_font_12,&g,cp,0);(void)lv_font_get_glyph_dsc(&aihook_font_16,&g,cp,0); } }
+        } else ++rejected;
+    }
+    free(copy);
+    assert(rejected>400 && swept>0); /* the checks must actually reject things, not wave everything through */
+    assert(aihook_font_load(image,size) && aihook_font_ready());
+    printf("fontdata: %zu bytes, fingerprints match, %u damaged images rejected, %u harmless ones safe to query\n",size,rejected,accepted);
+}
 int main(int argc,char **argv)
 {
     FILE *file=fopen(ESPHOOK_FONT_FILE,"rb");assert(file);fseek(file,0,SEEK_END);long size=ftell(file);rewind(file);
     uint8_t *font=malloc((size_t)size);assert(font && fread(font,1,(size_t)size,file)==(size_t)size);fclose(file);
-    uint32_t *h=(uint32_t *)font;assert(h[0]==0x44464841 && h[4]<(unsigned)size && h[6]<(unsigned)size);
-    aihook_font_12_set_bitmap(font+h[4]);aihook_font_16_set_bitmap(font+h[6]);
-    lv_init();lv_display_t *d=lv_display_create(160,80);lv_display_set_color_format(d,LV_COLOR_FORMAT_RGB565);
+    lv_init();
+    check_font_image(font,(size_t)size);lv_display_t *d=lv_display_create(160,80);lv_display_set_color_format(d,LV_COLOR_FORMAT_RGB565);
     lv_display_set_buffers(d,draw_buffer,NULL,sizeof draw_buffer,LV_DISPLAY_RENDER_MODE_PARTIAL);lv_display_set_flush_cb(d,flush);
     for(size_t i=0;i<esphook_app_count;++i) if(esphook_apps[i]->init) assert(esphook_apps[i]->init());
     app_platform_t p={.scene_create=scene,.scene_delete=destroy,.save_standby=save,.time_read=read_time};ui=robot_ui_default();

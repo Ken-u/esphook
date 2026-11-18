@@ -2,7 +2,7 @@
 
 ## OTA 分区策略
 
-4 MB Flash 使用两个 1700 KiB 应用槽：`ota_0` 和 `ota_1`。中文字体放在独立的 `fontdata` 数据分区（512 KiB），不属于应用镜像：
+4 MB Flash 排满：两个 1600 KiB 应用槽 `ota_0`、`ota_1`（均 64 KiB 对齐），加一个 768 KiB 的 `fontdata` 数据分区（`0x340000`–`0x400000`）。`fontdata` 存放两个中文字体的位图、字形表和字符映射（约 612 KiB，由 `tools/make_fontdata.py` 生成），启动时映射并校验，原地使用；这些数据只存一份，不占 OTA 槽，也不属于应用镜像：
 
 ```text
 USB 完整刷写：bootloader + partition table + OTA data + app + fontdata
@@ -10,6 +10,10 @@ USB 完整刷写：bootloader + partition table + OTA data + app + fontdata
 ```
 
 因此普通 OTA 不会擦掉 Wi-Fi、别名、配对密钥，也不会覆盖中文字体。固件启用了启动回滚保护：新应用首次启动并完成初始化后才确认，启动失败可以回到旧槽位。
+
+### 从旧分区布局升级（只需一次）
+
+早期版本用两个 1700 KiB 槽加 512 KiB 的 `fontdata`（旧字库格式 v1，只含位图，字形表编译在应用里）。OTA 不能改分区表，所以从旧布局升级到本布局**必须先 USB 完整刷一次**（`run.py flash` / `esphook-full-flash.zip`，NVS 里的设置照旧保留）。只 OTA 新固件而不刷字库也不会变砖：固件发现 `fontdata` 不是 v2 格式，会在串口打印提示并改用内置 8 像素 ASCII 字体，设备照常联网、响应 USB 和 OTA，只是中文显示为空白，直到完整刷机。
 
 ## 方式一：设备网页上传
 

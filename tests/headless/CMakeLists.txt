@@ -22,7 +22,7 @@ add_executable(apps_headless test_apps.c ${ESPHOOK_APP_SOURCES}
     "${PROJECT_DIR}/framework/services/display_protocol.c"
     "${PROJECT_DIR}/framework/services/radar_plot.c"
     "${PROJECT_DIR}/framework/ports/esp32/app_ui.c"
-    "${PROJECT_DIR}/main/aihook_font_12.c" "${PROJECT_DIR}/main/aihook_font_16.c")
+    "${PROJECT_DIR}/main/aihook_font.c")
 target_include_directories(apps_headless PRIVATE "${PROJECT_DIR}/framework/include" "${PROJECT_DIR}/framework/include/esphook"
     "${PROJECT_DIR}/main" "${PROJECT_DIR}/tests/ui_stubs" "${PROJECT_DIR}/tests" ${ESPHOOK_APP_INCLUDES} ${CJSON_INCLUDE})
 target_link_libraries(apps_headless PRIVATE lvgl ${CJSON_LIBRARY} m)
