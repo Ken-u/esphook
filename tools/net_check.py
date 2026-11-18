@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Hardware check for the network paths of a flashed board, run from a computer on the board's Wi-Fi.
 
-    python3 tools/net_check.py --device 192.168.3.3 [--ota build/supermini-aihook.bin] [--token HEX] [--no-usb]
+    python3 tools/net_check.py --device 192.168.3.3 [--ota build/supermini-aihook.bin] [--token HEX | $ESPHOOK_TOKEN] [--no-usb]
 
 What it proves, in order:
   1. GET /health and GET / answer (the HTTP server is up).
@@ -15,6 +15,7 @@ Exit status 0 only when every requested step passed. Standard library only (USB 
 import argparse
 import http.server
 import json
+import os
 import socket
 import sys
 import threading
@@ -145,7 +146,8 @@ def usb_presser(port):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--device", required=True, help="IP address of the board")
-    parser.add_argument("--token", help="device secret when the board is paired")
+    parser.add_argument("--token", default=os.environ.get("ESPHOOK_TOKEN"),
+                        help="device secret when the board is paired (default: $ESPHOOK_TOKEN, keeps it out of the process list)")
     parser.add_argument("--ota", metavar="BIN", help="also upload this app image and wait for the reboot")
     parser.add_argument("--no-usb", action="store_true", help="do not press the key over USB; press K1 in the Hook app yourself")
     parser.add_argument("--usb-port", help="serial port for the key press (default: auto)")
