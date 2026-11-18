@@ -108,7 +108,7 @@ check device-link py apps/hook/pc/test_device_link.py
 c_tests robot basketball dino ski muyu haptic-steer aquarium fishing starship racing app-time app-util app-best app-screen \
     fortune app-alarm alarm miner jump zombie stack mirror
 check mirror-pc mirror_pc
-c_tests hardware robot-ui app-games usb-cdc
+c_tests hardware robot-ui app-games usb-cdc http-post
 check key-bridge py apps/key_report/pc/test_bridge.py
 check app-ui ui_render
 check hooks-installer hooks_dry_run

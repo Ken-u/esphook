@@ -1592,6 +1592,8 @@ int main(int argc,char **argv)
     assert(app_open(&manager.context,"face"));app_manager_commit(&manager);
     if(manager.context.app->on_leave) manager.context.app->on_leave(&manager.context);
     assert(!critical_depth && critical_total>100 && !the_lock.held); /* every app published through the shared sections, none leaked one */
+    lv_mem_monitor_t pool;lv_mem_monitor(&pool);
+    assert(pool.max_used<pool.total_size*90/100); /* the true high-water mark of the whole run, transitions and effects included */
     destroy(manager.context.root,NULL);lv_display_delete(d);lv_deinit();free(font);
-    printf("all built-in apps: real LVGL rendering, %u app transitions, 64KB UI heap (peak %u bytes at sampled frames), settings persistence and PC message passed\n",(unsigned)(30*esphook_app_count),peak_heap);
+    printf("all built-in apps: real LVGL rendering, %u app transitions, 48KB UI heap (peak %u bytes at sampled frames, high-water %u of %u), settings persistence and PC message passed\n",(unsigned)(30*esphook_app_count),peak_heap,(unsigned)pool.max_used,(unsigned)pool.total_size);
 }

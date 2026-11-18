@@ -8,7 +8,7 @@ idf_component_register(
     SRCS "main.c" "usb_cdc.c" "usb_cdc_tx.c" "config_store.c"
          "aihook_font_12.c" "aihook_font_16.c" "ota_update.c"
          "font_store.c"
-         "device_link.c"
+         "device_link.c" "http_post.c"
          "net_wifi.c" "net_time.c" "beeper.c" "events.c" "http_server.c"
          "input_task.c" "display_task.c"
          "${framework}/core/app_input.c" "${framework}/core/app_manager.c" "${framework}/core/app_protocol.c"
@@ -23,7 +23,7 @@ idf_component_register(
          ${ESPHOOK_APP_SOURCES}
     INCLUDE_DIRS "." "${framework}/include" "${framework}/include/esphook" ${ESPHOOK_APP_INCLUDES}
     REQUIRES nvs_flash esp_driver_usb_serial_jtag esp_driver_spi esp_driver_gpio
-             esp_driver_ledc esp_driver_uart esp_wifi esp_netif esp_event esp_http_server esp_http_client
+             esp_driver_ledc esp_driver_uart esp_wifi esp_netif esp_event esp_http_server
              esp_lcd esp_timer lvgl json app_update spi_flash
              mbedtls lwip esp_hw_support esp_app_format esp_system
 )

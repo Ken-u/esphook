@@ -9,16 +9,20 @@
 #include "display_view.h"
 #include "display_model.h"
 #include "events.h"
+#include "http_post.h"
 #include "usb_cdc.h"
 #include "net_wifi.h"
 #include "esp_app_desc.h"
-#include "esp_http_client.h"
 #include "esp_random.h"
 #include "esp_timer.h"
 #include "sdkconfig.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "cJSON.h"
+#include "lwip/netdb.h"
+#include "lwip/sockets.h"
+#include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -95,6 +99,57 @@ bool app_hook_reply(unsigned key)
     app_key_word(key, r.word, sizeof r.word); snprintf(r.callback, sizeof r.callback, "%s", last_callback());
     return xQueueSend(s_replies, &r, 0) == pdTRUE;
 }
+/* One JSON POST to a callback on the local network: plain HTTP, every step bounded by timeout_ms. True when the answer
+ * is a 2xx. (The string work is in main/http_post.c and has host tests.) */
+static bool post_json(const char *callback, const char *path, const char *body, unsigned timeout_ms)
+{
+    char host[HTTP_POST_HOST_MAX], port[HTTP_POST_PORT_MAX], request[224];
+    if (!http_post_target(callback, host, sizeof host, port, sizeof port)) return false;
+    const int length = http_post_request(request, sizeof request, callback, path, body);
+    if (length < 0) return false;
+    struct addrinfo hints = {.ai_family = AF_INET, .ai_socktype = SOCK_STREAM}, *found = NULL;
+    if (getaddrinfo(host, port, &hints, &found) != 0 || !found) return false;
+    bool ok = false;
+    const int fd = socket(found->ai_family, found->ai_socktype, 0);
+    if (fd >= 0) {
+        const struct timeval wait = {.tv_sec = (time_t)(timeout_ms / 1000U), .tv_usec = (suseconds_t)(timeout_ms % 1000U) * 1000};
+        const int flags = fcntl(fd, F_GETFL, 0);
+        (void)fcntl(fd, F_SETFL, flags | O_NONBLOCK); /* connect() would block without a bound otherwise */
+        int rc = connect(fd, found->ai_addr, found->ai_addrlen);
+        if (rc < 0 && errno == EINPROGRESS) {
+            fd_set writable;
+            FD_ZERO(&writable);
+            FD_SET(fd, &writable);
+            struct timeval left = wait;
+            int error = 0;
+            socklen_t size = sizeof error;
+            rc = select(fd + 1, NULL, &writable, NULL, &left) > 0 && getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &size) == 0 && error == 0 ? 0 : -1;
+        }
+        if (rc == 0) {
+            (void)fcntl(fd, F_SETFL, flags);
+            (void)setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &wait, sizeof wait);
+            (void)setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &wait, sizeof wait);
+            int sent = 0;
+            while (sent < length) {
+                const int n = send(fd, request + sent, (size_t)(length - sent), 0);
+                if (n <= 0) break;
+                sent += n;
+            }
+            char reply[32];
+            size_t got = 0;
+            while (sent == length && got < 12) { /* the status line is all that matters */
+                const int n = recv(fd, reply + got, sizeof reply - got, 0);
+                if (n <= 0) break;
+                got += (size_t)n;
+            }
+            const int status = http_post_status(reply, got);
+            ok = status >= 200 && status < 300;
+        }
+        close(fd);
+    }
+    freeaddrinfo(found);
+    return ok;
+}
 static void reply_worker(void *user)
 {
     (void)user; reply_t r;
@@ -102,18 +157,9 @@ static void reply_worker(void *user)
         if (xQueueReceive(s_replies, &r, portMAX_DELAY) != pdTRUE) continue;
         bool sent = device_link_send_key(r.client, r.session, r.word);
         if (!sent && r.callback[0]) {
-            char url[80]; snprintf(url, sizeof url, "http://%s/keyevent", r.callback);
-            esp_http_client_config_t cfg = {.url = url, .method = HTTP_METHOD_POST, .timeout_ms = 800, .buffer_size = 256};
-            esp_http_client_handle_t client = esp_http_client_init(&cfg);
             cJSON *j = cJSON_CreateObject(); cJSON_AddStringToObject(j, "word", r.word);
             char *body = cJSON_PrintUnformatted(j);
-            if (client && body) {
-                esp_http_client_set_header(client, "Content-Type", "application/json");
-                esp_http_client_set_post_field(client, body, strlen(body));
-                sent = esp_http_client_perform(client) == ESP_OK;
-                int status = esp_http_client_get_status_code(client); sent = sent && status >= 200 && status < 300;
-            }
-            if (client) esp_http_client_cleanup(client);
+            if (body) sent = post_json(r.callback, "/keyevent", body, 800);
             free(body); cJSON_Delete(j);
         }
         if (sent) {

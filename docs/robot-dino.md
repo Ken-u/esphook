@@ -28,7 +28,7 @@
 
 - `apps/dino/firmware/dino_game.{h,c}`：纯 C 规则，无 ESP/LVGL 依赖。**固定 1ms 步长**推进，结果只由随机种子和带时间戳的按键事件决定，与 tick/刷新频率无关；停顿超过 2 秒视为暂停而不是补算。游戏核心 136 字节，应用会话状态远小于 2048 字节会话区（编译期 `_Static_assert` 保证）。
 - `apps/dino/firmware/dino_sprites.h`：恐龙（两帧奔跑、跳跃、晕倒）、两种仙人掌、翼龙（两帧）的点阵。
-- `apps/dino/firmware/app.c`：共享画布绘制 + 少量 LVGL 小面板，绘图函数用 `framework/include/esphook/app_gfx.h`。退出时刷新共享画布，把它交给下一个应用。无屏测试里 LVGL 64KB 堆占用约 9 KB。
+- `apps/dino/firmware/app.c`：共享画布绘制 + 少量 LVGL 小面板，绘图函数用 `framework/include/esphook/app_gfx.h`。退出时刷新共享画布，把它交给下一个应用。无屏测试里 LVGL 堆占用约 9 KB。
 
 按键事件用 `DOWN` / `UP` / `CANCEL`：`DOWN` 起跳，`UP` 与 `CANCEL`（USB 按住租约失效）收跳。`SHORT` / `CONFIRM` 忽略，不再重复触发。
 
