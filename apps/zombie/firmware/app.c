@@ -2,9 +2,8 @@
 #include "esphook/app.h"
 #include "esphook/app_gfx.h"
 #include "esphook/app_stack.h"
-#include "esphook/app_haptic.h"
+#include "esphook/app_game.h"
 #include "esphook/app_services.h"
-#include "esphook/app_steer.h"
 #include "esphook/app_ui.h"
 #include "esphook/app_best.h"
 #include "esphook/app_command.h"
@@ -21,12 +20,9 @@
  * the title or game over screen; it is never enabled on its own). The rules live in zombie_core.c; this file draws
  * the world with the same bearing and distance the core uses. Zombies, gravestones and the gun are stacks of voxel
  * slices (esphook/app_stack.h, models in zombie_models.c): they turn, lean and show their sides as they weave. */
-#define BAND_Y 64
 #define CX 80
 #define HY 24     /* the horizon */
 #define EYE 40    /* the eye is this high: things on the ground sit lower on the screen the nearer they are */
-#define EXIT_HOLD_MS 2000U
-#define HINT_SLOT_MS 2600U
 #define PROPS 24U
 #define VEYE 90   /* the camera of the stacked models: how high above the ground it looks down at them (their tops show) */
 
@@ -34,12 +30,7 @@ typedef struct { int16_t z; uint8_t zombie, index; } item_t; /* what is in the p
 
 typedef struct {
     zb_t core;
-    steer_t steer;
-    haptic_t haptic;
-    lv_obj_t *plot, *band, *hold, *msg, *score, *tag, *tag_text, *title, *sub;
-    uint64_t last_ms;
-    uint32_t shown_key, shown_score, shown_info;
-    uint8_t down_in_play;
+    game_t game; /* steering, servo, status strip (esphook/app_game.h) */
     unsigned voxels; /* slices drawn in the last frame (the cost of the picture) */
 } state_t;
 _Static_assert(sizeof(state_t) <= APP_STATE_CAPACITY, "zombie state too large");
@@ -52,7 +43,6 @@ typedef struct {
 } status_t;
 static status_t s_status;
 
-static uint16_t c565(uint32_t rgb) { return gfx_rgb565(rgb); }
 static int screen_x(const zb_t *g, int bearing, int shift) { return CX + (bearing - g->cam_x) / ZB_UNITS_PX * 256 / shift; }
 static int feet_y(int z) { return HY + EYE * ZB_FOC / (z < 40 ? 40 : z); }
 /* Things far off fade into the mist. */
@@ -115,7 +105,7 @@ static void draw_prop(uint16_t *px, const zb_t *g, unsigned i, bool blood, unsig
     if (x < -40 || x > APP_CANVAS_W + 40) return;
     if (z > 1100 && (h & 0x300000U)) { /* a bare tree: a few lines, too thin to be worth slices */
         const int ph = 90 * ZB_FOC / z;
-        const uint16_t trunk = c565(misty(0x1C1A20, z));
+        const uint16_t trunk = gfx_rgb565(misty(0x1C1A20, z));
         gfx_rect(px, x - 1, feet - ph, 2 + ph / 14, ph, trunk);
         gfx_line(px, x, feet - ph * 2 / 3, x - ph / 3, feet - ph * 9 / 10, trunk);
         gfx_line(px, x, feet - ph / 2, x + ph / 3, feet - ph * 4 / 5, trunk);
@@ -144,9 +134,9 @@ static void draw_world(uint16_t *px, const zb_t *g, unsigned now)
     const int mx = screen_x(g, -250, 3 * 256) + 8;
     const bool blood = g->wave >= 5U;
     gfx_tint_ellipse(px, mx, 9, 12, 12, blood ? 0xD04030 : 0xBFD0FF, 40);
-    gfx_disc(px, mx, 9, 6, c565(blood ? 0xD8503A : 0xE8EEFF));
-    gfx_disc(px, mx - 2, 8, 2, c565(blood ? 0xB8382A : 0xC4CCE4));
-    gfx_disc(px, mx + 2, 12, 1, c565(blood ? 0xB8382A : 0xC4CCE4));
+    gfx_disc(px, mx, 9, 6, gfx_rgb565(blood ? 0xD8503A : 0xE8EEFF));
+    gfx_disc(px, mx - 2, 8, 2, gfx_rgb565(blood ? 0xB8382A : 0xC4CCE4));
+    gfx_disc(px, mx + 2, 12, 1, gfx_rgb565(blood ? 0xB8382A : 0xC4CCE4));
     for (unsigned i = 0; i < 3U; ++i) /* slow clouds across the moon */
         gfx_tint_ellipse(px, (screen_x(g, (int)i * 700 - 500, 2 * 256) + (int)(now / 300U)) % 220 - 30, 5 + (int)i * 5, 26 + (int)i * 6, 2, 0x201830, 110);
     gfx_ridge(px, g->cam_x / 9 + 60, 17, HY, 3, 7, 0x51D1U, 0x121626, 0x121626);
@@ -186,47 +176,47 @@ static void draw_gun(uint16_t *px, const zb_t *g, int sway, unsigned build, unsi
         stack_project(&zm_gun, &v, 4, 0, 3, &fx, &fy);
         fy -= 2;
         gfx_tint_ellipse(px, fx, fy, 14, 11, 0xFFB030, 90);
-        gfx_disc(px, fx, fy, 5, c565(0xFFD060));
-        gfx_disc(px, fx, fy, 3, c565(0xFFFFFF));
-        gfx_line(px, fx, fy, fx - 9, fy - 7, c565(0xFFE070));
-        gfx_line(px, fx, fy, fx + 9, fy - 7, c565(0xFFE070));
-        gfx_line(px, fx, fy, fx, fy - 11, c565(0xFFE070));
+        gfx_disc(px, fx, fy, 5, gfx_rgb565(0xFFD060));
+        gfx_disc(px, fx, fy, 3, gfx_rgb565(0xFFFFFF));
+        gfx_line(px, fx, fy, fx - 9, fy - 7, gfx_rgb565(0xFFE070));
+        gfx_line(px, fx, fy, fx + 9, fy - 7, gfx_rgb565(0xFFE070));
+        gfx_line(px, fx, fy, fx, fy - 11, gfx_rgb565(0xFFE070));
     }
 }
 static void draw_heart(uint16_t *px, int x, int y, bool full)
 {
     static const char *const rows[] = {".##.##.", "#######", "#######", ".#####.", "..###..", "...#..."};
-    const uint16_t body = c565(full ? 0xFF3A4A : 0x30242C);
+    const uint16_t body = gfx_rgb565(full ? 0xFF3A4A : 0x30242C);
     for (int row = 0; row < 6; ++row)
         for (int col = 0; col < 7; ++col)
             if (rows[row][col] == '#') gfx_plot(px, x + col, y + row, body);
-    if (full) gfx_plot(px, x + 1, y + 1, c565(0xFFC0C8));
+    if (full) gfx_plot(px, x + 1, y + 1, gfx_rgb565(0xFFC0C8));
 }
 static void draw_hud(uint16_t *px, const zb_t *g, unsigned now)
 {
     for (unsigned i = 0; i < ZB_HP; ++i) draw_heart(px, 4 + (int)i * 9, 3, i < g->hp);
     for (unsigned i = 0; i < ZB_MAG; ++i) { /* the magazine */
         const bool have = i < g->ammo;
-        gfx_rect(px, 114 + (int)i * 5, 3, 3, 6, c565(have ? 0xE8C860 : 0x35302A));
-        if (have) gfx_rect(px, 114 + (int)i * 5, 3, 3, 2, c565(0xD08040));
+        gfx_rect(px, 114 + (int)i * 5, 3, 3, 6, gfx_rgb565(have ? 0xE8C860 : 0x35302A));
+        if (have) gfx_rect(px, 114 + (int)i * 5, 3, 3, 2, gfx_rgb565(0xD08040));
     }
     if (g->reload) { /* reloading: a bar under the magazine fills */
         const int w = (int)(ZB_RELOAD_STEPS - g->reload) * 40 / (int)ZB_RELOAD_STEPS;
-        gfx_rect(px, 114, 10, 40, 2, c565(0x2A2A30));
-        gfx_rect(px, 114, 10, w, 2, c565(0xF0A030));
-    } else if (g->ammo <= 2U && g->phase == ZB_PLAY && ((now / 160U) & 1U)) gfx_hline(px, 114, 153, 10, c565(0xFF4A3A));
+        gfx_rect(px, 114, 10, 40, 2, gfx_rgb565(0x2A2A30));
+        gfx_rect(px, 114, 10, w, 2, gfx_rgb565(0xF0A030));
+    } else if (g->ammo <= 2U && g->phase == ZB_PLAY && ((now / 160U) & 1U)) gfx_hline(px, 114, 153, 10, gfx_rgb565(0xFF4A3A));
 }
 static void draw_crosshair(uint16_t *px, const zb_t *g)
 {
     bool on = false;
     for (unsigned i = 0; i < ZB_Z; ++i) on = on || zb_on_target(g, i);
-    const uint16_t c = c565(on ? 0xFF4A3A : 0xE8E8E8);
+    const uint16_t c = gfx_rgb565(on ? 0xFF4A3A : 0xE8E8E8);
     const int y = HY + 9;
     gfx_hline(px, CX - 7, CX - 3, y, c); gfx_hline(px, CX + 3, CX + 7, y, c);
     gfx_vline(px, CX, y - 7, y - 3, c); gfx_vline(px, CX, y + 3, y + 7, c);
     if (on) gfx_plot(px, CX, y, c);
     if (g->hitmark_age_ms < 140U) { /* a hit marker */
-        const uint16_t m = c565(0xFFFFFF);
+        const uint16_t m = gfx_rgb565(0xFFFFFF);
         gfx_line(px, CX - 5, y - 5, CX - 2, y - 2, m); gfx_line(px, CX + 5, y - 5, CX + 2, y - 2, m);
         gfx_line(px, CX - 5, y + 5, CX - 2, y + 2, m); gfx_line(px, CX + 5, y + 5, CX + 2, y + 2, m);
     }
@@ -245,11 +235,11 @@ static void draw_edges(uint16_t *px, const zb_t *g, unsigned now)
     const bool blink = ((now / 110U) & 1U) != 0U;
     if (left > 20) {
         gfx_tint(px, 0, 4, 2 + left / 64, 56, 0xFF2418, (unsigned)left * 3U / 5U);
-        if (left > 150 ? blink : true) gfx_tri(px, 1, HY + 9, 8, HY + 4, 8, HY + 14, c565(left > 150 ? 0xFF5040 : 0xB04030));
+        if (left > 150 ? blink : true) gfx_tri(px, 1, HY + 9, 8, HY + 4, 8, HY + 14, gfx_rgb565(left > 150 ? 0xFF5040 : 0xB04030));
     }
     if (right > 20) {
         gfx_tint(px, APP_CANVAS_W - 2 - right / 64, 4, 2 + right / 64, 56, 0xFF2418, (unsigned)right * 3U / 5U);
-        if (right > 150 ? blink : true) gfx_tri(px, APP_CANVAS_W - 2, HY + 9, APP_CANVAS_W - 9, HY + 4, APP_CANVAS_W - 9, HY + 14, c565(right > 150 ? 0xFF5040 : 0xB04030));
+        if (right > 150 ? blink : true) gfx_tri(px, APP_CANVAS_W - 2, HY + 9, APP_CANVAS_W - 9, HY + 4, APP_CANVAS_W - 9, HY + 14, gfx_rgb565(right > 150 ? 0xFF5040 : 0xB04030));
     }
 }
 static void draw_fx(uint16_t *px, const zb_t *g)
@@ -322,45 +312,26 @@ static void draw_scene(uint16_t *px, state_t *s, unsigned now)
         const unsigned a = (520U - g->bite_age_ms) * 170U / 520U;
         gfx_tint(px, 0, 0, APP_CANVAS_W, APP_CANVAS_H, 0xE01010, a);
         if (g->bite_age_ms < 360U)
-            for (int k = 0; k < 3; ++k) gfx_line(px, 52 + k * 17, 6 + k, 70 + k * 17, 52 + k, c565(0xFFD0C0));
+            for (int k = 0; k < 3; ++k) gfx_line(px, 52 + k * 17, 6 + k, 70 + k * 17, 52 + k, gfx_rgb565(0xFFD0C0));
     }
     if (g->phase == ZB_DYING) gfx_tint(px, 0, 0, APP_CANVAS_W, APP_CANVAS_H, 0x500000, 90U + (unsigned)(ZB_LOST_STEPS - g->dying) * 2U);
     if (g->phase == ZB_TITLE || g->phase == ZB_OVER || g->phase == ZB_INTRO) {
         gfx_tint(px, 0, 0, APP_CANVAS_W, APP_CANVAS_H, 0x000008, g->phase == ZB_OVER ? 140U : g->phase == ZB_TITLE ? 70U : 40U);
         gfx_tint(px, 14, 5, 132, 38, 0x0A0612, 185);
-        gfx_hline(px, 14, 145, 5, c565(0x8A2A2A));
-        gfx_hline(px, 14, 145, 42, c565(0x8A2A2A));
-        gfx_vline(px, 14, 5, 42, c565(0x4A1A1A));
-        gfx_vline(px, 145, 5, 42, c565(0x4A1A1A));
+        gfx_hline(px, 14, 145, 5, gfx_rgb565(0x8A2A2A));
+        gfx_hline(px, 14, 145, 42, gfx_rgb565(0x8A2A2A));
+        gfx_vline(px, 14, 5, 42, gfx_rgb565(0x4A1A1A));
+        gfx_vline(px, 145, 5, 42, gfx_rgb565(0x4A1A1A));
     }
 }
 
 /* ---- app ------------------------------------------------------------------------------------------------------- */
 static void build(state_t *s, lv_obj_t *root)
 {
-    s->plot = app_ui_canvas(root, 0, 0, APP_CANVAS_W, APP_CANVAS_H);
-    s->band = app_ui_band(root, 0x0E0A12, 0x5A1E1E);
-    s->msg = app_ui_label(s->band, &aihook_font_12, 3, 2, 118, 14, LV_LABEL_LONG_MODE_CLIP);
-    s->score = app_ui_label(s->band, &aihook_font_12, 118, 2, 41, 14, LV_LABEL_LONG_MODE_CLIP);
-    lv_obj_set_style_text_align(s->score, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
-    lv_obj_set_style_text_color(s->msg, app_ui_color(0xE0D4D8), LV_PART_MAIN);
-    lv_obj_set_style_text_color(s->score, app_ui_color(0xFFD84A), LV_PART_MAIN);
-    s->hold = app_ui_hold_bar(root, BAND_Y, APP_COLOR_ACCENT); /* the hold towards the exit */
-    app_ui_hide(s->hold, true);
-    s->tag = app_ui_rect(root, 126, 15, 29, 14, 0x2E8B57, 5);
-    s->tag_text = app_ui_label(s->tag, &aihook_font_12, 0, 1, 29, 12, LV_LABEL_LONG_MODE_CLIP);
-    app_ui_center(s->tag_text);
-    app_ui_text(s->tag_text, "舵机");
-    s->title = app_ui_label(root, &aihook_font_16, 14, 7, 132, 20, LV_LABEL_LONG_MODE_CLIP);
-    s->sub = app_ui_label(root, &aihook_font_12, 14, 26, 132, 14, LV_LABEL_LONG_MODE_CLIP);
-    app_ui_center(s->title);
-    app_ui_center(s->sub);
-    lv_obj_set_style_text_color(s->title, app_ui_color(0xFF5A4A), LV_PART_MAIN);
-    lv_obj_set_style_text_color(s->sub, app_ui_color(0xF0E0C0), LV_PART_MAIN);
-    app_ui_hide(s->tag, true);
-    app_ui_hide(s->title, true);
-    app_ui_hide(s->sub, true);
-    s->shown_key = s->shown_score = s->shown_info = 0xFFFFFFFFU;
+    static const game_style_t style = {.band_bg = 0x0E0A12, .band_rule = 0x5A1E1E, .msg_rgb = 0xE0D4D8, .score_rgb = 0xFFD84A,
+        .title_rgb = 0xFF5A4A, .sub_rgb = 0xF0E0C0, .msg_w = 118, .score_x = 118, .score_w = 41, .score_right = true,
+        .tag_x = 126, .tag_y = 15, .title_y = 7, .sub_y = 26};
+    game_build(&s->game, root, &style);
 }
 static void publish(const state_t *s, bool active, bool frame)
 {
@@ -368,9 +339,9 @@ static void publish(const state_t *s, bool active, bool frame)
     const haptic_state_t hs = haptic_state();
     app_critical_enter();
     s_status.active = active; s_status.phase = g->phase; s_status.hp = g->hp; s_status.wave = g->wave;
-    s_status.ammo = g->ammo; s_status.alive = (uint8_t)zb_alive(g); s_status.src = s->steer.source; s_status.servo = (uint8_t)hs;
+    s_status.ammo = g->ammo; s_status.alive = (uint8_t)zb_alive(g); s_status.src = s->game.steer.source; s_status.servo = (uint8_t)hs;
     s_status.score = g->score; s_status.best = g->best; s_status.kills = g->kills; s_status.shots = g->shots_fired;
-    s_status.hits = g->hits; s_status.remaining = zb_remaining(g); s_status.steer = s->steer.steer; s_status.cam = g->cam_x;
+    s_status.hits = g->hits; s_status.remaining = zb_remaining(g); s_status.steer = s->game.steer.steer; s_status.cam = g->cam_x;
     s_status.voxels = s->voxels;
     if (frame) ++s_status.frames;
     app_critical_exit();
@@ -380,16 +351,13 @@ static void enter(app_context_t *ctx)
     state_t *s = ctx->state;
     zb_init(&s->core, app_random() ^ (uint32_t)ctx->now_ms);
     s->core.best = app_best_get(ctx); /* the record survives leaving the game and a reboot */
-    steer_init(&s->steer);
-    haptic_init(&s->haptic);
-    s->last_ms = ctx->now_ms;
-    app_set_triple_exit(ctx, false); /* the gun is fired by mashing the key: three quick presses are never an exit */
+    game_enter(ctx, &s->game); /* the gun is fired by mashing the key: three quick presses are never an exit */
     app_critical_enter(); s_status = (status_t){0}; app_critical_exit();
     publish(s, true, false);
 }
 static bool idle_screen(const state_t *s)
 {
-    return s->core.phase == ZB_TITLE || (s->core.phase == ZB_OVER && s->core.over_age_ms > 800U);
+    return game_idle(s->core.phase == ZB_TITLE, s->core.phase == ZB_OVER, s->core.over_age_ms);
 }
 static bool in_fight(const state_t *s)
 {
@@ -399,63 +367,56 @@ static bool in_fight(const state_t *s)
  * held down through a long fight must not leave the moment the last life is gone. */
 static void sync_exit(app_context_t *ctx, const state_t *s)
 {
-    app_set_exit_hold(ctx, idle_screen(s) ? EXIT_HOLD_MS : 0U);
+    game_sync_exit(ctx, idle_screen(s));
 }
 static void tick(app_context_t *ctx)
 {
     state_t *s = ctx->state;
     const uint64_t now = ctx->now_ms;
-    app_radar_t radar;
-    app_radar_read(&radar);
-    if (radar.available && radar.online) steer_radar(&s->steer, now, true, radar.frame.targets);
-    zb_steer(&s->core, steer_tick(&s->steer, now));
+    zb_steer(&s->core, game_steer(ctx, &s->game));
     sync_exit(ctx, s);
-    zb_advance(&s->core, now > s->last_ms ? (uint32_t)(now - s->last_ms) : 0U);
-    s->last_ms = now;
+    zb_advance(&s->core, game_dt(&s->game, now));
     if (s->core.phase == ZB_OVER) (void)app_best_record(ctx, s->core.best);
-    app_servo_t sv;
-    app_servo_read(&sv);
     while (zb_take_hit(&s->core)) /* a shake for every bite, a longer one for the last */
-        if (sv.available && sv.armed) haptic_shake(&s->haptic, now, s->core.hp ? 4 : 7, 120, s->core.hp ? 480 : 900, sv.speed_dps);
-    haptic_pump(ctx, &s->haptic);
+        game_shake(ctx, &s->game, s->core.hp ? 4 : 7, 120, s->core.hp ? 480 : 900);
+    haptic_pump(ctx, &s->game.haptic);
 }
 static void leave(app_context_t *ctx)
 {
     state_t *s = ctx->state;
-    haptic_stop(&s->haptic); /* the framework disarms the servo it leased to this app */
-    if (s->plot) app_ui_canvas_refresh(s->plot); /* The shared canvas goes to the next app. */
+    game_leave(&s->game);
     app_critical_enter(); s_status.active = false; app_critical_exit();
 }
 static void event(app_context_t *ctx, const app_event_t *e)
 {
     state_t *s = ctx->state;
     zb_t *g = &s->core;
-    const bool side = e->key == 1U || e->key == 2U; /* K2 turns left, K3 right */
+    const bool side = game_side(e); /* K2 turns left, K3 right */
     switch (e->kind) {
     case APP_EVENT_DOWN:
-        if (side) steer_key(&s->steer, e->key, true);
+        if (side) steer_key(&s->game.steer, e->key, true);
         else {
-            s->down_in_play = in_fight(s);
+            s->game.down_in_play = in_fight(s);
             zb_fire(g, true);
         }
         break;
     case APP_EVENT_UP:
-        if (side) steer_key(&s->steer, e->key, false);
+        if (side) steer_key(&s->game.steer, e->key, false);
         else zb_fire(g, false);
         break;
     case APP_EVENT_SHORT:
         /* A press that began in the fight is a gun, not a "start". */
-        if (!side && !s->down_in_play && idle_screen(s)) {
+        if (game_may_start(&s->game, side, idle_screen(s))) {
             zb_start(g);
-            steer_recentre(&s->steer);
+            steer_recentre(&s->game.steer);
         }
         break;
     case APP_EVENT_CONFIRM:
         /* A deliberate half-second hold on the title or game over screen is the only thing that enables the servo. */
-        if (!side && !s->down_in_play && (g->phase == ZB_TITLE || g->phase == ZB_OVER)) (void)haptic_arm(ctx, &s->haptic);
+        game_confirm(ctx, &s->game, side, g->phase == ZB_TITLE || g->phase == ZB_OVER);
         break;
     case APP_EVENT_CANCEL:
-        steer_release_keys(&s->steer);
+        steer_release_keys(&s->game.steer);
         zb_fire(g, false);
         break;
     default: break;
@@ -468,7 +429,7 @@ static void sync_hud(state_t *s, uint64_t now, unsigned hold_ms)
     const zb_t *g = &s->core;
     const haptic_state_t hs = haptic_state();
     char text[48];
-    const bool idle = idle_screen(s), exit_slot = idle && (now / HINT_SLOT_MS) % 2U == 1U; /* the hint of the way out alternates */
+    const bool idle = idle_screen(s);
     const bool teach = g->phase == ZB_PLAY && g->play_steps < 300U;
     const unsigned remaining = zb_remaining(g);
     switch (g->phase) {
@@ -481,44 +442,33 @@ static void sync_hud(state_t *s, uint64_t now, unsigned hold_ms)
     case ZB_DYING: snprintf(text, sizeof text, "你被咬了!"); break;
     default: snprintf(text, sizeof text, "%s", g->over_age_ms > 800U ? "按键再战" : "你被咬了!"); break;
     }
-    if (exit_slot) snprintf(text, sizeof text, "按住2秒退出");
-    const uint32_t key = gfx_hash((uint32_t)g->phase << 8 | (uint32_t)hs << 4 | (idle ? 1U : 0U) | (exit_slot ? 2U : 0U) | (teach ? 4U : 0U) |
-                                  (uint32_t)g->wave << 12 | (uint32_t)remaining << 20);
-    if (key != s->shown_key) { app_ui_text(s->msg, text); s->shown_key = key; }
-    if (s->shown_score != g->score) {
-        snprintf(text, sizeof text, "%lu", (unsigned long)g->score);
-        app_ui_text(s->score, text);
-        s->shown_score = g->score;
-    }
-    app_ui_hold_line(s->hold, hold_ms, hs == HAPTIC_READY, EXIT_HOLD_MS);
-    app_ui_hide(s->tag, hs != HAPTIC_ARMED);
+    game_hud_msg(&s->game, text, gfx_hash((uint32_t)g->phase << 8 | (uint32_t)hs << 4 | (idle ? 1U : 0U) | (teach ? 4U : 0U) |
+                                          (uint32_t)g->wave << 12 | (uint32_t)remaining << 20), idle, now);
+    game_hud_score(&s->game, g->score);
+    game_hud_servo(&s->game, hold_ms);
     const bool card = g->phase == ZB_TITLE || g->phase == ZB_OVER || g->phase == ZB_INTRO;
-    app_ui_hide(s->title, !card);
-    app_ui_hide(s->sub, !card);
-    const uint32_t info = gfx_hash(g->best + g->kills * 100003U + (uint32_t)g->phase * 17U + (uint32_t)g->wave * 131U + g->score);
-    if (card && s->shown_info != info) {
-        s->shown_info = info;
+    if (game_hud_card(&s->game, card, gfx_hash(g->best + g->kills * 100003U + (uint32_t)g->phase * 17U + (uint32_t)g->wave * 131U + g->score))) {
+        char title[16];
         if (g->phase == ZB_TITLE) {
-            app_ui_text(s->title, "僵尸围城");
+            snprintf(title, sizeof title, "僵尸围城");
             snprintf(text, sizeof text, "最高 %lu", (unsigned long)g->best);
         } else if (g->phase == ZB_INTRO) {
-            snprintf(text, sizeof text, "第%u波", g->wave);
-            app_ui_text(s->title, text);
+            snprintf(title, sizeof title, "第%u波", g->wave);
             snprintf(text, sizeof text, "僵尸 %u 只", g->wave_total);
         } else {
-            app_ui_text(s->title, g->new_best ? "新纪录!" : "游戏结束");
+            snprintf(title, sizeof title, "%s", g->new_best ? "新纪录!" : "游戏结束");
             snprintf(text, sizeof text, "第%u波 击杀%lu 最高%lu", g->wave, (unsigned long)g->kills, (unsigned long)g->best);
         }
-        app_ui_text(s->sub, text);
+        game_hud_card_text(&s->game, title, text);
     }
 }
 static void render(app_context_t *ctx)
 {
     state_t *s = ctx->state;
-    if (!s->plot) build(s, ctx->root);
+    if (!s->game.plot) build(s, ctx->root);
     sync_hud(s, ctx->now_ms, app_exit_hold_progress(ctx));
     draw_scene(app_ui_pixels(), s, (unsigned)ctx->now_ms);
-    app_ui_canvas_refresh(s->plot);
+    app_ui_canvas_refresh(s->game.plot);
     publish(s, true, true);
 }
 static bool command(const char *line)

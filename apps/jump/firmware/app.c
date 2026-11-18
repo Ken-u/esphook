@@ -33,7 +33,6 @@ _Static_assert(offsetof(state_t, core) == 0, "tests pose the game through the co
 typedef struct { bool active; uint8_t phase, cur, combo; uint32_t score, best, jumps, perfects, frames; } status_t;
 static status_t s_status;
 
-static uint16_t c565(uint32_t rgb) { return gfx_rgb565(rgb); }
 static int fdiv16(int v) { return (v >= 0 ? v : v - 15) / 16; }
 static int scr_x(const state_t *s, int a16, int b16) { return fdiv16((int)s->cam_x16 + (a16 - b16) * UNIT_X16 / 2); }
 static int scr_y(const state_t *s, int a16, int b16) { return fdiv16((int)s->cam_y16 - (a16 + b16) * UNIT_X16 / 4); }
@@ -79,17 +78,17 @@ static void draw_box(uint16_t *px, int cx, int cy, int hw, unsigned colour)
     const int w = hw * UNIT_X16 / 2, h = hw * UNIT_X16 / 4 > 3 ? hw * UNIT_X16 / 4 : 3;
     if (cx + w < 0 || cx - w >= APP_CANVAS_W || cy - h >= APP_CANVAS_H || cy + h + BOX_T < 0) return;
     const uint32_t base = k_box[colour & 7U];
-    const uint16_t top = c565(base), left = c565(gfx_mix(base, 0x20104A, 96)), right = c565(gfx_mix(base, 0x20104A, 150));
+    const uint16_t top = gfx_rgb565(base), left = gfx_rgb565(gfx_mix(base, 0x20104A, 96)), right = gfx_rgb565(gfx_mix(base, 0x20104A, 150));
     gfx_tri(px, cx - w, cy, cx, cy + h, cx - w, cy + BOX_T, left);
     gfx_tri(px, cx, cy + h, cx, cy + h + BOX_T, cx - w, cy + BOX_T, left);
     gfx_tri(px, cx + w, cy, cx, cy + h, cx + w, cy + BOX_T, right);
     gfx_tri(px, cx, cy + h, cx, cy + h + BOX_T, cx + w, cy + BOX_T, right);
     gfx_tri(px, cx, cy - h, cx + w, cy, cx - w, cy, top);
     gfx_tri(px, cx - w, cy, cx + w, cy, cx, cy + h, top);
-    gfx_line(px, cx - w, cy, cx, cy - h, c565(gfx_mix(base, 0xFFFFFF, 120)));
-    gfx_line(px, cx, cy - h, cx + w, cy, c565(gfx_mix(base, 0xFFFFFF, 70)));
-    gfx_vline(px, cx, cy + h, cy + h + BOX_T, c565(gfx_mix(base, 0x20104A, 190)));
-    const uint16_t mark = c565(gfx_mix(base, 0xFFFFFF, 110)), dark = c565(gfx_mix(base, 0x20104A, 44));
+    gfx_line(px, cx - w, cy, cx, cy - h, gfx_rgb565(gfx_mix(base, 0xFFFFFF, 120)));
+    gfx_line(px, cx, cy - h, cx + w, cy, gfx_rgb565(gfx_mix(base, 0xFFFFFF, 70)));
+    gfx_vline(px, cx, cy + h, cy + h + BOX_T, gfx_rgb565(gfx_mix(base, 0x20104A, 190)));
+    const uint16_t mark = gfx_rgb565(gfx_mix(base, 0xFFFFFF, 110)), dark = gfx_rgb565(gfx_mix(base, 0x20104A, 44));
     switch ((colour >> 1) & 3U) { /* a pattern on the lid, so the boxes do not all look alike */
     case 1: gfx_tri(px, cx, cy - h / 2, cx + w / 2, cy, cx - w / 2, cy, mark); gfx_tri(px, cx - w / 2, cy, cx + w / 2, cy, cx, cy + h / 2, mark); break;
     case 2: gfx_ellipse(px, cx, cy, w * 2 / 3, h * 2 / 3, dark); gfx_ellipse(px, cx, cy - 1, w / 2, h / 2, mark); break;
@@ -102,14 +101,14 @@ static void draw_box(uint16_t *px, int cx, int cy, int hw, unsigned colour)
 static void draw_pawn(uint16_t *px, int x, int y, unsigned squash, int lean)
 {
     const int hb = 9 - (int)(squash * 4U / 256U), bw = 4 + (int)(squash * 2U / 256U);
-    gfx_ellipse(px, x, y, bw, 2, c565(0x2B2370));
-    gfx_tri(px, x + lean, y - hb, x - bw, y, x + bw, y, c565(0x4E43C4));
-    gfx_tri(px, x + lean, y - hb, x + 1, y, x + bw, y, c565(0x3A31A0));
-    gfx_line(px, x + lean - 1, y - hb + 2, x - bw + 2, y - 1, c565(0x7C72EE));
-    gfx_disc(px, x + lean, y - hb - 2, 3, c565(0x5A4FD8));
-    gfx_disc(px, x + lean + 1, y - hb - 1, 2, c565(0x4437B8));
-    gfx_plot(px, x + lean - 1, y - hb - 3, c565(0xE4E0FF));
-    gfx_plot(px, x + lean - 2, y - hb - 2, c565(0xB6AEFF));
+    gfx_ellipse(px, x, y, bw, 2, gfx_rgb565(0x2B2370));
+    gfx_tri(px, x + lean, y - hb, x - bw, y, x + bw, y, gfx_rgb565(0x4E43C4));
+    gfx_tri(px, x + lean, y - hb, x + 1, y, x + bw, y, gfx_rgb565(0x3A31A0));
+    gfx_line(px, x + lean - 1, y - hb + 2, x - bw + 2, y - 1, gfx_rgb565(0x7C72EE));
+    gfx_disc(px, x + lean, y - hb - 2, 3, gfx_rgb565(0x5A4FD8));
+    gfx_disc(px, x + lean + 1, y - hb - 1, 2, gfx_rgb565(0x4437B8));
+    gfx_plot(px, x + lean - 1, y - hb - 3, gfx_rgb565(0xE4E0FF));
+    gfx_plot(px, x + lean - 2, y - hb - 2, gfx_rgb565(0xB6AEFF));
 }
 static void pawn_screen(const state_t *s, int *x, int *feet, int *lift)
 {
@@ -168,9 +167,9 @@ static void draw_scene(uint16_t *px, const state_t *s)
     }
     if (g->phase == JP_CHARGE) { /* the strength so far */
         const int full = 42, filled = (int)(g->charge_ms * (unsigned)full / JP_MAX_CHARGE_MS);
-        gfx_rect(px, 113, 3, full + 2, 6, c565(0x2B2370));
-        gfx_rect(px, 114, 4, full, 4, c565(0xE9E4FF));
-        for (int x = 0; x < filled; ++x) gfx_vline(px, 114 + x, 4, 7, c565(gfx_mix(0x4ADE80, 0xFF5A4A, (unsigned)(x * 256 / full))));
+        gfx_rect(px, 113, 3, full + 2, 6, gfx_rgb565(0x2B2370));
+        gfx_rect(px, 114, 4, full, 4, gfx_rgb565(0xE9E4FF));
+        for (int x = 0; x < filled; ++x) gfx_vline(px, 114 + x, 4, 7, gfx_rgb565(gfx_mix(0x4ADE80, 0xFF5A4A, (unsigned)(x * 256 / full))));
     }
 }
 

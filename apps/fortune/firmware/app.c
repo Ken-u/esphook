@@ -37,7 +37,6 @@ _Static_assert(offsetof(state_t, core) == 0, "tests pose the draw through the co
 typedef struct { bool active; uint8_t phase, category, level, text, number, colour; uint32_t draws, frames; } status_t;
 static status_t s_status;
 
-static uint16_t c565(uint32_t rgb) { return gfx_rgb565(rgb); }
 static unsigned ease_out(unsigned t, unsigned total) /* 0..256 */
 {
     if (t >= total) return 256U;
@@ -61,11 +60,11 @@ static void draw_backdrop(uint16_t *px, unsigned now)
 /* ---- the tube -------------------------------------------------------------------------------------------------- */
 static void draw_stick(uint16_t *px, int x0, int y0, int x1, int y1)
 {
-    gfx_line(px, x0, y0, x1, y1, c565(0xE6CE94));
-    gfx_line(px, x0 + 1, y0, x1 + 1, y1, c565(0xB99A5E));
+    gfx_line(px, x0, y0, x1, y1, gfx_rgb565(0xE6CE94));
+    gfx_line(px, x0 + 1, y0, x1 + 1, y1, gfx_rgb565(0xB99A5E));
     const int dx = x1 - x0, dy = y1 - y0;
-    gfx_line(px, x1 - dx / 7, y1 - dy / 7, x1, y1, c565(0xD7263D)); /* the red tip */
-    gfx_line(px, x1 + 1 - dx / 7, y1 - dy / 7, x1 + 1, y1, c565(0xA81A2E));
+    gfx_line(px, x1 - dx / 7, y1 - dy / 7, x1, y1, gfx_rgb565(0xD7263D)); /* the red tip */
+    gfx_line(px, x1 + 1 - dx / 7, y1 - dy / 7, x1 + 1, y1, gfx_rgb565(0xA81A2E));
 }
 static void draw_tube(uint16_t *px, const ft_t *f, unsigned now)
 {
@@ -105,24 +104,24 @@ static void draw_tube(uint16_t *px, const ft_t *f, unsigned now)
     for (int y = rimy; y <= FOOT_Y; ++y) { /* the lacquer barrel, a little wider at the foot, sheared by the tilt */
         const int off = tilt * (FOOT_Y - y) / 22, half = 12 + (y - rimy) / 9;
         const int x0 = cx - half + off, x1 = cx + half + off;
-        gfx_hline(px, x0, x1, y, c565(0xA52B25));
+        gfx_hline(px, x0, x1, y, gfx_rgb565(0xA52B25));
         gfx_tint(px, x0, y, 5, 1, 0xFF9A7A, 70);                 /* highlight on the left */
         gfx_tint(px, x1 - 5, y, 6, 1, 0x1A0408, 120);            /* shade on the right */
         gfx_tint_plot(px, x0, y, 0xFFE0A0, 80);
     }
     for (unsigned band = 0; band < 2U; ++band) { /* gold hoops */
         const int y = band ? FOOT_Y - 3 : rimy + 4, off = tilt * (FOOT_Y - y) / 22, half = 12 + (y - rimy) / 9;
-        gfx_rect(px, cx - half + off, y, half * 2 + 1, 2, c565(0xF2B63C));
-        gfx_hline(px, cx - half + off, cx + half + off, y, c565(0xFFE08A));
+        gfx_rect(px, cx - half + off, y, half * 2 + 1, 2, gfx_rgb565(0xF2B63C));
+        gfx_hline(px, cx - half + off, cx + half + off, y, gfx_rgb565(0xFFE08A));
     }
-    gfx_ellipse(px, cx + tilt * 2 / 4, rimy, 13, 3, c565(0x3A0C10)); /* the mouth: dark inside, the lip a gold line */
+    gfx_ellipse(px, cx + tilt * 2 / 4, rimy, 13, 3, gfx_rgb565(0x3A0C10)); /* the mouth: dark inside, the lip a gold line */
     gfx_tint_ellipse(px, cx + tilt * 2 / 4, rimy, 13, 3, 0xF2B63C, 90);
-    gfx_ellipse(px, cx + tilt * 2 / 4, rimy + 1, 11, 2, c565(0x2A0609));
+    gfx_ellipse(px, cx + tilt * 2 / 4, rimy + 1, 11, 2, gfx_rgb565(0x2A0609));
     for (int i = 0; i < 9; ++i) /* the stick bottoms, hidden by the lip of the barrel */
-        gfx_rect(px, cx + base[i] + base[i] / 3 + tilt - 1, rimy + 2, 3, 2, c565(0xB99A5E));
-    gfx_rect(px, cx - 3 + tilt / 2, rimy + 12, 7, 2, c565(0xF2B63C)); /* the emblem: a gold diamond */
-    gfx_tri(px, cx + tilt / 2, rimy + 9, cx - 4 + tilt / 2, rimy + 13, cx + 4 + tilt / 2, rimy + 13, c565(0xFFD65A));
-    gfx_tri(px, cx + tilt / 2, rimy + 18, cx - 4 + tilt / 2, rimy + 14, cx + 4 + tilt / 2, rimy + 14, c565(0xF2B63C));
+        gfx_rect(px, cx + base[i] + base[i] / 3 + tilt - 1, rimy + 2, 3, 2, gfx_rgb565(0xB99A5E));
+    gfx_rect(px, cx - 3 + tilt / 2, rimy + 12, 7, 2, gfx_rgb565(0xF2B63C)); /* the emblem: a gold diamond */
+    gfx_tri(px, cx + tilt / 2, rimy + 9, cx - 4 + tilt / 2, rimy + 13, cx + 4 + tilt / 2, rimy + 13, gfx_rgb565(0xFFD65A));
+    gfx_tri(px, cx + tilt / 2, rimy + 18, cx - 4 + tilt / 2, rimy + 14, cx + 4 + tilt / 2, rimy + 14, gfx_rgb565(0xF2B63C));
     (void)now;
 }
 
@@ -145,17 +144,17 @@ static void draw_card(uint16_t *px, const ft_t *f, unsigned now)
     const int l = TUBE_X - w / 2, t = 32 - h / 2;
     for (int y = t; y < t + h; ++y) { /* red paper, a little darker at the foot */
         const unsigned m = (unsigned)((y - t) * 256 / (h > 1 ? h : 1));
-        gfx_hline(px, l, l + w - 1, y, c565(gfx_mix(0xC42B35, 0x7A121B, m)));
+        gfx_hline(px, l, l + w - 1, y, gfx_rgb565(gfx_mix(0xC42B35, 0x7A121B, m)));
     }
-    gfx_rect(px, l, t, w, 1, c565(0xF2B63C)); gfx_rect(px, l, t + h - 1, w, 1, c565(0xD08A26));
-    gfx_rect(px, l, t, 1, h, c565(0xF2B63C)); gfx_rect(px, l + w - 1, t, 1, h, c565(0xD08A26));
+    gfx_rect(px, l, t, w, 1, gfx_rgb565(0xF2B63C)); gfx_rect(px, l, t + h - 1, w, 1, gfx_rgb565(0xD08A26));
+    gfx_rect(px, l, t, 1, h, gfx_rgb565(0xF2B63C)); gfx_rect(px, l + w - 1, t, 1, h, gfx_rgb565(0xD08A26));
     if (grow < 256U || w < 60) return;
     gfx_tint(px, l + 3, t + 3, w - 6, 1, 0xFFE08A, 90); gfx_tint(px, l + 3, t + h - 4, w - 6, 1, 0xFFE08A, 90); /* inner line */
     gfx_tint(px, l + 3, t + 3, 1, h - 6, 0xFFE08A, 90); gfx_tint(px, l + w - 4, t + 3, 1, h - 6, 0xFFE08A, 90);
     static const int cx[4] = {7, 148, 7, 148}, cy[4] = {5, 5, 58, 58};
     for (unsigned k = 0; k < 4U; ++k) { /* corner studs */
-        gfx_rect(px, cx[k] - 1, cy[k] - 1, 3, 3, c565(0xFFD65A));
-        gfx_plot(px, cx[k], cy[k], c565(0xC42B35));
+        gfx_rect(px, cx[k] - 1, cy[k] - 1, 3, 3, gfx_rgb565(0xFFD65A));
+        gfx_plot(px, cx[k], cy[k], gfx_rgb565(0xC42B35));
     }
     const int sx = SEAL_X, sy = SEAL_Y;
     if (f->sign.level == FT_BIG) { /* rays for the best grade */
@@ -164,15 +163,15 @@ static void draw_card(uint16_t *px, const ft_t *f, unsigned now)
             const int r0 = SEAL_R + 2, r1 = SEAL_R + 4 + (int)flick;
             const int x0 = sx + gfx_sin256(ph + 64U) * r0 / 256, y0 = sy + gfx_sin256(ph) * r0 / 256;
             const int x1 = sx + gfx_sin256(ph + 64U) * r1 / 256, y1 = sy + gfx_sin256(ph) * r1 / 256;
-            gfx_line(px, x0, y0, x1, y1, c565(gfx_mix(0xC42B35, 0xFFD65A, 90U + flick * 20U)));
+            gfx_line(px, x0, y0, x1, y1, gfx_rgb565(gfx_mix(0xC42B35, 0xFFD65A, 90U + flick * 20U)));
         }
     }
-    gfx_disc(px, sx, sy, SEAL_R, c565(0xF2B63C));                   /* the seal */
-    gfx_disc(px, sx, sy, SEAL_R - 2, c565(0x8E1822));
+    gfx_disc(px, sx, sy, SEAL_R, gfx_rgb565(0xF2B63C));                   /* the seal */
+    gfx_disc(px, sx, sy, SEAL_R - 2, gfx_rgb565(0x8E1822));
     gfx_ring(px, sx, sy, SEAL_R - 4, 0xFFD65A, 170);
     gfx_tint_ellipse(px, sx - 5, sy - 8, 8, 4, 0xFFFFFF, 26);
-    gfx_vline(px, 60, 8, 55, c565(gfx_mix(0xC42B35, 0xFFD65A, 110))); /* a gold rule between seal and writing */
-    gfx_hline(px, 66, 148, 25, c565(gfx_mix(0x9C1E28, 0xFFD65A, 130)));
+    gfx_vline(px, 60, 8, 55, gfx_rgb565(gfx_mix(0xC42B35, 0xFFD65A, 110))); /* a gold rule between seal and writing */
+    gfx_hline(px, 66, 148, 25, gfx_rgb565(gfx_mix(0x9C1E28, 0xFFD65A, 130)));
     const unsigned twinkles = f->sign.level == FT_BIG ? 9U : f->sign.level == FT_MID ? 4U : 0U;
     for (unsigned i = 0; i < twinkles; ++i) {
         const uint32_t h2 = gfx_hash(i * 131U + f->draws * 7U + 3U);

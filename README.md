@@ -290,20 +290,18 @@ idf.py -p <串口> flash monitor
 ### 7.4 测试
 
 ```bash
-python3 scripts/check-apps.py            # 应用契约
-./scripts/test-app-games.sh              # 输入、导航、手势、生命周期
-./scripts/test-racing.sh                 # 每个应用 / 框架部件各有 test-*.sh
-python3 apps/hook/pc/test_hooks.py       # PC 与协议
+./scripts/check-all.sh                   # CI 在主机上做的全部检查，一条命令；最后一行 ALL GREEN 才算过
+./scripts/check-all.sh racing            # 只跑名字里含 racing 的
+./scripts/check-all.sh --list            # 看有哪些检查
 ```
 
-需要 C 编译器和 `libcjson-dev`。另有真实 LVGL 的无屏渲染测试，会把每个应用的画面输出成帧、检查字库缺字和堆占用：
+需要 C 编译器和 `libcjson-dev`（macOS：`brew install cjson`，会自动找到）。真实 LVGL 的无屏渲染测试会把每个应用的画面输出成帧、检查字库缺字和堆占用，需要一份 LVGL 源码：
 
 ```bash
-git clone --depth 1 --branch v9.5.0 https://github.com/lvgl/lvgl.git /tmp/esphook-lvgl
-LVGL_SOURCE_DIR=/tmp/esphook-lvgl ./scripts/test-app-ui.sh
+git clone --depth 1 --branch v9.5.0 https://github.com/lvgl/lvgl.git /tmp/esphook-lvgl   # check-all.sh 会自己找到
 ```
 
-完整测试清单见 [应用框架 · 验证](docs/app-framework.md#验证)。主机测试不能代替实机：帧率、屏幕方向、按键手感和舵机行为要刷机验证。
+测试清单与固件体积预算见 [应用框架 · 验证](docs/app-framework.md#验证)。主机测试不能代替实机：帧率、屏幕方向、按键手感和舵机行为要刷机验证。
 
 ---
 

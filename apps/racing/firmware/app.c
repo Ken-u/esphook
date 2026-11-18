@@ -1,9 +1,8 @@
 #include "esphook/app.h"
 #include "esphook/app_math.h"
 #include "esphook/app_gfx.h"
-#include "esphook/app_haptic.h"
+#include "esphook/app_game.h"
 #include "esphook/app_services.h"
-#include "esphook/app_steer.h"
 #include "esphook/app_ui.h"
 #include "esphook/app_best.h"
 #include "esphook/app_command.h"
@@ -20,9 +19,6 @@
  * on its own) and gives a short shake in a crash. Game rules live in racing_core.c. The cars, the trees, the lamp posts and
  * the checkpoint gantry that are close enough are stacks of voxel slices (esphook/app_stack.h, models in racing_models.c):
  * they turn with the bends of the road and show their sides as they pass; the far ones stay flat sprites. */
-#define BAND_Y 64
-#define EXIT_HOLD_MS 2000U
-#define HINT_SLOT_MS 2600U
 #define CX 80
 #define HY 22            /* the horizon */
 #define KY 261000        /* distance in mm of a road row = KY / (row - HY) */
@@ -35,13 +31,9 @@
 typedef struct { int16_t cx[APP_CANVAS_H], hw[APP_CANVAS_H]; int32_t z[APP_CANVAS_H], slope[APP_CANVAS_H]; } rows_t; /* slope: where the road heads, 1e-5 */
 typedef struct {
     rc_t core;
-    steer_t steer;
-    haptic_t haptic;
-    lv_obj_t *plot, *band, *hold, *msg, *score, *tag, *tag_text, *title, *sub;
-    uint64_t last_ms, last_up_ms;
+    game_t game; /* steering, servo, status strip (esphook/app_game.h) */
+    uint64_t last_up_ms;
     int bg16;
-    uint32_t shown_key, shown_score, shown_card;
-    uint8_t down_in_race;
     unsigned voxels; /* slices drawn in the last frame (the cost of the picture) */
 } state_t;
 _Static_assert(sizeof(state_t) <= APP_STATE_CAPACITY, "racing state too large");
@@ -55,7 +47,6 @@ typedef struct {
 } status_t;
 static status_t s_status;
 
-static uint16_t c565(uint32_t rgb) { return gfx_rgb565(rgb); }
 
 /* ---- a tiny 3x5 font for the numbers on the dashboard ------------------------------------------------------------ */
 static void glyph(uint16_t *px, int x, int y, int scale, char ch, uint16_t color)
@@ -76,8 +67,8 @@ static int text_width(const char *text, int scale) { return (int)strlen(text) * 
 static void write_text(uint16_t *px, int x, int y, int scale, const char *text, uint32_t color, bool shadow)
 {
     for (; *text; ++text, x += 4 * scale) {
-        if (shadow) glyph(px, x + 1, y + 1, scale, *text, c565(0x04060E));
-        glyph(px, x, y, scale, *text, c565(color));
+        if (shadow) glyph(px, x + 1, y + 1, scale, *text, gfx_rgb565(0x04060E));
+        glyph(px, x, y, scale, *text, gfx_rgb565(color));
     }
 }
 
@@ -116,17 +107,17 @@ static void draw_road(uint16_t *px, const rows_t *rw, const rc_t *r, unsigned no
         const bool band = (world / 8000) & 1, dash = (world / 4000) & 1;
         const int cx = rw->cx[y], hw = rw->hw[y], fade = y - HY < 5 ? 2 : 0;
         const bool kerb = ((world / 3000) & 1) && !fade;
-        gfx_rect(px, 0, y, APP_CANVAS_W, 1, c565(haze(band && !fade ? 0x2F8D3B : 0x3A9E46, y)));
+        gfx_rect(px, 0, y, APP_CANVAS_W, 1, gfx_rgb565(haze(band && !fade ? 0x2F8D3B : 0x3A9E46, y)));
         const int rumble = hw * 112 / 100 + 1;
-        gfx_hline(px, cx - rumble, cx + rumble, y, c565(haze(kerb ? 0xD83A2E : 0xF0F0F0, y)));
-        gfx_hline(px, cx - hw, cx + hw, y, c565(haze(band && !fade ? 0x585C66 : 0x626672, y)));
+        gfx_hline(px, cx - rumble, cx + rumble, y, gfx_rgb565(haze(kerb ? 0xD83A2E : 0xF0F0F0, y)));
+        gfx_hline(px, cx - hw, cx + hw, y, gfx_rgb565(haze(band && !fade ? 0x585C66 : 0x626672, y)));
         const int e = hw * 94 / 100;
-        gfx_plot(px, cx - e, y, c565(haze(0xF4F4F4, y)));
-        gfx_plot(px, cx + e, y, c565(haze(0xF4F4F4, y)));
+        gfx_plot(px, cx - e, y, gfx_rgb565(haze(0xF4F4F4, y)));
+        gfx_plot(px, cx + e, y, gfx_rgb565(haze(0xF4F4F4, y)));
         if (dash && y - HY > 3) { /* the lane lines */
             const int lane = hw * 320 / 1000, w = hw > 28 ? 1 : 0;
-            gfx_rect(px, cx - lane - w, y, 1 + w, 1, c565(haze(0xE8E8E0, y)));
-            gfx_rect(px, cx + lane, y, 1 + w, 1, c565(haze(0xE8E8E0, y)));
+            gfx_rect(px, cx - lane - w, y, 1 + w, 1, gfx_rgb565(haze(0xE8E8E0, y)));
+            gfx_rect(px, cx + lane, y, 1 + w, 1, gfx_rgb565(haze(0xE8E8E0, y)));
         }
     }
     (void)now;
@@ -138,8 +129,8 @@ static void draw_sky(uint16_t *px, const state_t *s, unsigned now)
     gfx_gradient(px, 0, HY + 1, 0x2442A0, 0xF4A468);
     const int bg = s->bg16 / 16;
     gfx_sun(px, 112 + bg / 6, HY - 5, 0xFFE9A8, 0xF6B070, 0, false);
-    gfx_cloud(px, (int)((now / 300U + 40U) % 220U) - 40 + bg / 8, 4, 26, c565(0xF8D8C0), c565(0xD8908C));
-    gfx_cloud(px, (int)((now / 520U + 150U) % 220U) - 40 + bg / 8, 10, 18, c565(0xF0C0B0), c565(0xC8808C));
+    gfx_cloud(px, (int)((now / 300U + 40U) % 220U) - 40 + bg / 8, 4, 26, gfx_rgb565(0xF8D8C0), gfx_rgb565(0xD8908C));
+    gfx_cloud(px, (int)((now / 520U + 150U) % 220U) - 40 + bg / 8, 10, 18, gfx_rgb565(0xF0C0B0), gfx_rgb565(0xC8808C));
     gfx_ridge(px, -bg / 5, 34, HY, 3, 9, 0xA71, 0x6A5C98, 0x9C88B8);
     gfx_ridge(px, -bg / 3, 22, HY, 1, 5, 0x5E3, 0x3F6A5A, 0x3F6A5A);
 }
@@ -148,10 +139,10 @@ static void draw_sky(uint16_t *px, const state_t *s, unsigned now)
 static void draw_tree(uint16_t *px, int x, int y, int u, uint32_t salt) /* far away: a flat sprite */
 {
     const uint32_t h = gfx_hash(salt);
-    if (u < 2) { gfx_rect(px, x, y - 3, 2, 3, c565(0x2E6A34)); return; }
+    if (u < 2) { gfx_rect(px, x, y - 3, 2, 3, gfx_rgb565(0x2E6A34)); return; }
     const int trunk_h = u * 9 / 10, r = u;
-    const uint16_t green = c565(haze((h & 4U) ? 0x2C7A3A : 0x3A8A44, y)), dark = c565(haze(0x1C5A2C, y)), light = c565(haze(0x66B45A, y));
-    gfx_rect(px, x - u / 6, y - trunk_h, u / 3 + 1, trunk_h, c565(haze(0x5A3A22, y)));
+    const uint16_t green = gfx_rgb565(haze((h & 4U) ? 0x2C7A3A : 0x3A8A44, y)), dark = gfx_rgb565(haze(0x1C5A2C, y)), light = gfx_rgb565(haze(0x66B45A, y));
+    gfx_rect(px, x - u / 6, y - trunk_h, u / 3 + 1, trunk_h, gfx_rgb565(haze(0x5A3A22, y)));
     gfx_tint_ellipse(px, x + u / 2, y, u, u / 4 + 1, 0x000000, 70); /* a long shadow across the verge */
     if (h & 1U) { /* a round tree */
         gfx_disc(px, x, y - trunk_h - r + 2, r, green);
@@ -166,22 +157,22 @@ static void draw_tree(uint16_t *px, int x, int y, int u, uint32_t salt) /* far a
 }
 static void draw_post(uint16_t *px, int x, int y, int u) /* far away: a flat sprite */
 {
-    if (u < 2) { gfx_vline(px, x, y - 4, y, c565(0x8890A0)); return; }
-    gfx_rect(px, x, y - u * 3, u / 4 + 1, u * 3, c565(haze(0x9098A8, y)));
-    gfx_rect(px, x - u / 2, y - u * 3, u / 2 + u / 4 + 1, u / 4 + 1, c565(haze(0x9098A8, y)));
+    if (u < 2) { gfx_vline(px, x, y - 4, y, gfx_rgb565(0x8890A0)); return; }
+    gfx_rect(px, x, y - u * 3, u / 4 + 1, u * 3, gfx_rgb565(haze(0x9098A8, y)));
+    gfx_rect(px, x - u / 2, y - u * 3, u / 2 + u / 4 + 1, u / 4 + 1, gfx_rgb565(haze(0x9098A8, y)));
     gfx_tint_ellipse(px, x - u / 2, y - u * 3 + 1, u / 2 + 1, u / 2 + 1, 0xFFE8A0, 120);
 }
 static void draw_gantry(uint16_t *px, int cx, int hw, int y) /* far away: a flat sprite */
 {
     const int u = (y - HY) * 2 / 3, x0 = cx - hw * 118 / 100, x1 = cx + hw * 118 / 100, top = y - u * 5;
-    gfx_rect(px, x0 - 1, top, 3, y - top, c565(0xD8D8E0));
-    gfx_rect(px, x1 - 1, top, 3, y - top, c565(0xD8D8E0));
+    gfx_rect(px, x0 - 1, top, 3, y - top, gfx_rgb565(0xD8D8E0));
+    gfx_rect(px, x1 - 1, top, 3, y - top, gfx_rgb565(0xD8D8E0));
     for (int x = x0 - 1; x <= x1 + 1; ++x) {
         const bool black = ((x - x0) / 2 + 0) & 1;
-        gfx_rect(px, x, top - u / 2, 1, u / 2 + 2, c565(black ? 0x181820 : 0xF4F4F4));
+        gfx_rect(px, x, top - u / 2, 1, u / 2 + 2, gfx_rgb565(black ? 0x181820 : 0xF4F4F4));
     }
-    gfx_rect(px, x0 - 1, top - u / 2 - 1, x1 - x0 + 3, 1, c565(0xE03A2E));
-    gfx_rect(px, x0 - 1, top + 1, x1 - x0 + 3, 1, c565(0xE03A2E));
+    gfx_rect(px, x0 - 1, top - u / 2 - 1, x1 - x0 + 3, 1, gfx_rgb565(0xE03A2E));
+    gfx_rect(px, x0 - 1, top + 1, x1 - x0 + 3, 1, gfx_rgb565(0xE03A2E));
 }
 
 /* A yellow board with black chevrons on the outside of a bend, pointing the way it goes (dir +1: to the right). */
@@ -189,10 +180,10 @@ static void draw_chevrons(uint16_t *px, int x, int y, int u, int dir)
 {
     if (u < 2) return;
     const int w = u * 3 / 2 + 1, h = u + 1, pole = u * 3 / 2, top = y - pole - h / 2, half = w / 2;
-    gfx_rect(px, x, y - pole, u >= 6 ? 2 : 1, pole, c565(haze(0x8890A0, y)));
-    gfx_rect(px, x - half, top, w, h, c565(haze(0x181820, y)));
-    gfx_rect(px, x - half + 1, top + 1, w - 2, h - 2, c565(haze(0xF2C230, y)));
-    const uint16_t ink = c565(haze(0x181820, y));
+    gfx_rect(px, x, y - pole, u >= 6 ? 2 : 1, pole, gfx_rgb565(haze(0x8890A0, y)));
+    gfx_rect(px, x - half, top, w, h, gfx_rgb565(haze(0x181820, y)));
+    gfx_rect(px, x - half + 1, top + 1, w - 2, h - 2, gfx_rgb565(haze(0xF2C230, y)));
+    const uint16_t ink = gfx_rgb565(haze(0x181820, y));
     const int tip = x + dir * (half / 2), tail = x - dir * (half / 2), mid = top + h / 2;
     gfx_line(px, tail, top + 2, tip, mid, ink);
     gfx_line(px, tip, mid, tail, top + h - 3, ink);
@@ -242,8 +233,8 @@ static void draw_car(uint16_t *px, const rows_t *rw, const rc_car_t *car, int dz
     const uint32_t paint = body[car->color % 6U];
     if (v.scale < 80) { /* too far for slices: a dot of its paint and its tail lights */
         const int w = v.scale * model->w / 512 + 1;
-        gfx_rect(px, x - w, row - w * 3 / 4 - 1, w * 2 + 1, w * 3 / 4 + 1, c565(haze(paint, row)));
-        gfx_plot(px, x - w, row - 1, c565(0xFF3A3A));
+        gfx_rect(px, x - w, row - w * 3 / 4 - 1, w * 2 + 1, w * 3 / 4 + 1, gfx_rgb565(haze(paint, row)));
+        gfx_plot(px, x - w, row - 1, gfx_rgb565(0xFF3A3A));
         return;
     }
     const bool braking = car->flash || (now / 160U) % 9U < 1U;
@@ -356,7 +347,7 @@ static void draw_streaks(uint16_t *px, const rc_t *r, unsigned now)
         const int dy = (int)((h >> 12) % 30U) - 8;
         const int x0 = CX + dx, y0 = HY + 2 + dy * start / 60, x1 = CX + dx + side * len, y1 = HY + 2 + dy * (start + len) / 60;
         if (y0 < 0 || y0 > DASH_Y - 2) continue;
-        gfx_line(px, x0, y0, x1, y1, c565(nitro ? 0xBFE8FF : 0xD8D0D0));
+        gfx_line(px, x0, y0, x1, y1, gfx_rgb565(nitro ? 0xBFE8FF : 0xD8D0D0));
     }
 }
 static void draw_fx(uint16_t *px, const rc_t *r, unsigned now)
@@ -375,7 +366,7 @@ static void draw_fx(uint16_t *px, const rc_t *r, unsigned now)
         for (unsigned k = 0; k < 10U; ++k) {
             const uint32_t h = gfx_hash(k * 31U + 7U);
             const int t = (int)r->crash_age_ms / 30, x = CX + (int)(h % 120U) - 60 + ((int)(h >> 8) % 9 - 4) * t / 3, y = DASH_Y - 4 - t * ((int)(h >> 16) % 4);
-            gfx_plot(px, x, y, c565(t < 6 ? 0xFFF0A0 : 0xFF9030));
+            gfx_plot(px, x, y, gfx_rgb565(t < 6 ? 0xFFF0A0 : 0xFF9030));
         }
     }
 }
@@ -387,43 +378,43 @@ static void draw_wheel(uint16_t *px, int steer)
     const unsigned turn = (unsigned)((steer * 64 / 256 * 70 / 90 + 256) & 255); /* up to +-70 degrees */
     for (int a = 0; a < 256; a += 2) { /* the rim */
         const int x = cx + gfx_sin256((unsigned)a + 64U) * r / 256, y = cy + gfx_sin256((unsigned)a) * r / 256;
-        gfx_disc(px, x, y, 1, c565(a > 64 && a < 192 ? 0x1C202C : 0x30384C));
+        gfx_disc(px, x, y, 1, gfx_rgb565(a > 64 && a < 192 ? 0x1C202C : 0x30384C));
     }
     for (int k = 0; k < 3; ++k) { /* spokes */
         const unsigned phase = turn + (unsigned)(k == 0 ? 64 : k == 1 ? 192 : 128);
         const int x = cx + gfx_sin256(phase) * (r - 1) / 256, y = cy - gfx_sin256(phase + 64U) * (r - 1) / 256;
-        gfx_line2(px, cx, cy, x, y, c565(0x242836));
+        gfx_line2(px, cx, cy, x, y, gfx_rgb565(0x242836));
     }
-    gfx_disc(px, cx, cy, 4, c565(0x3C4660));
-    gfx_disc(px, cx, cy, 2, c565(0x7A88B0));
+    gfx_disc(px, cx, cy, 4, gfx_rgb565(0x3C4660));
+    gfx_disc(px, cx, cy, 2, gfx_rgb565(0x7A88B0));
     const int mx = cx + gfx_sin256(turn) * (r + 1) / 256, my = cy - gfx_sin256(turn + 64U) * (r + 1) / 256; /* the 12 o'clock mark */
-    gfx_rect(px, mx - 1, my - 1, 3, 3, c565(0xFFD84A));
+    gfx_rect(px, mx - 1, my - 1, 3, 3, gfx_rgb565(0xFFD84A));
 }
 static void panel(uint16_t *px, int x, int y, int w, int h)
 {
-    gfx_rect(px, x, y, w, h, c565(0x3A425E));
-    gfx_rect(px, x + 1, y + 1, w - 2, h - 2, c565(0x04060C));
-    gfx_plot(px, x, y, c565(0x12141E));
-    gfx_plot(px, x + w - 1, y, c565(0x12141E));
+    gfx_rect(px, x, y, w, h, gfx_rgb565(0x3A425E));
+    gfx_rect(px, x + 1, y + 1, w - 2, h - 2, gfx_rgb565(0x04060C));
+    gfx_plot(px, x, y, gfx_rgb565(0x12141E));
+    gfx_plot(px, x + w - 1, y, gfx_rgb565(0x12141E));
 }
 static void draw_cockpit(uint16_t *px, const state_t *s, unsigned now)
 {
     const rc_t *r = &s->core;
-    gfx_rect(px, 0, 0, APP_CANVAS_W, 2, c565(0x12141E));
-    gfx_hline(px, 0, APP_CANVAS_W - 1, 2, c565(0x30364C));
+    gfx_rect(px, 0, 0, APP_CANVAS_W, 2, gfx_rgb565(0x12141E));
+    gfx_hline(px, 0, APP_CANVAS_W - 1, 2, gfx_rgb565(0x30364C));
     for (int side = 0; side < 2; ++side) {
         const int x = side ? APP_CANVAS_W - 1 : 0, dir = side ? -1 : 1;
-        gfx_tri(px, x, 0, x + dir * 5, 0, x + dir * 13, DASH_Y, c565(0x0C0E16));
-        gfx_tri(px, x, 0, x + dir * 13, DASH_Y, x, DASH_Y, c565(0x0C0E16));
-        gfx_line(px, x + dir * 5, 0, x + dir * 13, DASH_Y, c565(0x424A66));
+        gfx_tri(px, x, 0, x + dir * 5, 0, x + dir * 13, DASH_Y, gfx_rgb565(0x0C0E16));
+        gfx_tri(px, x, 0, x + dir * 13, DASH_Y, x, DASH_Y, gfx_rgb565(0x0C0E16));
+        gfx_line(px, x + dir * 5, 0, x + dir * 13, DASH_Y, gfx_rgb565(0x424A66));
     }
-    gfx_ellipse(px, CX, 60, 78, 9, c565(0x3A425A)); /* the dashboard: a lit edge over a dark body */
-    gfx_ellipse(px, CX, 61, 77, 9, c565(0x12141E));
-    gfx_rect(px, 0, 61, APP_CANVAS_W, 3, c565(0x0C0E16));
+    gfx_ellipse(px, CX, 60, 78, 9, gfx_rgb565(0x3A425A)); /* the dashboard: a lit edge over a dark body */
+    gfx_ellipse(px, CX, 61, 77, 9, gfx_rgb565(0x12141E));
+    gfx_rect(px, 0, 61, APP_CANVAS_W, 3, gfx_rgb565(0x0C0E16));
     /* rear-view mirror: the road behind, the nearest car as a dot */
-    gfx_rect(px, CX - 11, 2, 23, 8, c565(0x20243A));
-    gfx_rect(px, CX - 10, 3, 21, 6, c565(0x5A7098));
-    gfx_rect(px, CX - 10, 6, 21, 3, c565(0x3C4A60));
+    gfx_rect(px, CX - 11, 2, 23, 8, gfx_rgb565(0x20243A));
+    gfx_rect(px, CX - 10, 3, 21, 6, gfx_rgb565(0x5A7098));
+    gfx_rect(px, CX - 10, 6, 21, 3, gfx_rgb565(0x3C4A60));
     gfx_tint(px, CX - 10, 3, 21, 2, 0xFFFFFF, 60);
     /* speed and nitro on the dash */
     char text[16];
@@ -434,17 +425,17 @@ static void draw_cockpit(uint16_t *px, const state_t *s, unsigned now)
     panel(px, 111, 53, 40, 9);
     const int fill = r->nitro * 36 / RC_NITRO_FULL;
     const bool ready = r->nitro >= RC_NITRO_FULL && r->phase == RC_RACE, burning = r->nitro_ms > 0;
-    gfx_rect(px, 113, 55, fill, 5, c565(burning ? 0xFFA030 : ready ? (((now / 110U) & 1U) ? 0xFFFFFF : 0x40D8FF) : 0x2090D0));
-    gfx_hline(px, 113, 148, 56, c565(burning ? 0xFFE080 : 0x80E0FF));
-    for (int i = 1; i < 4; ++i) gfx_vline(px, 113 + i * 9, 55, 59, c565(0x04060C));
-    gfx_plot(px, 110, 57, c565(ready || burning ? 0x40D8FF : 0x205060)); /* a flame icon */
-    gfx_rect(px, 109, 58, 3, 2, c565(ready || burning ? 0x40A0FF : 0x103040));
-    draw_wheel(px, s->steer.steer);
+    gfx_rect(px, 113, 55, fill, 5, gfx_rgb565(burning ? 0xFFA030 : ready ? (((now / 110U) & 1U) ? 0xFFFFFF : 0x40D8FF) : 0x2090D0));
+    gfx_hline(px, 113, 148, 56, gfx_rgb565(burning ? 0xFFE080 : 0x80E0FF));
+    for (int i = 1; i < 4; ++i) gfx_vline(px, 113 + i * 9, 55, 59, gfx_rgb565(0x04060C));
+    gfx_plot(px, 110, 57, gfx_rgb565(ready || burning ? 0x40D8FF : 0x205060)); /* a flame icon */
+    gfx_rect(px, 109, 58, 3, 2, gfx_rgb565(ready || burning ? 0x40A0FF : 0x103040));
+    draw_wheel(px, s->game.steer.steer);
     /* time left, top left; red and blinking at the end */
     snprintf(text, sizeof text, "%u", rc_time_s(r));
     const bool low = r->phase == RC_RACE && r->time_ms < 10000U;
     if (!low || ((now / 250U) & 1U)) {
-        gfx_rect(px, 5, 4, text_width(text, 2) + 6, 13, c565(0x04060C));
+        gfx_rect(px, 5, 4, text_width(text, 2) + 6, 13, gfx_rgb565(0x04060C));
         write_text(px, 8, 6, 2, text, low ? 0xFF5040 : 0xFFFFFF, false);
     }
     if (r->cp_age_ms < 1500U && r->checkpoints) { /* extra time */
@@ -498,49 +489,30 @@ static void draw_scene(uint16_t *px, state_t *s, unsigned now)
     if (r->phase == RC_TITLE || r->phase == RC_OVER) {
         gfx_tint(px, 0, 0, APP_CANVAS_W, APP_CANVAS_H, 0x01030C, r->phase == RC_OVER ? 150U : 60U);
         gfx_tint(px, 14, 6, 132, 38, 0x061024, 170);
-        gfx_hline(px, 14, 145, 6, c565(0xE0A040));
-        gfx_hline(px, 14, 145, 43, c565(0xE0A040));
-        gfx_vline(px, 14, 6, 43, c565(0x8A5A20));
-        gfx_vline(px, 145, 6, 43, c565(0x8A5A20));
+        gfx_hline(px, 14, 145, 6, gfx_rgb565(0xE0A040));
+        gfx_hline(px, 14, 145, 43, gfx_rgb565(0xE0A040));
+        gfx_vline(px, 14, 6, 43, gfx_rgb565(0x8A5A20));
+        gfx_vline(px, 145, 6, 43, gfx_rgb565(0x8A5A20));
     }
 }
 
 /* ---- app ----------------------------------------------------------------------------------------------------- */
 static void build(state_t *s, lv_obj_t *root)
 {
-    s->plot = app_ui_canvas(root, 0, 0, APP_CANVAS_W, APP_CANVAS_H);
-    s->band = app_ui_band(root, 0x14100A, 0x9A6A2A);
-    s->msg = app_ui_label(s->band, &aihook_font_12, 3, 2, 122, 14, LV_LABEL_LONG_MODE_CLIP);
-    s->score = app_ui_label(s->band, &aihook_font_12, 124, 2, 36, 14, LV_LABEL_LONG_MODE_CLIP);
-    lv_obj_set_style_text_color(s->msg, app_ui_color(0xF0E0C8), LV_PART_MAIN);
-    lv_obj_set_style_text_color(s->score, app_ui_color(0xFFD84A), LV_PART_MAIN);
-    lv_obj_set_style_text_align(s->score, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
-    s->hold = app_ui_hold_bar(root, BAND_Y, APP_COLOR_ACCENT); /* the hold towards the exit */
-    app_ui_hide(s->hold, true);
-    s->tag = app_ui_rect(root, 128, 5, 29, 14, 0x2E8B57, 5);
-    s->tag_text = app_ui_label(s->tag, &aihook_font_12, 0, 1, 29, 12, LV_LABEL_LONG_MODE_CLIP);
-    app_ui_center(s->tag_text);
-    app_ui_text(s->tag_text, "舵机");
-    s->title = app_ui_label(root, &aihook_font_16, 14, 9, 132, 20, LV_LABEL_LONG_MODE_CLIP);
-    s->sub = app_ui_label(root, &aihook_font_12, 14, 28, 132, 14, LV_LABEL_LONG_MODE_CLIP);
-    app_ui_center(s->title);
-    app_ui_center(s->sub);
-    lv_obj_set_style_text_color(s->title, app_ui_color(0xFFE6B0), LV_PART_MAIN);
-    lv_obj_set_style_text_color(s->sub, app_ui_color(0x9CE8FF), LV_PART_MAIN);
-    app_ui_hide(s->tag, true);
-    app_ui_hide(s->title, true);
-    app_ui_hide(s->sub, true);
-    s->shown_key = s->shown_score = s->shown_card = 0xFFFFFFFFU;
+    static const game_style_t style = {.band_bg = 0x14100A, .band_rule = 0x9A6A2A, .msg_rgb = 0xF0E0C8, .score_rgb = 0xFFD84A,
+        .title_rgb = 0xFFE6B0, .sub_rgb = 0x9CE8FF, .msg_w = 122, .score_x = 124, .score_w = 36, .score_right = true,
+        .tag_x = 128, .tag_y = 5, .title_y = 9, .sub_y = 28};
+    game_build(&s->game, root, &style);
 }
 static void publish(const state_t *s, bool active, bool frame)
 {
     const rc_t *r = &s->core;
     const haptic_state_t hs = haptic_state();
     app_critical_enter();
-    s_status.active = active; s_status.phase = r->phase; s_status.servo = (uint8_t)hs; s_status.src = s->steer.source;
+    s_status.active = active; s_status.phase = r->phase; s_status.servo = (uint8_t)hs; s_status.src = s->game.steer.source;
     s_status.nitro_ready = r->nitro >= RC_NITRO_FULL; s_status.speed = rc_speed_kmh(r); s_status.dist = rc_distance_m(r);
     s_status.score = rc_score(r); s_status.best = r->best; s_status.cps = r->checkpoints; s_status.crashes = r->crashes;
-    s_status.px = rc_px(r); s_status.steer = s->steer.steer; s_status.time_s = rc_time_s(r); s_status.nitro = (unsigned)r->nitro; s_status.voxels = s->voxels;
+    s_status.px = rc_px(r); s_status.steer = s->game.steer.steer; s_status.time_s = rc_time_s(r); s_status.nitro = (unsigned)r->nitro; s_status.voxels = s->voxels;
     if (frame) ++s_status.frames;
     app_critical_exit();
 }
@@ -549,70 +521,59 @@ static void enter(app_context_t *ctx)
     state_t *s = ctx->state;
     rc_init(&s->core, app_random() ^ (uint32_t)ctx->now_ms);
     s->core.best = app_best_get(ctx); /* the record survives leaving the game and a reboot */
-    steer_init(&s->steer);
-    haptic_init(&s->haptic);
-    s->last_ms = ctx->now_ms;
-    app_set_triple_exit(ctx, false); /* the pedal is pumped for nitro: three quick presses are never an exit */
+    game_enter(ctx, &s->game); /* the pedal is pumped for nitro: three quick presses are never an exit */
     app_critical_enter(); s_status = (status_t){0}; app_critical_exit();
     publish(s, true, false);
 }
 static bool idle_screen(const state_t *s)
 {
-    return s->core.phase == RC_TITLE || (s->core.phase == RC_OVER && s->core.over_age_ms > 800U);
+    return game_idle(s->core.phase == RC_TITLE, s->core.phase == RC_OVER, s->core.over_age_ms);
 }
 /* The way out is a two second hold on the title or game over screen, and only for a press that began there: a pedal
  * held down through a long race must not leave the moment the time runs out. */
 static void sync_exit(app_context_t *ctx, const state_t *s)
 {
-    app_set_exit_hold(ctx, idle_screen(s) ? EXIT_HOLD_MS : 0U);
+    game_sync_exit(ctx, idle_screen(s));
 }
 static void tick(app_context_t *ctx)
 {
     state_t *s = ctx->state;
     const uint64_t now = ctx->now_ms;
-    const uint32_t dt = now > s->last_ms ? (uint32_t)(now - s->last_ms) : 0U;
-    app_radar_t radar;
-    app_radar_read(&radar);
-    if (radar.available && radar.online) steer_radar(&s->steer, now, true, radar.frame.targets);
-    const int steer = steer_tick(&s->steer, now);
+    const uint32_t dt = game_dt(&s->game, now);
+    const int steer = game_steer(ctx, &s->game);
     rc_steer(&s->core, steer);
     sync_exit(ctx, s);
     rc_advance(&s->core, dt);
-    s->last_ms = now;
     if (s->core.phase == RC_OVER) (void)app_best_record(ctx, s->core.best);
     s->bg16 -= (int)((int64_t)bend_at(&s->core, s->core.pos_mm) * (int)rc_speed_kmh(&s->core) * (int)(dt > 200U ? 200U : dt) / 165000);
-    app_servo_t sv;
-    app_servo_read(&sv);
     /* the servo is the steering wheel while racing and a shaker in a crash */
-    haptic_base(&s->haptic, s->core.phase == RC_RACE ? steer * 140 / 256 : 0);
-    while (rc_take_crash(&s->core))
-        if (sv.available && sv.armed) haptic_shake(&s->haptic, now, 5, 100, 450, sv.speed_dps);
-    haptic_pump(ctx, &s->haptic);
+    haptic_base(&s->game.haptic, s->core.phase == RC_RACE ? steer * 140 / 256 : 0);
+    while (rc_take_crash(&s->core)) game_shake(ctx, &s->game, 5, 100, 450);
+    haptic_pump(ctx, &s->game.haptic);
 }
 static void leave(app_context_t *ctx)
 {
     state_t *s = ctx->state;
-    haptic_stop(&s->haptic); /* the framework disarms the servo it leased to this app */
-    if (s->plot) app_ui_canvas_refresh(s->plot); /* The shared canvas goes to the next app. */
+    game_leave(&s->game);
     app_critical_enter(); s_status.active = false; app_critical_exit();
 }
 static void event(app_context_t *ctx, const app_event_t *e)
 {
     state_t *s = ctx->state;
     rc_t *r = &s->core;
-    const bool side = e->key == 1U || e->key == 2U; /* K2 steers left, K3 right */
+    const bool side = game_side(e); /* K2 steers left, K3 right */
     switch (e->kind) {
     case APP_EVENT_DOWN:
-        if (side) steer_key(&s->steer, e->key, true);
+        if (side) steer_key(&s->game.steer, e->key, true);
         else {
-            s->down_in_race = r->phase == RC_COUNT || r->phase == RC_RACE || r->phase == RC_FINISH;
+            s->game.down_in_play = r->phase == RC_COUNT || r->phase == RC_RACE || r->phase == RC_FINISH;
             rc_throttle(r, true);
             /* Nitro is a quick re-press: lift the pedal and put it down again within a fraction of a second. */
             if (s->last_up_ms && e->ms - s->last_up_ms <= 280U) (void)rc_nitro(r);
         }
         break;
     case APP_EVENT_UP:
-        if (side) steer_key(&s->steer, e->key, false);
+        if (side) steer_key(&s->game.steer, e->key, false);
         else {
             rc_throttle(r, false);
             s->last_up_ms = e->ms;
@@ -620,17 +581,17 @@ static void event(app_context_t *ctx, const app_event_t *e)
         break;
     case APP_EVENT_SHORT:
         /* A press that began in the race is a pedal, not a "start". */
-        if (!side && !s->down_in_race && idle_screen(s)) {
+        if (game_may_start(&s->game, side, idle_screen(s))) {
             rc_start(r);
-            steer_recentre(&s->steer);
+            steer_recentre(&s->game.steer);
         }
         break;
     case APP_EVENT_CONFIRM:
         /* A deliberate half-second hold on the title or game over screen is the only thing that enables the servo. */
-        if (!side && !s->down_in_race && (r->phase == RC_TITLE || r->phase == RC_OVER)) (void)haptic_arm(ctx, &s->haptic);
+        game_confirm(ctx, &s->game, side, r->phase == RC_TITLE || r->phase == RC_OVER);
         break;
     case APP_EVENT_CANCEL:
-        steer_release_keys(&s->steer);
+        steer_release_keys(&s->game.steer);
         rc_throttle(r, false);
         break;
     default: break;
@@ -653,40 +614,27 @@ static void sync_hud(state_t *s, uint64_t now, unsigned hold_ms)
     case RC_FINISH: msg = "时间到!"; break;
     default: msg = r->over_age_ms > 800U ? "按键再来" : "时间到!"; break;
     }
-    const bool idle = idle_screen(s), exit_slot = idle && (now / HINT_SLOT_MS) % 2U == 1U; /* the hint of the way out alternates */
-    if (exit_slot) msg = "按住2秒退出";
-    const uint32_t key = (uint32_t)r->phase << 8 | (uint32_t)hs << 4 | (bonus ? 4U : 0U) | (ready && r->nitro_ms <= 0 ? 2U : 0U) |
-                         (idle ? 1U : 0U) | (exit_slot ? 8U : 0U);
-    if (key != s->shown_key) { app_ui_text(s->msg, msg); s->shown_key = key; }
+    const bool idle = idle_screen(s);
+    game_hud_msg(&s->game, msg, (uint32_t)r->phase << 8 | (uint32_t)hs << 4 | (bonus ? 4U : 0U) | (ready && r->nitro_ms <= 0 ? 2U : 0U) |
+                 (idle ? 1U : 0U), idle, now);
     const uint32_t score = rc_score(r);
-    if (s->shown_score != score) {
-        char text[16];
-        snprintf(text, sizeof text, "%lu", (unsigned long)score);
-        app_ui_text(s->score, text);
-        s->shown_score = score;
-    }
-    app_ui_hold_line(s->hold, hold_ms, hs == HAPTIC_READY, EXIT_HOLD_MS);
-    app_ui_hide(s->tag, hs != HAPTIC_ARMED);
+    game_hud_score(&s->game, score);
+    game_hud_servo(&s->game, hold_ms);
     const bool card = r->phase == RC_TITLE || r->phase == RC_OVER;
-    app_ui_hide(s->title, !card);
-    app_ui_hide(s->sub, !card);
-    const uint32_t card_key = r->best * 31U + score + r->phase;
-    if (card && s->shown_card != card_key) {
+    if (game_hud_card(&s->game, card, r->best * 31U + score + r->phase)) {
         char text[48];
-        app_ui_text(s->title, r->phase == RC_TITLE ? "极速赛车" : "时间到");
         if (r->phase == RC_TITLE) snprintf(text, sizeof text, "最高 %lu", (unsigned long)r->best);
         else snprintf(text, sizeof text, "里程 %lu米 最高 %lu", (unsigned long)rc_distance_m(r), (unsigned long)r->best);
-        app_ui_text(s->sub, text);
-        s->shown_card = card_key;
+        game_hud_card_text(&s->game, r->phase == RC_TITLE ? "极速赛车" : "时间到", text);
     }
 }
 static void render(app_context_t *ctx)
 {
     state_t *s = ctx->state;
-    if (!s->plot) build(s, ctx->root);
+    if (!s->game.plot) build(s, ctx->root);
     sync_hud(s, ctx->now_ms, app_exit_hold_progress(ctx));
     draw_scene(app_ui_pixels(), s, (unsigned)ctx->now_ms);
-    app_ui_canvas_refresh(s->plot);
+    app_ui_canvas_refresh(s->game.plot);
     publish(s, true, true);
 }
 static bool command(const char *line)

@@ -98,6 +98,7 @@ const app_descriptor_t esphook_app_counter = {
 | 从命令打开应用/回菜单/问是否前台 | `app_command_open(id)`、`app_command_menu()`、`app_command_active(id)` | 只排队，真正切换在 UI 任务 |
 | 闹钟/定时唤醒 | `app_alarm.h` | 见“闹钟 API” |
 | 舵机震动/转向、雷达转向 | `app_haptic.h`、`app_steer.h` | 见“硬件与 Hook 服务” |
+| 第一人称街机游戏的共用骨架 | `app_game.h`：状态里放一个 `game_t game`（在核心之后）；`game_enter/leave`、`game_steer`（雷达或 K2/K3）、`game_dt`、`game_side`、`game_idle/may_start/confirm/sync_exit`（按住 2 秒退出只在标题和结算画面开）、`game_shake`、`game_build`（画布、状态条、舵机标记、标题卡）、`game_hud_msg/score/servo/card` | 赛车、飞船、僵尸围城已用它，新游戏只写规则、画面和文案；见 `apps/racing/firmware/app.c` |
 
 一个只带 `status` 命令的完整样板就是 `python3 scripts/new-app.py <id>` 生成的 `firmware/app.c`：
 
@@ -265,40 +266,17 @@ PC 的运行入口和协议见 [app-pc-protocol.md](app-pc-protocol.md)。旧投
 
 ## 验证
 
+一条命令跑完 CI 在主机上做的全部检查（Python 编译、应用契约、脚手架/SDK/打包、PC 协议、所有 C 模型测试、无屏渲染、安装脚本和各 PC 工具的 `--dry-run`）：
+
 ```bash
-python3 scripts/check-apps.py
-python3 tests/test_scaffold.py
-python3 tests/test_app_sdk.py
-./scripts/test-app-games.sh
-./scripts/test-app-util.sh
-./scripts/test-robot.sh
-./scripts/test-hardware.sh
-./scripts/test-usb-cdc.sh
-python3 apps/key_report/pc/test_bridge.py
-./scripts/test-basketball.sh
-./scripts/test-dino.sh
-./scripts/test-ski.sh
-./scripts/test-muyu.sh
-./scripts/test-haptic-steer.sh
-./scripts/test-aquarium.sh
-./scripts/test-fishing.sh
-./scripts/test-starship.sh
-./scripts/test-racing.sh
-./scripts/test-app-time.sh
-./scripts/test-fortune.sh
-./scripts/test-app-alarm.sh
-./scripts/test-alarm.sh
-./scripts/test-miner.sh
-./scripts/test-jump.sh
-./scripts/test-zombie.sh
-./scripts/test-stack.sh
-./scripts/test-mirror.sh
-./scripts/test-robot-ui.sh
-python3 apps/mirror/pc/test_mirror.py   # 需要 Pillow
-python3 apps/stock/pc/test_stock_t.py
-python3 apps/hook/pc/test_hooks.py
-python3 apps/hook/pc/test_device_link.py
+./scripts/check-all.sh                 # 全部，最后一行 ALL GREEN 才算过
+./scripts/check-all.sh racing zombie   # 名字里含这些词的检查
+./scripts/check-all.sh --list          # 看有哪些检查
 ```
+
+CI 的 `Host tests` 就是这个脚本（`CHECK_STRICT=1`：跑不了的检查按失败算），本地全绿等于主机侧 CI 全绿。缺依赖时对应检查显示 SKIP（没有 `LVGL_SOURCE_DIR`、没有 Pillow），最后会写“NOT A FULL RUN”。新增 `scripts/test-<名字>.sh` 后把名字加进 `scripts/check-all.sh` 的 `c_tests` 一行；这些脚本都是两行：`source "$(dirname "$0")/lib/ctest.sh"` 加一句 `ctest_run <编译参数>`（`lib/ctest.sh` 统一加 `-Wall -Wextra -Werror -pedantic` 和 ASan/UBSan，UBSan 出错即终止）。
+
+固件体积预算：`scripts/size-report.py --bin build/supermini-aihook.bin --map build/supermini-aihook.map` 给出最小 OTA 槽的剩余空间、各部分占比、每个应用的闪存开销（按链接顺序区分各个 `app.c.obj`）和静态 SRAM；CI 的 `firmware` 任务在构建后运行它，剩余空间低于 8% 则失败，并写进 Actions 的 Summary。
 
 纯 C 测试需要 C 编译器和 `libcjson-dev`。其他环境通过 CJSON_INCLUDE_DIR / CJSON_LIB 指定；启用 ASan/UBSan。应用生成器会拒绝覆盖同名目录及不合法 id。
 

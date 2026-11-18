@@ -7,6 +7,7 @@ description: Validate esphook framework and app changes with manifest checks, li
 
 先阅读 `docs/app-framework.md` 的接口与验证部分。根据改动范围选择检查，别把实机未测的结果写成已验证。
 
+0. **先跑 `./scripts/check-all.sh`**（可加关键字只跑一部分，`--list` 看全部）：它就是 CI 的 `Host tests`，下面 1–5 步都在里面，最后一行 ALL GREEN 才算过；没有 `LVGL_SOURCE_DIR`/Pillow 时对应检查是 SKIP，不算完整运行。固件构建后用 `scripts/size-report.py` 看剩余空间和每个应用的体积（CI 低于 8% 失败）。
 1. 执行 `python3 scripts/check-apps.py` 和 `git diff --check`，检查 manifest/id/源文件、descriptor、应用越层引用和 skills 元数据。
 2. 执行 `scripts/test-app-games.sh`，确认公共头文件无 RTOS 也能编译、生命周期、单根节点所有权、延后导航、500ms 确认、三击、松手消费、10s 菜单超时和 NVS 保存失败时不切换。
 3. 规则变化运行对应模型测试；共享服务变化回归 `test-robot.sh`、`test-basketball.sh`、`test-dino.sh`、`test-ski.sh`、`test-muyu.sh`、`test-haptic-steer.sh`、`test-aquarium.sh`、`test-fishing.sh`、`test-starship.sh`、`test-racing.sh`、`test-app-time.sh`、`test-app-util.sh`、`test-app-best.sh`、`test-app-screen.sh`、`test-fortune.sh`、`test-app-alarm.sh`、`test-alarm.sh`、`test-miner.sh`、`test-jump.sh`、`test-zombie.sh`、`test-stack.sh`、`test-mirror.sh`、`test-robot-ui.sh`。依赖为 C 编译器和 libcjson-dev，其他环境使用脚本的 CJSON_INCLUDE_DIR/CJSON_LIB 覆盖。

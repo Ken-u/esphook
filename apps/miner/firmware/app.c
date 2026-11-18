@@ -29,14 +29,13 @@ _Static_assert(offsetof(state_t, core) == 0, "tests pose the mine through the co
 typedef struct { bool active; uint8_t phase, claw, level, dynamite; uint32_t score, goal, best, caught, time, frames; } status_t;
 static status_t s_status;
 
-static uint16_t c565(uint32_t rgb) { return gfx_rgb565(rgb); }
 
 /* ---- the mine -------------------------------------------------------------------------------------------------- */
 static void draw_mine(uint16_t *px, unsigned now)
 {
     gfx_gradient(px, 0, MN_ORIGIN_Y - 1, 0x6EC1EE, 0xD2F0FF); /* sky */
-    gfx_cloud(px, (int)((now / 220U) % 210U) - 40, 1, 22, c565(0xFFFFFF), c565(0xBFD9EC));
-    gfx_cloud(px, 150 - (int)((now / 330U) % 210U), 3, 14, c565(0xF2F9FF), c565(0xBFD9EC));
+    gfx_cloud(px, (int)((now / 220U) % 210U) - 40, 1, 22, gfx_rgb565(0xFFFFFF), gfx_rgb565(0xBFD9EC));
+    gfx_cloud(px, 150 - (int)((now / 330U) % 210U), 3, 14, gfx_rgb565(0xF2F9FF), gfx_rgb565(0xBFD9EC));
     gfx_gradient(px, MN_ORIGIN_Y - 2, APP_CANVAS_H, 0xA0713C, 0x3A2212); /* the earth, darker with depth */
     for (unsigned i = 0; i < 90U; ++i) { /* speckles and little stones */
         const uint32_t h = gfx_hash(i * 2654435U + 11U);
@@ -44,54 +43,54 @@ static void draw_mine(uint16_t *px, unsigned now)
         gfx_tint_plot(px, x, y, (h & 0x10000U) ? 0x20120A : 0xE0B070, 60U + (h >> 20) % 50U);
         if ((h & 0x1F0000U) == 0U) gfx_tint(px, x, y, 2, 1, 0x20120A, 80);
     }
-    gfx_rect(px, 0, MN_ORIGIN_Y - 3, MN_W, 2, c565(0x5CBB4B)); /* grass on top */
-    gfx_rect(px, 0, MN_ORIGIN_Y - 1, MN_W, 1, c565(0x2F7D2C));
-    for (int x = 2; x < MN_W; x += 5) gfx_plot(px, x, MN_ORIGIN_Y - 4, c565(0x5CBB4B));
+    gfx_rect(px, 0, MN_ORIGIN_Y - 3, MN_W, 2, gfx_rgb565(0x5CBB4B)); /* grass on top */
+    gfx_rect(px, 0, MN_ORIGIN_Y - 1, MN_W, 1, gfx_rgb565(0x2F7D2C));
+    for (int x = 2; x < MN_W; x += 5) gfx_plot(px, x, MN_ORIGIN_Y - 4, gfx_rgb565(0x5CBB4B));
     gfx_tint(px, 0, MN_ORIGIN_Y, MN_W, 3, 0x000000, 70); /* the shade at the edge of the earth */
 }
 static void draw_miner(uint16_t *px, const mn_t *g, unsigned now)
 {
     /* the winch on the grass, and a miner cranking it: the crank turns while the rope runs */
     const int cx = MN_ORIGIN_X, top = 2;
-    gfx_rect(px, cx - 6, top, 13, 7, c565(0x6B4423));
-    gfx_rect(px, cx - 6, top, 13, 1, c565(0x9A6A38));
-    gfx_rect(px, cx - 6, top + 6, 13, 1, c565(0x3D2410));
-    gfx_disc(px, cx, top + 3, 3, c565(0x2E2E36));
-    gfx_disc(px, cx, top + 3, 2, c565(0x8A8E9A));
-    gfx_vline(px, cx, top + 7, MN_ORIGIN_Y - 2, c565(0xD8D4C8)); /* the rope goes down through a hole in the grass */
+    gfx_rect(px, cx - 6, top, 13, 7, gfx_rgb565(0x6B4423));
+    gfx_rect(px, cx - 6, top, 13, 1, gfx_rgb565(0x9A6A38));
+    gfx_rect(px, cx - 6, top + 6, 13, 1, gfx_rgb565(0x3D2410));
+    gfx_disc(px, cx, top + 3, 3, gfx_rgb565(0x2E2E36));
+    gfx_disc(px, cx, top + 3, 2, gfx_rgb565(0x8A8E9A));
+    gfx_vline(px, cx, top + 7, MN_ORIGIN_Y - 2, gfx_rgb565(0xD8D4C8)); /* the rope goes down through a hole in the grass */
     const unsigned turn = g->claw == MN_SWING ? 0U : (unsigned)(g->len16 / 20) * 3U;
     const int hx = cx + gfx_sin256(turn + 64U) * 3 / 256, hy = top + 3 + gfx_sin256(turn) * 3 / 256;
     const int bx = cx - 13, feet = MN_ORIGIN_Y - 4; /* the miner stands on the grass */
     const int bob = g->claw == MN_SWING ? 0 : (int)((now / 90U) & 1U);
-    gfx_rect(px, bx, feet - 1, 2, 2, c565(0x2D4F9B));                   /* trousers */
-    gfx_rect(px, bx + 2, feet - 1, 2, 2, c565(0x2D4F9B));
-    gfx_rect(px, bx - 1, feet - 4 - bob, 6, 3, c565(0xD23A32));         /* shirt */
-    gfx_rect(px, bx, feet - 6 - bob, 4, 2, c565(SKIN));                 /* face */
-    gfx_plot(px, bx + 2, feet - 5 - bob, c565(0x2A1C14));
-    gfx_rect(px, bx - 1, feet - 8 - bob, 6, 2, c565(0xF2C62A));         /* helmet with a lamp */
-    gfx_plot(px, bx + 5, feet - 7 - bob, c565(0xFFF2A0));
-    gfx_line(px, bx + 4, feet - 3 - bob, hx, hy, c565(SKIN));          /* the arm to the crank */
-    gfx_plot(px, hx, hy, c565(0xE8E8F0));
+    gfx_rect(px, bx, feet - 1, 2, 2, gfx_rgb565(0x2D4F9B));                   /* trousers */
+    gfx_rect(px, bx + 2, feet - 1, 2, 2, gfx_rgb565(0x2D4F9B));
+    gfx_rect(px, bx - 1, feet - 4 - bob, 6, 3, gfx_rgb565(0xD23A32));         /* shirt */
+    gfx_rect(px, bx, feet - 6 - bob, 4, 2, gfx_rgb565(SKIN));                 /* face */
+    gfx_plot(px, bx + 2, feet - 5 - bob, gfx_rgb565(0x2A1C14));
+    gfx_rect(px, bx - 1, feet - 8 - bob, 6, 2, gfx_rgb565(0xF2C62A));         /* helmet with a lamp */
+    gfx_plot(px, bx + 5, feet - 7 - bob, gfx_rgb565(0xFFF2A0));
+    gfx_line(px, bx + 4, feet - 3 - bob, hx, hy, gfx_rgb565(SKIN));          /* the arm to the crank */
+    gfx_plot(px, hx, hy, gfx_rgb565(0xE8E8F0));
 }
 static void draw_rope_claw(uint16_t *px, const mn_t *g, unsigned now)
 {
     int tx, ty, dx, dy;
     mn_tip(g, &tx, &ty);
     mn_dir(g, &dx, &dy);
-    gfx_line(px, MN_ORIGIN_X, MN_ORIGIN_Y - 1, tx, ty, c565(0xD8D4C8));
-    gfx_line(px, MN_ORIGIN_X + 1, MN_ORIGIN_Y, tx + 1, ty, c565(0x7A766C)); /* the rope has a shadow */
+    gfx_line(px, MN_ORIGIN_X, MN_ORIGIN_Y - 1, tx, ty, gfx_rgb565(0xD8D4C8));
+    gfx_line(px, MN_ORIGIN_X + 1, MN_ORIGIN_Y, tx + 1, ty, gfx_rgb565(0x7A766C)); /* the rope has a shadow */
     const int px_x = -dy, px_y = dx; /* perpendicular, in 1/256 */
     const bool open = g->claw != MN_RETRACT || g->hooked < 0;
     const int w = open ? 5 : 2;
     const int hubx = tx - dx * 4 / 256, huby = ty - dy * 4 / 256;
-    gfx_disc(px, hubx, huby, 2, c565(0x9AA0AE));
-    gfx_plot(px, hubx - 1, huby - 1, c565(0xFFFFFF));
+    gfx_disc(px, hubx, huby, 2, gfx_rgb565(0x9AA0AE));
+    gfx_plot(px, hubx - 1, huby - 1, gfx_rgb565(0xFFFFFF));
     for (int side = -1; side <= 1; side += 2) {
         const int ex = tx + side * px_x * w / 256, ey = ty + side * px_y * w / 256;
         const int mx = hubx + side * px_x * (w + 1) / 256 + dx * 2 / 256, my = huby + side * px_y * (w + 1) / 256 + dy * 2 / 256;
-        gfx_line(px, hubx, huby, mx, my, c565(0xC9CEDA));
-        gfx_line(px, mx, my, ex + dx * 2 / 256, ey + dy * 2 / 256, c565(0xE8ECF4));
-        gfx_plot(px, ex + dx * 2 / 256, ey + dy * 2 / 256, c565(0xFFFFFF));
+        gfx_line(px, hubx, huby, mx, my, gfx_rgb565(0xC9CEDA));
+        gfx_line(px, mx, my, ex + dx * 2 / 256, ey + dy * 2 / 256, gfx_rgb565(0xE8ECF4));
+        gfx_plot(px, ex + dx * 2 / 256, ey + dy * 2 / 256, gfx_rgb565(0xFFFFFF));
     }
     (void)now;
 }
@@ -111,46 +110,46 @@ static void draw_item(uint16_t *px, const mn_item_t *it, unsigned index, unsigne
     const uint32_t seed = gfx_hash(index * 31U + (uint32_t)it->kind);
     switch (it->kind) {
     case MN_GOLD_S: case MN_GOLD_M: case MN_GOLD_L:
-        gfx_disc(px, x, y, r, c565(0x8E5F0C));
+        gfx_disc(px, x, y, r, gfx_rgb565(0x8E5F0C));
         for (unsigned k = 0; k < 3U; ++k) { /* a lumpy nugget */
             const unsigned a = (seed >> (k * 5U)) & 31U * 8U;
-            gfx_disc(px, x + gfx_sin256(a + 64U) * (r - 1) / 256, y + gfx_sin256(a) * (r - 1) / 256, (r + 2) / 3 + 1, c565(0x8E5F0C));
+            gfx_disc(px, x + gfx_sin256(a + 64U) * (r - 1) / 256, y + gfx_sin256(a) * (r - 1) / 256, (r + 2) / 3 + 1, gfx_rgb565(0x8E5F0C));
         }
-        gfx_disc(px, x, y, r - 1 > 1 ? r - 1 : 1, c565(0xE9A81B));
-        gfx_disc(px, x - 1, y - 1, r - 2 > 1 ? r - 2 : 1, c565(0xFBCB2E));
-        gfx_disc(px, x - r / 3, y - r / 3, r / 3 > 1 ? r / 3 : 1, c565(0xFFF0A0));
+        gfx_disc(px, x, y, r - 1 > 1 ? r - 1 : 1, gfx_rgb565(0xE9A81B));
+        gfx_disc(px, x - 1, y - 1, r - 2 > 1 ? r - 2 : 1, gfx_rgb565(0xFBCB2E));
+        gfx_disc(px, x - r / 3, y - r / 3, r / 3 > 1 ? r / 3 : 1, gfx_rgb565(0xFFF0A0));
         gfx_tint(px, x + r / 3, y + r / 3, 2, 1, 0x4A2E06, 150);
         sparkle(px, x - r / 3, y - r / 3, (now / 70U + index * 13U) % 40U);
         break;
     case MN_STONE_S: case MN_STONE_L:
-        gfx_disc(px, x, y, r, c565(0x464A58));
-        gfx_disc(px, x - 1, y - 1, r - 1, c565(0x7C8294));
-        gfx_disc(px, x - r / 3, y - r / 3, r / 3 > 1 ? r / 3 : 1, c565(0xB5BAC8));
-        gfx_line(px, x - r / 2 + 1, y + 1, x + 1, y + r / 2, c565(0x353844));
-        gfx_line(px, x + 1, y - r / 2, x + r / 2, y - 1, c565(0x353844));
+        gfx_disc(px, x, y, r, gfx_rgb565(0x464A58));
+        gfx_disc(px, x - 1, y - 1, r - 1, gfx_rgb565(0x7C8294));
+        gfx_disc(px, x - r / 3, y - r / 3, r / 3 > 1 ? r / 3 : 1, gfx_rgb565(0xB5BAC8));
+        gfx_line(px, x - r / 2 + 1, y + 1, x + 1, y + r / 2, gfx_rgb565(0x353844));
+        gfx_line(px, x + 1, y - r / 2, x + r / 2, y - 1, gfx_rgb565(0x353844));
         break;
     case MN_DIAMOND:
-        gfx_tri(px, x, y - 4, x - 4, y, x + 4, y, c565(0xA8F4FF));
-        gfx_tri(px, x - 4, y, x + 4, y, x, y + 5, c565(0x2EB4E6));
-        gfx_tri(px, x - 1, y - 3, x - 3, y, x, y, c565(0xFFFFFF));
-        gfx_hline(px, x - 4, x + 4, y, c565(0x6FD6F2));
+        gfx_tri(px, x, y - 4, x - 4, y, x + 4, y, gfx_rgb565(0xA8F4FF));
+        gfx_tri(px, x - 4, y, x + 4, y, x, y + 5, gfx_rgb565(0x2EB4E6));
+        gfx_tri(px, x - 1, y - 3, x - 3, y, x, y, gfx_rgb565(0xFFFFFF));
+        gfx_hline(px, x - 4, x + 4, y, gfx_rgb565(0x6FD6F2));
         sparkle(px, x + 3, y - 3, (now / 60U + index * 7U) % 22U);
         break;
     case MN_BAG:
-        gfx_disc(px, x, y + 1, r, c565(0x5A3A1C));
-        gfx_disc(px, x - 1, y, r - 1, c565(0xA9733C));
-        gfx_rect(px, x - 2, y - r - 1, 5, 3, c565(0x5A3A1C));
-        gfx_rect(px, x - 3, y - r + 1, 7, 1, c565(0xC8372D)); /* the cord */
-        gfx_rect(px, x - 1, y - 1, 2, 2, c565(0xFFE070));
-        gfx_plot(px, x, y + 2, c565(0xFFE070));
+        gfx_disc(px, x, y + 1, r, gfx_rgb565(0x5A3A1C));
+        gfx_disc(px, x - 1, y, r - 1, gfx_rgb565(0xA9733C));
+        gfx_rect(px, x - 2, y - r - 1, 5, 3, gfx_rgb565(0x5A3A1C));
+        gfx_rect(px, x - 3, y - r + 1, 7, 1, gfx_rgb565(0xC8372D)); /* the cord */
+        gfx_rect(px, x - 1, y - 1, 2, 2, gfx_rgb565(0xFFE070));
+        gfx_plot(px, x, y + 2, gfx_rgb565(0xFFE070));
         break;
     default: /* the barrel */
-        gfx_rect(px, x - 5, y - 5, 11, 11, c565(0x7A1410));
-        gfx_rect(px, x - 4, y - 4, 9, 9, c565(0xD5352B));
-        gfx_rect(px, x - 4, y - 1, 9, 3, c565(0xF0E2D0));
-        gfx_rect(px, x - 3, y, 1, 1, c565(0x3A2A24)); gfx_rect(px, x - 1, y - 1, 1, 3, c565(0x3A2A24)); gfx_rect(px, x + 1, y - 1, 1, 3, c565(0x3A2A24)); gfx_rect(px, x + 3, y, 1, 1, c565(0x3A2A24));
-        gfx_hline(px, x - 4, x + 4, y - 4, c565(0xFF7A66));
-        gfx_line(px, x, y - 5, x + 2, y - 8, c565(0xB89060));
+        gfx_rect(px, x - 5, y - 5, 11, 11, gfx_rgb565(0x7A1410));
+        gfx_rect(px, x - 4, y - 4, 9, 9, gfx_rgb565(0xD5352B));
+        gfx_rect(px, x - 4, y - 1, 9, 3, gfx_rgb565(0xF0E2D0));
+        gfx_rect(px, x - 3, y, 1, 1, gfx_rgb565(0x3A2A24)); gfx_rect(px, x - 1, y - 1, 1, 3, gfx_rgb565(0x3A2A24)); gfx_rect(px, x + 1, y - 1, 1, 3, gfx_rgb565(0x3A2A24)); gfx_rect(px, x + 3, y, 1, 1, gfx_rgb565(0x3A2A24));
+        gfx_hline(px, x - 4, x + 4, y - 4, gfx_rgb565(0xFF7A66));
+        gfx_line(px, x, y - 5, x + 2, y - 8, gfx_rgb565(0xB89060));
         gfx_tint_plot(px, x + 2, y - 8, (now / 80U) & 1U ? 0xFFE060 : 0xFF8020, 255);
         break;
     }
@@ -168,16 +167,16 @@ static void draw_blast(uint16_t *px, const mn_t *g)
     for (unsigned k = 0; k < 8U && t < 360U; ++k) { /* flying bits */
         const unsigned a = k * 32U + 11U;
         const int rr = r + (int)(t / 20U);
-        gfx_plot(px, g->boom_x + gfx_sin256(a + 64U) * rr / 256, g->boom_y + gfx_sin256(a) * rr / 256, c565(0xFFC040));
+        gfx_plot(px, g->boom_x + gfx_sin256(a + 64U) * rr / 256, g->boom_y + gfx_sin256(a) * rr / 256, gfx_rgb565(0xFFC040));
     }
 }
 static void draw_dynamite(uint16_t *px, unsigned count)
 {
     for (unsigned i = 0; i < count; ++i) {
         const int x = 148 + (int)i * 5;
-        gfx_rect(px, x, MN_ORIGIN_Y - 9, 3, 6, c565(0xD5352B));
-        gfx_rect(px, x, MN_ORIGIN_Y - 7, 3, 1, c565(0xF0E2D0));
-        gfx_plot(px, x + 1, MN_ORIGIN_Y - 10, c565(0xB89060));
+        gfx_rect(px, x, MN_ORIGIN_Y - 9, 3, 6, gfx_rgb565(0xD5352B));
+        gfx_rect(px, x, MN_ORIGIN_Y - 7, 3, 1, gfx_rgb565(0xF0E2D0));
+        gfx_plot(px, x + 1, MN_ORIGIN_Y - 10, gfx_rgb565(0xB89060));
     }
 }
 static void draw_scene(uint16_t *px, const mn_t *g, unsigned now)

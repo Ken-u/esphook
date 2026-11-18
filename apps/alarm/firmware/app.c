@@ -50,7 +50,6 @@ static status_t s_status;
 static al_config_t s_cfg;
 static unsigned s_alarm_id, s_chime_id;
 
-static uint16_t c565(uint32_t rgb) { return gfx_rgb565(rgb); }
 /* Tells the framework what the settings now are. Saying the same thing again is harmless: a ring or snooze under way is
  * only ended by a real change. A refused entry (no free slot) leaves its id at 0. */
 static void sync_alarms(void)
@@ -92,7 +91,7 @@ static void led_digit(uint16_t *px, int x, int y, const led_t *g, unsigned digit
 {
     const unsigned mask = digit < 10U ? SEGMENTS[digit] : digit == DASH ? 0x40U : 0U;
     const int w = g->w, h = g->h, t = g->t, gt = (h - t) / 2;
-    const uint16_t lit = c565(LIT), hi = c565(gfx_mix(LIT, 0xFFFFFF, 110)), dim = c565(DIM);
+    const uint16_t lit = gfx_rgb565(LIT), hi = gfx_rgb565(gfx_mix(LIT, 0xFFFFFF, 110)), dim = gfx_rgb565(DIM);
     for (unsigned seg = 0; seg < 7U; ++seg) {
         const bool on = (mask >> seg) & 1U;
         const uint16_t c = on ? lit : dim, hc = on ? hi : dim;
@@ -114,7 +113,7 @@ static void led_time(uint16_t *px, int x, int y, const led_t *g, const unsigned 
     x += g->w + g->gap;
     led_digit(px, x, y, g, d[1]);
     x += g->w + g->gap + 1;
-    const uint16_t c = c565(colon ? LIT : DIM);
+    const uint16_t c = gfx_rgb565(colon ? LIT : DIM);
     const int dot = g->t;
     gfx_rect(px, x, y + g->h / 3 - dot / 2, dot, dot, c);
     gfx_rect(px, x, y + g->h * 2 / 3 - dot / 2, dot, dot, c);
@@ -147,14 +146,14 @@ static void draw_backdrop(uint16_t *px, unsigned flash)
 }
 static void draw_bell_icon(uint16_t *px, int x, int y, bool on)
 { /* 9 x 9 */
-    const uint16_t c = c565(on ? LIT : 0x4A4F5E);
+    const uint16_t c = gfx_rgb565(on ? LIT : 0x4A4F5E);
     gfx_rect(px, x + 4, y, 1, 1, c);
     gfx_rect(px, x + 3, y + 1, 3, 1, c);
     gfx_rect(px, x + 2, y + 2, 5, 3, c);
     gfx_rect(px, x + 1, y + 5, 7, 1, c);
     gfx_rect(px, x, y + 6, 9, 1, c);
     gfx_rect(px, x + 4, y + 8, 1, 1, c);
-    if (!on) gfx_line(px, x, y + 8, x + 8, y, c565(0xD94A4A));
+    if (!on) gfx_line(px, x, y + 8, x + 8, y, gfx_rgb565(0xD94A4A));
 }
 static const uint8_t BELL[34] = {2, 2, 3, 3, 3, 4, 4, 6, 8, 9, 9, 10, 11, 11, 12, 12, 13, 13, 13, 14, 14, 14, 14, 14, 14, 14, 15, 15, 16, 17, 17, 18, 18, 18};
 /* The bell hangs from (cx, top) and swings by `swing` pixels at its lip (-256..256 is +-9 px). */
@@ -162,19 +161,19 @@ static void draw_bell(uint16_t *px, int cx, int top, int swing256, unsigned glow
 {
     const int swing = swing256 * 9 / 256;
     gfx_tint_ellipse(px, cx, top + 20, 26, 22, 0xFFA020, 10 + glow / 4U);
-    gfx_line(px, cx, 0, cx + swing / 12, top + 1, c565(0x7A7F90)); /* the hook it hangs from */
+    gfx_line(px, cx, 0, cx + swing / 12, top + 1, gfx_rgb565(0x7A7F90)); /* the hook it hangs from */
     for (int r = 0; r < 34; ++r) {
         const int off = swing * r / 33, half = BELL[r], x0 = cx - half + off, x1 = cx + half + off, y = top + r;
         const uint32_t body = r >= 31 ? 0xE0A020 : 0xF2B233;
-        gfx_hline(px, x0, x1, y, c565(body));
+        gfx_hline(px, x0, x1, y, gfx_rgb565(body));
         if (half > 4) {
             gfx_tint(px, x0 + 1, y, 3, 1, 0xFFF0B0, 120);
             gfx_tint(px, x1 - 4, y, 4, 1, 0x5A3200, 110);
         }
-        if (r == 30 || r == 33) gfx_hline(px, x0, x1, y, c565(r == 33 ? 0xA86E10 : 0xFFE08A));
+        if (r == 30 || r == 33) gfx_hline(px, x0, x1, y, gfx_rgb565(r == 33 ? 0xA86E10 : 0xFFE08A));
     }
     const int clap = swing * 3 / 5; /* the clapper follows a little behind */
-    gfx_disc(px, cx + clap, top + 37, 3, c565(0xC98A18));
+    gfx_disc(px, cx + clap, top + 37, 3, gfx_rgb565(0xC98A18));
     gfx_tint(px, cx + clap - 1, top + 36, 2, 1, 0xFFF0B0, 140);
     if (glow) gfx_tint_ellipse(px, cx, top + 17, 14, 14, 0xFFF0B0, glow / 5U);
 }
@@ -204,10 +203,10 @@ static void draw_clock(uint16_t *px, const app_time_t *t, bool blink)
     digits_of(t, d);
     led_time(px, x, y, &g, d, t->valid ? t->second % 2 == 0 : blink);
     const int bar_x = x, bar_w = led_width(&g), bar_y = 56; /* the seconds */
-    gfx_rect(px, bar_x, bar_y, bar_w, 2, c565(DIM));
+    gfx_rect(px, bar_x, bar_y, bar_w, 2, gfx_rgb565(DIM));
     if (t->valid) {
         const int fill = (t->second * bar_w + bar_w / 2) / 59;
-        gfx_rect(px, bar_x, bar_y, fill < 1 ? 1 : fill, 2, c565(0xE08A10));
+        gfx_rect(px, bar_x, bar_y, fill < 1 ? 1 : fill, 2, gfx_rgb565(0xE08A10));
         gfx_tint(px, bar_x, bar_y, fill, 1, 0xFFFFFF, 60);
     }
     draw_bell_icon(px, 101, 3, s_cfg.alarm_on);
@@ -216,9 +215,9 @@ static void draw_menu(uint16_t *px, unsigned top, unsigned sel)
 {
     (void)sel;
     draw_backdrop(px, 0);
-    gfx_rect(px, 156, 2, 2, 60, c565(0x1A2440)); /* the scroll bar */
+    gfx_rect(px, 156, 2, 2, 60, gfx_rgb565(0x1A2440)); /* the scroll bar */
     const int thumb = (int)(60U * VISIBLE / ROWS);
-    gfx_rect(px, 156, 2 + (int)(top * (60U - (unsigned)thumb) / (ROWS - VISIBLE)), 2, thumb, c565(0xE08A10));
+    gfx_rect(px, 156, 2 + (int)(top * (60U - (unsigned)thumb) / (ROWS - VISIBLE)), 2, thumb, gfx_rgb565(0xE08A10));
 }
 static void draw_edit(uint16_t *px, const state_t *s, uint64_t now)
 {
@@ -232,7 +231,7 @@ static void draw_edit(uint16_t *px, const state_t *s, uint64_t now)
     led_time(px, x, y, &g, d, true);
     const int left = s->field == 0 ? x : x + g.w * 2 + g.gap + 2 * (g.gap + 1) + g.t + (s->field == 2 ? g.w + g.gap : 0);
     const int len = s->field == 0 ? g.w * 2 + g.gap : g.w;
-    gfx_rect(px, left, y + g.h + 3, len, 2, c565(0xE08A10)); /* underline of the field being set */
+    gfx_rect(px, left, y + g.h + 3, len, 2, gfx_rgb565(0xE08A10)); /* underline of the field being set */
 }
 static void draw_ring(uint16_t *px, const state_t *s, const app_time_t *t, uint64_t now)
 {
@@ -261,12 +260,12 @@ static void draw_ring(uint16_t *px, const state_t *s, const app_time_t *t, uint6
         const unsigned beats = al_beats((unsigned)t->hour);
         for (unsigned i = 0; i < beats; ++i) { /* one dot per stroke, the ones already struck lit */
             const int dx = 62 + (96 - (int)beats * 7) / 2 + (int)i * 7, dy = 52;
-            gfx_rect(px, dx, dy, 5, 5, c565(i < s->beat ? LIT : DIM));
+            gfx_rect(px, dx, dy, 5, 5, gfx_rgb565(i < s->beat ? LIT : DIM));
             if (i + 1U == s->beat) gfx_tint(px, dx - 1, dy - 1, 7, 7, 0xFFE08A, 90);
         }
     } else {
         const unsigned phase = (since / 120U) % 8U;
-        for (unsigned i = 0; i < 8U; ++i) gfx_rect(px, 66 + (int)i * 11, 54, 8, 2, c565(i == phase ? 0xFFE08A : DIM)); /* a chaser */
+        for (unsigned i = 0; i < 8U; ++i) gfx_rect(px, 66 + (int)i * 11, 54, 8, 2, gfx_rgb565(i == phase ? 0xFFE08A : DIM)); /* a chaser */
     }
 }
 

@@ -44,20 +44,19 @@ typedef struct {
 static status_t s_st;
 static mirror_ring_t s_ring;
 
-static uint16_t c565(uint32_t rgb) { return gfx_rgb565(rgb); }
 
 /* ---- the picture shown while nothing has come yet --------------------------------------------------------------- */
 static void draw_wait(uint16_t *px, unsigned now)
 {
     gfx_gradient(px, 0, APP_CANVAS_H, 0x0C1830, 0x050A14);
     for (int y = 3; y < APP_CANVAS_H; y += 8)
-        for (int x = 3; x < APP_CANVAS_W; x += 8) gfx_plot(px, x, y, c565(0x14264A));
+        for (int x = 3; x < APP_CANVAS_W; x += 8) gfx_plot(px, x, y, gfx_rgb565(0x14264A));
     const int mx = 56, my = 5, mw = 48, mh = 30;
     gfx_tint_ellipse(px, 80, my + mh + 7, 30, 3, 0x000000, 110);
-    gfx_rect(px, mx, my, mw, mh, c565(0x3A4E78));
-    gfx_rect(px, mx + 2, my + 2, mw - 4, mh - 4, c565(0x07101E));
-    gfx_rect(px, 77, my + mh, 6, 4, c565(0x2A3C5E));
-    gfx_rect(px, 66, my + mh + 4, 28, 2, c565(0x3A4E78));
+    gfx_rect(px, mx, my, mw, mh, gfx_rgb565(0x3A4E78));
+    gfx_rect(px, mx + 2, my + 2, mw - 4, mh - 4, gfx_rgb565(0x07101E));
+    gfx_rect(px, 77, my + mh, 6, 4, gfx_rgb565(0x2A3C5E));
+    gfx_rect(px, 66, my + mh + 4, 28, 2, gfx_rgb565(0x3A4E78));
     /* a picture being drawn on the monitor, row by row */
     const unsigned t = now / 90U;
     const int rows = mh - 4;
@@ -65,13 +64,13 @@ static void draw_wait(uint16_t *px, unsigned now)
     for (int y = 0; y < rows; ++y) {
         if (y > fill) break;
         const int w = (mw - 6) * (40 + (int)(gfx_hash((unsigned)y * 7U + 3U) % 60U)) / 100;
-        gfx_hline(px, mx + 3, mx + 3 + w, my + 2 + y, c565(y % 6 < 3 ? 0x2F7FD6 : 0x1B4E8A));
+        gfx_hline(px, mx + 3, mx + 3 + w, my + 2 + y, gfx_rgb565(y % 6 < 3 ? 0x2F7FD6 : 0x1B4E8A));
     }
-    if (fill >= 0 && fill < rows) gfx_hline(px, mx + 2, mx + mw - 3, my + 2 + fill, c565(0xBFE4FF));
+    if (fill >= 0 && fill < rows) gfx_hline(px, mx + 2, mx + mw - 3, my + 2 + fill, gfx_rgb565(0xBFE4FF));
     /* data on its way from the left */
     for (unsigned k = 0; k < 3U; ++k) {
         const int x = 8 + (int)((t * 2U + k * 11U) % 34U);
-        gfx_rect(px, x, my + 13, 3, 2, c565(0x4FA8FF));
+        gfx_rect(px, x, my + 13, 3, 2, gfx_rgb565(0x4FA8FF));
     }
 }
 
