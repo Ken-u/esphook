@@ -19,7 +19,12 @@
  * standby screen without storing anything, so the question is asked again at the next boot. Any other way out of the
  * app (the triple press from the menu, a command, the timeout) puts back the calibration the app started with and
  * disarms: only the long press on the last page stores. Everything goes through the public servo services, so the
- * motion service keeps enforcing its limits and slew rate; leaving the app disarms the servo. */
+ * motion service keeps enforcing its limits and slew rate; leaving the app disarms the servo.
+ *
+ * Without a servo (the `auto` and `screen` profiles never start the servo PWM, so a connected servo does nothing) the
+ * first page says why and offers the way on: a long press saves the robot hardware profile and restarts, after which
+ * the first run starts here by itself. That is the one deliberate switch of hardware profile outside the settings app;
+ * it only starts the servo's PWM, which stays disarmed until the go-ahead on page 1. */
 enum { P_INTRO, P_CENTER, P_LIMIT, P_DIRECTION, P_SPEED, P_COUNT };
 #define IDLE_INTRO_MS 30000U
 #define IDLE_PAGE_MS 60000U
@@ -42,11 +47,24 @@ typedef struct {
     robot_config_t entry, cur; /* entry: what the servo used when the app started */
     uint64_t key_ms, sweep_at;
     unsigned page, phase;
-    bool changed, armed, apply_due, arm_failed;
+    bool changed, armed, apply_due, arm_failed, save_failed;
     char shown[4][40];
     int marker_x, tick_x;
 } state_t;
 _Static_assert(sizeof(state_t) <= APP_STATE_CAPACITY, "servocal state too large");
+
+/* Why there is no servo to calibrate, and so what a press can do about it. */
+typedef enum { M_NO_DRIVER, M_ENABLE, M_RESTART, M_FAULT } missing_t;
+
+static missing_t missing(void)
+{
+    app_hardware_info_t h;
+    app_hardware_info(&h);
+    if (!h.drivers_compiled) return M_NO_DRIVER;
+    if (h.configured != APP_PROFILE_ROBOT) return M_ENABLE;
+    if (h.active != APP_PROFILE_ROBOT) return M_RESTART;
+    return M_FAULT;
+}
 
 static bool first_run(void)
 {
@@ -132,7 +150,17 @@ static void event(app_context_t *ctx, const app_event_t *e)
     if (s->page == P_INTRO) {
         app_servo_cal_t cal;
         app_servo_cal_read(&cal);
-        if (!cal.available) { done(ctx); return; }
+        if (!cal.available) {
+            const missing_t why = missing();
+            if (hold && why == M_RESTART) { app_device_restart(); return; }
+            if (hold && why == M_ENABLE) {
+                s->save_failed = !app_hardware_set_profile(APP_PROFILE_ROBOT);
+                if (!s->save_failed) app_device_restart();
+                return;
+            }
+            done(ctx);
+            return;
+        }
         if (hold) {
             s->arm_failed = !app_servo_request(ctx, APP_SERVO_ARM, 0); /* the explicit go-ahead */
             if (s->arm_failed) return;
@@ -204,9 +232,26 @@ static void render(app_context_t *ctx)
     switch (s->page) {
     case P_INTRO:
         if (!cal.available) {
-            snprintf(value, sizeof value, "没有舵机");
-            snprintf(desc, sizeof desc, "需要机器人配置");
             snprintf(hint, sizeof hint, "短按 返回");
+            switch (missing()) {
+            case M_NO_DRIVER:
+                snprintf(value, sizeof value, "没有舵机");
+                snprintf(desc, sizeof desc, "本固件不含舵机驱动");
+                break;
+            case M_ENABLE:
+                snprintf(value, sizeof value, "舵机未启用");
+                snprintf(desc, sizeof desc, "%s", s->save_failed ? "保存失败 再试一次" : "长按 切到机器人配置");
+                if (!s->save_failed) snprintf(hint, sizeof hint, "会重启 短按 返回");
+                break;
+            case M_RESTART:
+                snprintf(value, sizeof value, "舵机待重启");
+                snprintf(desc, sizeof desc, "长按 重启生效");
+                break;
+            default:
+                snprintf(value, sizeof value, "舵机初始化失败");
+                snprintf(desc, sizeof desc, "检查舵机接线与5V");
+                break;
+            }
         } else {
             snprintf(value, sizeof value, "先别装舵盘");
             snprintf(desc, sizeof desc, "%s", s->arm_failed ? "解锁失败 再试一次" : "长按 解锁并回中");

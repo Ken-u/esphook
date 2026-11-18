@@ -318,7 +318,7 @@ static bool queue_display_notify(int fd, cJSON *message)
     config_seen_add("session", event.session_id);
 
     if (xQueueSend(display_q, &event, 0) != pdTRUE) return false;
-    (void)xQueueSend(beeper_q, &beep, 0); /* a full or silent buzzer never makes a shown notification fail */
+    (void)beeper_play(beep); /* a full or silent buzzer never makes a shown notification fail */
     return true;
 }
 

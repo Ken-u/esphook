@@ -15,9 +15,12 @@ typedef struct {
 /* GPIO7 passive buzzer on its own LEDC timer and channel (hw_pwm.h), silent afterwards. A failure is reported, never
  * fatal: the board works without sound. */
 esp_err_t beeper_init(void);
-/* The task that plays what arrives in beeper_q (app_beep_t entries). Asking for a sound is a non-blocking
- * xQueueSend; playing one takes its length in this task and never delays the caller. */
+/* The task that plays what is queued with beeper_play() / beeper_play_tone(). Asking for a sound is a non-blocking
+ * xQueueSend from any task; playing one takes its length in the buzzer's task and never delays the caller. Both return
+ * false when the sound was not queued (queue full, buzzer task not started, invalid request). */
 esp_err_t beeper_start(void);
+bool beeper_play(app_beep_t kind);
+bool beeper_play_tone(unsigned hz, unsigned ms);
 /* Mute switch, kept across reboots. Muting stops a sound already playing at its next note. */
 bool beeper_enabled(void);
 esp_err_t beeper_set_enabled(bool on);

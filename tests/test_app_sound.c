@@ -38,6 +38,13 @@ int main(void)
     assert(app_sound_pattern(APP_BEEP_COUNT, &steps) == 0U && steps == NULL);
     assert(app_sound_pattern((app_beep_t)-1, NULL) == 0U && app_sound_length_ms((app_beep_t)99) == 0U);
 
+    /* A single note (the buzzer test, app_beep_tone): the same pitch and length limits, edges included. */
+    assert(app_sound_tone_valid(APP_SOUND_MIN_HZ, APP_SOUND_MIN_MS) && app_sound_tone_valid(APP_SOUND_MAX_HZ, APP_SOUND_MAX_MS));
+    assert(app_sound_tone_valid(2500U, 400U));
+    assert(!app_sound_tone_valid(0U, 100U) && !app_sound_tone_valid(APP_SOUND_MIN_HZ - 1U, 100U) && !app_sound_tone_valid(APP_SOUND_MAX_HZ + 1U, 100U));
+    assert(!app_sound_tone_valid(2500U, 0U) && !app_sound_tone_valid(2500U, APP_SOUND_MIN_MS - 1U) && !app_sound_tone_valid(2500U, APP_SOUND_MAX_MS + 1U));
+    assert(!app_sound_tone_valid(0xFFFFFFFFU, 0xFFFFFFFFU)); /* a request that does not fit the queue's 16 bits is refused, not truncated */
+
     /* The buzzer and the servo never share a LEDC timer or channel (hw_pwm.h also asserts this at compile time). */
     assert(HW_LEDC_BUZZER_TIMER != HW_LEDC_SERVO_TIMER && HW_LEDC_BUZZER_CHANNEL != HW_LEDC_SERVO_CHANNEL);
     assert(HW_LEDC_BUZZER_TIMER >= 0 && HW_LEDC_SERVO_TIMER < 4 && HW_LEDC_BUZZER_CHANNEL >= 0 && HW_LEDC_SERVO_CHANNEL < 6);

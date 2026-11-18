@@ -1,0 +1,8 @@
+{
+  "id": "buzztest",
+  "order": "092",
+  "required": false,
+  "sources": [
+    "firmware/app.c"
+  ]
+}

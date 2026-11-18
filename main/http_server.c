@@ -202,7 +202,7 @@ static esp_err_t h_notify(httpd_req_t *req)
     config_seen_add("session", e.session_id);
 
     xQueueSend(display_q, &e, 0);
-    xQueueSend(beeper_q, &bk, 0);
+    (void)beeper_play(bk);
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, "{\"ok\":true}");

@@ -103,7 +103,7 @@ const app_descriptor_t esphook_app_counter = {
 | 从命令打开应用/回菜单/问是否前台 | `app_command_open(id)`、`app_command_menu()`、`app_command_active(id)` | 只排队，真正切换在 UI 任务 |
 | 闹钟/定时唤醒 | `app_alarm.h` | 见“闹钟 API” |
 | 舵机震动/转向、雷达转向 | `app_haptic.h`、`app_steer.h` | 见“硬件与 Hook 服务” |
-| 蜂鸣器出声 | `app_beep(APP_BEEP_NOTIFY/CONFIRM/KEY/ERROR/ALARM)`（`app_services.h`，音型表在 `app_sound.h`） | 只入队、不阻塞，由蜂鸣器自己的任务播放；队列满就跳过这一声；静音（USB `sound off`）或没装蜂鸣器时无声；见“硬件与 Hook 服务” |
+| 蜂鸣器出声 | `app_beep(APP_BEEP_NOTIFY/CONFIRM/KEY/ERROR/ALARM)`、单音 `app_beep_tone(hz, ms)`（`app_services.h`，音型表和合法范围在 `app_sound.h`）；静音开关 `app_beep_enabled()` / `app_beep_enable(on)` | 只入队、不阻塞，由蜂鸣器自己的任务播放；队列满就返回 false；静音（USB `sound off`）或没装蜂鸣器时无声；`app_beep_enable` 会写 flash，只在玩家明确选择时调；见“硬件与 Hook 服务” |
 | 第一人称街机游戏的共用骨架 | `app_game.h`：状态里放一个 `game_t game`（在核心之后）；`game_enter/leave`、`game_steer`（雷达或 K2/K3）、`game_dt`、`game_side`、`game_idle/may_start/confirm/sync_exit`（按住 2 秒退出只在标题和结算画面开）、`game_shake`、`game_build`（画布、状态条、舵机标记、标题卡）、`game_hud_msg/score/servo/card` | 赛车、飞船、僵尸围城已用它，新游戏只写规则、画面和文案；见 `apps/racing/firmware/app.c` |
 
 一个只带 `status` 命令的完整样板就是 `python3 scripts/new-app.py <id>` 生成的 `firmware/app.c`：
@@ -167,7 +167,7 @@ USB 按住租期为 350ms，SDK 通过 hold/press/poll 每 100ms 续期；失联
 
 游戏想“摇一下舵机”或“把舵机当方向盘”，使用头文件 `framework/include/esphook/app_haptic.h`：它只通过公开舵机服务发 ANGLE 请求，按限位减 1° 钳幅度，按限速拉长半周期，两次请求至少间隔 60ms；舵机缺失、未启用或故障时一律静默。**框架不会自动启用舵机**：只有玩家在应用的待机/标题画面长按 500ms 确认后，应用才可调用 `haptic_arm()`。左右转向（雷达，或 K2/K3 两个键作后备）使用 `app_steer.h`：雷达按站在机器前面的人的视角处理（传感器 +X 是它自己的右边，面对机器的人的右边是传感器的 −X，所以内部取反，向你的右边侧身就是向右转，和雷达页一致）；以开局时最近的人为中心，侧身约 35cm 满舵，目标丢失保持 1.2 秒再回中，另一个人经过不会抢控制权。两者都是对时间戳的纯函数，主机测试见 `scripts/test-haptic-steer.sh`。
 
-**蜂鸣器（GPIO7 无源）**：应用用 `app_beep(kind)` 出声，它只是往 `beeper_q` 里放一个 `app_beep_t`，立刻返回；`main/beeper.c` 的 `beeper` 任务（低优先级，自己的栈）取出来按 `app_sound.h` 里的音型表播放，所以几百毫秒的音不会拖住 UI 任务（UI 任务同时在给舵机发请求）。Hook 的 `/notify` 和 device link 通知走同一个队列（通知/确认/错误三种音）。蜂鸣器占 LEDC timer 0 / channel 0，舵机占 timer 1 / channel 1（编号集中在 `hw_pwm.h`，两边都有编译期断言不能相同）；ESP32-C3 的低速 LEDC 定时器共用一个时钟源，所以两个驱动都显式选 APB 而不是 `LEDC_AUTO_CLK`，每个音只对 timer 0 调 `ledc_set_freq`，舵机的周期和占空比寄存器不会被写到。静音和自检用 USB 文本命令：`sound`（状态：播放/丢弃计数、蜂鸣器和舵机定时器的实际频率）、`sound on|off`（保存到 NVS）、`sound test`。目前只有闹钟响铃（每 2.2 秒三声）和 Hook 通知出声；整点报时、按键、游戏默认安静，要加声音时只在“玩家明确想听到”的地方调用，并且每次只请求短音，不要提前排一首曲子。音型表的主机测试见 `scripts/test-app-sound.sh`。
+**蜂鸣器（GPIO7 无源）**：应用用 `app_beep(kind)`（一个命名的音）或 `app_beep_tone(hz, ms)`（单个音符，给蜂鸣测试和调音用，范围见 `app_sound_tone_valid`）出声，它们只是往 `main/beeper.c` 私有的请求队列里放一条，立刻返回；`beeper` 任务（低优先级，自己的栈）取出来按 `app_sound.h` 里的音型表播放，所以几百毫秒的音不会拖住 UI 任务（UI 任务同时在给舵机发请求）。Hook 的 `/notify` 和 device link 通知走 `beeper_play()`，同一个队列（通知/确认/错误三种音）。蜂鸣器占 LEDC timer 0 / channel 0，舵机占 timer 1 / channel 1（编号集中在 `hw_pwm.h`，两边都有编译期断言不能相同）；ESP32-C3 的低速 LEDC 定时器共用一个时钟源，所以两个驱动都显式选 APB 而不是 `LEDC_AUTO_CLK`，每个音只对 timer 0 调 `ledc_set_freq`，舵机的周期和占空比寄存器不会被写到。静音和自检用 USB 文本命令：`sound`（状态：播放/丢弃计数、蜂鸣器和舵机定时器的实际频率）、`sound on|off`（保存到 NVS）、`sound test`。目前只有闹钟响铃（每 2.2 秒三声）和 Hook 通知出声；整点报时、按键、游戏默认安静，要加声音时只在“玩家明确想听到”的地方调用，并且每次只请求短音，不要提前排一首曲子。音型表的主机测试见 `scripts/test-app-sound.sh`。
 
 硬件策略由 app_hardware_policy 决定，auto 仅被动接收雷达 RX，screen 不启动外设，robot 才初始化 PWM/UART。app_hardware_info 提供实际运行/保存配置和各端口状态；NHY009 和屏幕均无读回，不能把初始化当作检测到实物。配置保存需重启生效，详见 [发布与兼容](release-kit.md)。
 
@@ -263,12 +263,13 @@ app_alarm_spec_t once = {.owner = "fishing", .target = "alarm", .label = "鱼汛
 | Hook | 通知展示、未读信息、选择回复词及确认回传 |
 | 按键 | USB `app_event` 回传词；复用 Hook 回传服务 |
 | 屏幕测试 | 测试图案 + 短按在四种极性/偏移组合间切换、长按保存；没存过屏幕设置的板子开机先进这里，见 [hardware.md](hardware.md) |
-| 舵机校准 | 五页：解锁回中、中位、摆幅、方向、速度，只用 K1；装了舵机却没存过校准的机器人开机先进这里，见 [robot-servocal.md](robot-servocal.md) |
+| 舵机校准 | 五页：解锁回中、中位、摆幅、方向、速度，只用 K1；装了舵机却没存过校准的机器人开机先进这里；没有舵机时第一页说明原因，auto/screen 配置下长按可切到 robot 配置并重启，见 [robot-servocal.md](robot-servocal.md) |
+| 蜂鸣测试 | 在设备上直接听 GPIO7 的无源蜂鸣器：K1 短按换项、长按播放；五种命名音、500→5000 Hz 扫频（屏幕显示当前频率，任意键停）、1000–4500 Hz 单音、静音开关（和 USB `sound on|off` 同一个）；见 [hardware.md](hardware.md) |
 | 设置 | 六页：固件版本/构建时间、应用数量、Hook 信息、待机设置、硬件状态、硬件配置 |
 | 示例 | 点击计数、清零、动画、雷达状态和 PC 自定义标题 |
 | 启动器 | 隐藏的系统应用，iPod 式列表、高亮条滑动、滚动条、图标预览和长按填充 |
 
-设置短按循环六页。硬件配置页长按编辑、短按切换、长按保存，再长按重启生效。待机页长按进入编辑，短按切换可选应用，长按保存；三击随时回菜单。固件版本取 ESP-IDF app descriptor，当前版本由 `version.txt` 管理。数量统计已编译的可见应用，默认 24 个，不含系统 launcher；不显示凭据或认证密钥。
+设置短按循环六页。硬件配置页长按编辑、短按切换、长按保存，再长按重启生效。待机页长按进入编辑，短按切换可选应用，长按保存；三击随时回菜单。固件版本取 ESP-IDF app descriptor，当前版本由 `version.txt` 管理。数量统计已编译的可见应用，默认 25 个，不含系统 launcher；不显示凭据或认证密钥。
 
 PC 的运行入口和协议见 [app-pc-protocol.md](app-pc-protocol.md)。旧投篮命令仍可用，start 排队打开新局，stop 回菜单，status 查询最近快照；`robot menu` 通用开菜单。
 

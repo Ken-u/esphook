@@ -48,7 +48,6 @@ void app_main(void)
     ESP_ERROR_CHECK(config_store_init());
 
     display_q = xQueueCreate(16, sizeof(display_event_t));
-    beeper_q  = xQueueCreate(8, sizeof(app_beep_t));
 
     ESP_ERROR_CHECK(app_runtime_init());
 

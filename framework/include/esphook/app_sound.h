@@ -28,8 +28,11 @@ typedef struct {
 #define APP_SOUND_MAX_STEPS 8U
 /* One sound is at most this long, so a full queue (8 entries) is at most 8 s of noise, never a locked-up buzzer. */
 #define APP_SOUND_MAX_MS 1000U
+#define APP_SOUND_MIN_MS 10U
 
 /* The notes of a sound: returns the number of steps (0 for a kind that does not exist) and points `*steps` at them. */
 size_t app_sound_pattern(app_beep_t kind, const app_tone_t **steps);
 /* How long it sounds, silences included. */
 unsigned app_sound_length_ms(app_beep_t kind);
+/* A single plain note (app_beep_tone(), the buzzer test): inside what the buzzer and the timer can do. */
+bool app_sound_tone_valid(unsigned hz, unsigned ms);

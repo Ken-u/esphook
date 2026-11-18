@@ -6,7 +6,6 @@ static char s_last_callback[32] = "";
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 
 QueueHandle_t display_q;
-QueueHandle_t beeper_q;
 
 const char *last_callback(void)
 {

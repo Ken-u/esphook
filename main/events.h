@@ -20,7 +20,6 @@ typedef struct {
 } display_event_t;
 
 extern QueueHandle_t display_q;
-extern QueueHandle_t beeper_q; /* app_beep_t entries; consumed by beeper_task (beeper.c) */
 
 /* 最近一次 /notify 的 callback 地址（按键回传用）。线程安全读写。 */
 const char *last_callback(void);

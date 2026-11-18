@@ -62,6 +62,12 @@ void app_key_word(unsigned key, char *out, size_t size);
  * still silent when the player muted the device (USB `sound off`) or the board has no buzzer. Short sounds only: ask for
  * the next one when you want it (an alarm ring asks every couple of seconds), do not queue a tune ahead. */
 bool app_beep(app_beep_t kind);
+/* One plain note (`hz` and `ms` as app_sound_tone_valid() allows), for the buzzer test and tuners; same rules as app_beep(). */
+bool app_beep_tone(unsigned hz, unsigned ms);
+/* The player's mute switch (USB `sound on|off`), kept across reboots. app_beep_enable() writes flash: call it on a
+ * deliberate choice only; false when the new state could not be saved (it still applies until the next reboot). */
+bool app_beep_enabled(void);
+bool app_beep_enable(bool on);
 void app_device_info(app_device_info_t *out);
 uint32_t app_random(void);
 uint64_t app_clock_ms(void);

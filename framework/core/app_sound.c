@@ -24,6 +24,11 @@ size_t app_sound_pattern(app_beep_t kind, const app_tone_t **steps)
     return s_sounds[kind].count;
 }
 
+bool app_sound_tone_valid(unsigned hz, unsigned ms)
+{
+    return hz >= APP_SOUND_MIN_HZ && hz <= APP_SOUND_MAX_HZ && ms >= APP_SOUND_MIN_MS && ms <= APP_SOUND_MAX_MS;
+}
+
 unsigned app_sound_length_ms(app_beep_t kind)
 {
     const app_tone_t *steps;

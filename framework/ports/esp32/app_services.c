@@ -4,6 +4,7 @@
 #include "robot_runtime.h"
 #include "robot_ui.h"
 #include "app_runtime.h"
+#include "beeper.h"
 #include "config_store.h"
 #include "device_link.h"
 #include "display_view.h"
@@ -81,11 +82,10 @@ void app_display_read(robot_ui_t *out) { robot_ui_get(out); }
 bool app_display_update(const char *json, size_t length, char *error, size_t size)
 { return robot_ui_submit(json, length, error, size) == ESP_OK; }
 void app_key_word(unsigned key, char *out, size_t size) { if (size) snprintf(out, size, "%s", config_get_key((int)key)); }
-bool app_beep(app_beep_t kind)
-{
-    if (!beeper_q || (unsigned)kind >= (unsigned)APP_BEEP_COUNT) return false;
-    return xQueueSend(beeper_q, &kind, 0) == pdTRUE;
-}
+bool app_beep(app_beep_t kind) { return beeper_play(kind); }
+bool app_beep_tone(unsigned hz, unsigned ms) { return beeper_play_tone(hz, ms); }
+bool app_beep_enabled(void) { return beeper_enabled(); }
+bool app_beep_enable(bool on) { return beeper_set_enabled(on) == ESP_OK; }
 void app_hook_read(app_hook_t *out)
 {
     memset(out, 0, sizeof *out); out->connected = device_link_is_connected(); out->clients = dm_client_count();

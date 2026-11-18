@@ -7,13 +7,12 @@
  *  - the one thing the timers do share on the ESP32-C3 is the clock source of the whole low-speed group, so both
  *    drivers ask for the APB clock explicitly instead of letting LEDC_AUTO_CLK pick one (a second timer that
  *    asked for another source would be refused by ESP-IDF, and the servo's pulse widths would move with it);
- *  - the notes are played from a task of their own (beeper_task) off beeper_q, so the display/UI task, which also
+ *  - the notes are played from a task of their own (beeper_task) off a request queue, so the display/UI task, which also
  *    pumps the servo requests, is never held up by a sound that takes 100..500 ms to play.
  * `sound` (USB) prints the buzzer's timer and, when a servo is configured, the servo's timer, so a change in either
  * shows up. */
 #include "beeper.h"
 #include "config_store.h"
-#include "events.h"
 #include "hw_pwm.h"
 #include "usb_cdc.h"
 #include "driver/ledc.h"
@@ -37,6 +36,11 @@ _Static_assert(HW_LEDC_BUZZER_TIMER == (int)LEDC_TIMER_0 && HW_LEDC_BUZZER_CHANN
 _Static_assert(HW_LEDC_SERVO_TIMER == (int)LEDC_TIMER_1 && HW_LEDC_SERVO_CHANNEL == (int)LEDC_CHANNEL_1,
                "hw_pwm.h names the LEDC enum values");
 
+/* What the queue carries: a named sound, or (hz != 0) one plain note for the buzzer test. */
+typedef struct {
+    uint16_t kind, hz, ms;
+} beep_req_t;
+static QueueHandle_t s_queue;
 static volatile bool s_ready;
 static volatile bool s_enabled = true;
 static volatile unsigned s_played, s_dropped, s_bad, s_failures;
@@ -98,23 +102,44 @@ static void beeper_task(void *arg)
 {
     (void)arg;
     for (;;) {
-        app_beep_t kind;
-        if (xQueueReceive(beeper_q, &kind, portMAX_DELAY) != pdTRUE) continue;
-        const app_tone_t *steps;
-        const size_t count = app_sound_pattern(kind, &steps);
-        if (count == 0U) { ++s_bad; continue; }
+        beep_req_t req;
+        if (xQueueReceive(s_queue, &req, portMAX_DELAY) != pdTRUE) continue;
+        app_tone_t note = {req.hz, req.ms};
+        const app_tone_t *steps = &note;
+        size_t count = 1U;
+        if (req.hz != 0U) {
+            if (!app_sound_tone_valid(req.hz, req.ms)) { ++s_bad; continue; }
+        } else {
+            count = app_sound_pattern((app_beep_t)req.kind, &steps);
+            if (count == 0U) { ++s_bad; continue; }
+        }
         if (!s_ready || !s_enabled) { ++s_dropped; continue; }
         play(steps, count);
         ++s_played;
     }
 }
 
+static bool post(uint16_t kind, unsigned hz, unsigned ms)
+{
+    const beep_req_t req = {kind, (uint16_t)hz, (uint16_t)ms};
+    return s_queue && xQueueSend(s_queue, &req, 0) == pdTRUE;
+}
+
+bool beeper_play(app_beep_t kind)
+{
+    const app_tone_t *steps;
+    return app_sound_pattern(kind, &steps) != 0U && post((uint16_t)kind, 0, 0);
+}
+
+bool beeper_play_tone(unsigned hz, unsigned ms) { return app_sound_tone_valid(hz, ms) && post(0, hz, ms); }
+
 esp_err_t beeper_start(void)
 {
     uint8_t on = 1;
     size_t length = sizeof on;
     if (config_app_blob_get(SOUND_KEY, &on, &length) == ESP_OK && length == sizeof on && on <= 1U) s_enabled = on != 0U;
-    if (!beeper_q) return ESP_ERR_INVALID_STATE;
+    if (!s_queue) s_queue = xQueueCreate(8, sizeof(beep_req_t));
+    if (!s_queue) return ESP_ERR_NO_MEM;
     return xTaskCreate(beeper_task, "beeper", 3072, NULL, 3, NULL) == pdPASS ? ESP_OK : ESP_ERR_NO_MEM;
 }
 
@@ -170,10 +195,9 @@ bool beeper_command(const char *line)
         (void)cdc_write(err == ESP_OK ? (on ? "OK sound on" : "OK sound off")
                                       : (on ? "OK sound on (not saved)" : "OK sound off (not saved)"));
     } else if (strcmp(arg, "test") == 0) {
-        const app_beep_t kind = APP_BEEP_NOTIFY;
         if (!s_ready) (void)cdc_write("ERR no buzzer: init failed");
         else if (!s_enabled) (void)cdc_write("ERR sound is off (sound on)");
-        else if (!beeper_q || xQueueSend(beeper_q, &kind, 0) != pdTRUE) (void)cdc_write("ERR sound queue full");
+        else if (!beeper_play(APP_BEEP_NOTIFY)) (void)cdc_write("ERR sound queue full");
         else (void)cdc_write("OK sound test queued");
     } else {
         (void)cdc_write("ERR usage: sound [on|off|test]");

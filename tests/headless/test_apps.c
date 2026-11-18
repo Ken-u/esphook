@@ -80,7 +80,20 @@ bool app_storage_save(const char *key,const void *data,size_t size)
 bool app_transport_write(const char *s) { snprintf(output,sizeof output,"%s",s);return true; }
 /* The buzzer is a recorder too: which sounds an app asked for. */
 static struct { unsigned total,by_kind[APP_BEEP_COUNT]; } beep_log;
-bool app_beep(app_beep_t k) { if((unsigned)k>=APP_BEEP_COUNT) return false;++beep_log.total;++beep_log.by_kind[k];return true; }
+static struct { unsigned count,hz,ms,low,high; } tone_log; /* app_beep_tone(): the notes of the buzzer test */
+static bool beep_on=true,beep_full,beep_save_ok=true;
+static unsigned beep_saves;
+bool app_beep(app_beep_t k) { if(beep_full || (unsigned)k>=APP_BEEP_COUNT) return false;++beep_log.total;++beep_log.by_kind[k];return true; }
+bool app_beep_tone(unsigned hz,unsigned ms)
+{
+    if(beep_full || !app_sound_tone_valid(hz,ms)) return false;
+    ++tone_log.count;tone_log.hz=hz;tone_log.ms=ms;
+    if(!tone_log.low || hz<tone_log.low) tone_log.low=hz;
+    if(hz>tone_log.high) tone_log.high=hz;
+    return true;
+}
+bool app_beep_enabled(void) { return beep_on; }
+bool app_beep_enable(bool on) { beep_on=on;++beep_saves;return beep_save_ok; }
 /* The panel tuning is a plain record: the screen test is checked by what it asks the service for. */
 static struct { app_screen_t now;unsigned applies,saves,raws,forgets;uint8_t raw[APP_SCREEN_RAW_MAX];size_t raw_length;bool busy; } screen={.now={.invert=true,.x_gap=1,.y_gap=26,.mhz=20,.saved_mhz=20,.configured=true}};
 void app_screen_read(app_screen_t *s) { *s=screen.now; }
@@ -136,10 +149,11 @@ void app_hook_read(app_hook_t *h) { memset(h,0,sizeof *h);h->current=h->connecte
 bool app_hook_reply(unsigned key) { return key<3; }
 void app_key_word(unsigned key,char *s,size_t n) { const char *words[]={"ok","continue","done"};snprintf(s,n,"%s",words[key%3]); }
 static unsigned restarts;
-static app_hardware_profile_t hardware_profile=APP_PROFILE_ROBOT;
-app_hardware_profile_t app_hardware_active(void) { return APP_PROFILE_ROBOT; }
-void app_hardware_info(app_hardware_info_t *h) { memset(h,0,sizeof *h);h->active=APP_PROFILE_ROBOT;h->configured=hardware_profile;h->drivers_compiled=true;h->restart_required=h->active!=h->configured;h->screen=APP_HW_INITIALIZED;h->radar=APP_HW_DETECTED;h->servo=APP_HW_INITIALIZED;h->physical_keys=1; }
-bool app_hardware_set_profile(app_hardware_profile_t p) { hardware_profile=p;return true; }
+static app_hardware_profile_t hardware_profile=APP_PROFILE_ROBOT,hardware_active=APP_PROFILE_ROBOT;
+static bool hardware_drivers=true,hardware_save_ok=true;
+app_hardware_profile_t app_hardware_active(void) { return hardware_active; }
+void app_hardware_info(app_hardware_info_t *h) { memset(h,0,sizeof *h);h->active=hardware_active;h->configured=hardware_profile;h->drivers_compiled=hardware_drivers;h->restart_required=h->active!=h->configured;h->screen=APP_HW_INITIALIZED;h->radar=APP_HW_DETECTED;h->servo=APP_HW_INITIALIZED;h->physical_keys=1; }
+bool app_hardware_set_profile(app_hardware_profile_t p) { if(!hardware_save_ok) return false;hardware_profile=p;return true; }
 void app_device_restart(void) { ++restarts; }
 void app_device_info(app_device_info_t *d) { memset(d,0,sizeof *d);strcpy(d->version,"0.3.0");strcpy(d->build,"2026-11-16");strcpy(d->daemon_host,"192.168.1.10");strcpy(d->ip,"192.168.1.24");d->daemon_port=18765;d->robot_hardware=true; }
 void app_display_read(robot_ui_t *v) { *v=ui; }
@@ -383,6 +397,66 @@ static void play_screentest(const char *out)
     screen.now=(app_screen_t){.invert=true,.x_gap=1,.y_gap=26,.mhz=20,.saved_mhz=20,.configured=true};
 }
 #endif
+#ifdef ESPHOOK_TEST_BUZZTEST
+/* The buzzer test: one list on K1, every sound through the public buzzer services; the mute switch is the USB `sound on|off` one. */
+static void buzz_open(void) { assert(app_open(&manager.context,"buzztest"));app_manager_commit(&manager);run(100); }
+static void buzz_menu(void) { assert(app_open(&manager.context,"launcher"));app_manager_commit(&manager);run(20); }
+/* Short presses until the list shows `desc` (every entry has one of its own); false when it never does. */
+static bool buzz_goto(const char *desc)
+{
+    for(unsigned i=0;i<20;++i) { if(shows_text(lv_screen_active(),desc)) return true;event(APP_EVENT_SHORT); }
+    return shows_text(lv_screen_active(),desc);
+}
+static void play_buzztest(const char *out)
+{
+    memset(&beep_log,0,sizeof beep_log);memset(&tone_log,0,sizeof tone_log);beep_on=true;beep_full=false;beep_save_ok=true;beep_saves=0;
+    buzz_open();dump(out,"buzztest");
+    /* It starts on the first sound; a hold plays it, a short press moves on, and nothing is stored on the way. */
+    assert(shows_text(lv_screen_active(),"通知") && shows_text(lv_screen_active(),"3000Hz 120ms") && shows_text(lv_screen_active(),"声音 开"));
+    assert(shows_text(lv_screen_active(),"短按 1/15 长按 播放"));
+    event(APP_EVENT_SHORT);assert(shows_text(lv_screen_active(),"确认") && shows_text(lv_screen_active(),"2400Hz 220ms") && beep_log.total==0);
+    event(APP_EVENT_SHORT);event(APP_EVENT_SHORT);event(APP_EVENT_SHORT);
+    assert(shows_text(lv_screen_active(),"闹钟响铃") && shows_text(lv_screen_active(),"3 声 490ms"));
+    event(APP_EVENT_CONFIRM);assert(beep_log.by_kind[APP_BEEP_ALARM]==1 && beep_log.total==1 && shows_text(lv_screen_active(),"播放中"));dump(out,"buzztest-alarm");
+    run(600);assert(shows_text(lv_screen_active(),"短按 5/15 长按 播放"));
+    assert(buzz_goto("通知") && shows_text(lv_screen_active(),"短按 1/15 长按 播放")); /* the list is a ring */
+    event(APP_EVENT_CONFIRM);assert(beep_log.by_kind[APP_BEEP_NOTIFY]==1 && beep_log.total==2);
+    /* A full buzzer queue says so instead of looking like it played. */
+    beep_full=true;event(APP_EVENT_CONFIRM);assert(beep_log.total==2 && shows_text(lv_screen_active(),"稍等再试"));beep_full=false;
+    /* The sweep: 500 to 5000 Hz in 100 Hz steps, the screen follows it, any key stops it and is spent on that. */
+    assert(buzz_goto("500-5000Hz 约5秒"));
+    event(APP_EVENT_CONFIRM);run(300);
+    assert(tone_log.count>=2 && tone_log.low==500 && tone_log.ms==100 && shows_text(lv_screen_active(),"按任意键停止"));dump(out,"buzztest-sweep");
+    run(6000);assert(tone_log.count==46 && tone_log.high==5000 && shows_text(lv_screen_active(),"扫频结束") && shows_text(lv_screen_active(),"500-5000Hz 约5秒"));
+    memset(&tone_log,0,sizeof tone_log);event(APP_EVENT_CONFIRM);run(500);
+    assert(tone_log.count>=3 && tone_log.count<=6);
+    event(APP_EVENT_SHORT);const unsigned stopped=tone_log.count;run(800);
+    assert(tone_log.count==stopped && shows_text(lv_screen_active(),"扫频已停") && shows_text(lv_screen_active(),"500-5000Hz 约5秒")); /* stopped, and still on the sweep */
+    /* A queue that is full holds the sweep at its note until there is room; it does not skip or crash. */
+    memset(&tone_log,0,sizeof tone_log);beep_full=true;event(APP_EVENT_CONFIRM);run(500);assert(tone_log.count==0 && shows_text(lv_screen_active(),"按任意键停止"));
+    beep_full=false;run(300);assert(tone_log.count>=1 && tone_log.low==500);event(APP_EVENT_CONFIRM);
+    /* The single notes, 1000 to 4500 Hz, each 400 ms. */
+    assert(buzz_goto("音调 1000Hz") && shows_text(lv_screen_active(),"单音 400ms"));
+    memset(&tone_log,0,sizeof tone_log);event(APP_EVENT_CONFIRM);assert(tone_log.count==1 && tone_log.hz==1000 && tone_log.ms==400 && shows_text(lv_screen_active(),"播放中"));
+    event(APP_EVENT_SHORT);event(APP_EVENT_CONFIRM);assert(tone_log.count==2 && tone_log.hz==1500);
+    for(unsigned i=0;i<6;++i) event(APP_EVENT_SHORT);
+    assert(shows_text(lv_screen_active(),"音调 4500Hz"));event(APP_EVENT_CONFIRM);assert(tone_log.hz==4500 && tone_log.high==4500);dump(out,"buzztest-tone");
+    beep_full=true;event(APP_EVENT_CONFIRM);assert(tone_log.count==3 && shows_text(lv_screen_active(),"稍等再试"));beep_full=false;
+    /* Mute: the switch is the last entry and flips the USB `sound on|off` one; muted, nothing is asked of the buzzer. */
+    assert(buzz_goto("长按 切换静音") && shows_text(lv_screen_active(),"声音 开"));
+    event(APP_EVENT_CONFIRM);assert(!beep_on && beep_saves==1 && shows_text(lv_screen_active(),"已静音"));dump(out,"buzztest-muted");
+    const unsigned beeps=beep_log.total,notes=tone_log.count;
+    event(APP_EVENT_SHORT);event(APP_EVENT_CONFIRM);assert(beep_log.total==beeps && shows_text(lv_screen_active(),"已静音 先开声音"));
+    assert(buzz_goto("500-5000Hz 约5秒"));event(APP_EVENT_CONFIRM);run(300);assert(tone_log.count==notes && shows_text(lv_screen_active(),"已静音 先开声音") && !shows_text(lv_screen_active(),"按任意键停止"));
+    /* A device that is muted when the app opens starts on the way to turn it back on. */
+    buzz_menu();buzz_open();assert(shows_text(lv_screen_active(),"长按 切换静音") && shows_text(lv_screen_active(),"声音 关"));
+    const unsigned confirms=beep_log.by_kind[APP_BEEP_CONFIRM];
+    beep_save_ok=false;event(APP_EVENT_CONFIRM);assert(beep_on && beep_saves==2 && shows_text(lv_screen_active(),"已开启 未保存") && beep_log.by_kind[APP_BEEP_CONFIRM]==confirms+1); /* applied now, but not stored */
+    beep_save_ok=true;event(APP_EVENT_CONFIRM);assert(!beep_on);event(APP_EVENT_CONFIRM);
+    assert(beep_on && beep_saves==4 && shows_text(lv_screen_active(),"声音已开启") && beep_log.by_kind[APP_BEEP_CONFIRM]==confirms+2);
+    buzz_menu();
+}
+#endif
 #ifdef ESPHOOK_TEST_SERVOCAL
 /* The servo calibration: five pages on K1 alone, the explicit go-ahead, what it asks of the servo, what it stores, and the first run. */
 static void servo_fresh(void)
@@ -404,8 +478,28 @@ static void play_servocal(const char *out)
     /* Without a servo (auto/screen profile) the app only says so, and nothing asks for a first run. */
     servo_cal.available=false;servo_cal.stored=false;
     assert(!has_servocal_first_run());
-    servo_open();assert(shows_text(lv_screen_active(),"没有舵机") && shows_text(lv_screen_active(),"短按 返回"));dump(out,"servocal-none");
-    event(APP_EVENT_CONFIRM);assert(!strcmp(app_active_id(&manager.context),"launcher") && servo_log.arm==arms && cal_log.applies==0);
+    /* The robot profile is on but the servo did not start: check the wiring; nothing a press could fix. */
+    servo_open();assert(shows_text(lv_screen_active(),"舵机初始化失败") && shows_text(lv_screen_active(),"检查舵机接线与5V") && shows_text(lv_screen_active(),"短按 返回"));dump(out,"servocal-none");
+    event(APP_EVENT_CONFIRM);assert(!strcmp(app_active_id(&manager.context),"launcher") && servo_log.arm==arms && cal_log.applies==0 && restarts==0);
+    /* The `auto` profile never starts the servo PWM: a long press offers the robot profile and restarts; a short press leaves it. */
+    hardware_profile=APP_PROFILE_AUTO;hardware_active=APP_PROFILE_AUTO;
+    servo_open();assert(shows_text(lv_screen_active(),"舵机未启用") && shows_text(lv_screen_active(),"长按 切到机器人配置") && shows_text(lv_screen_active(),"会重启 短按 返回"));dump(out,"servocal-enable");
+    event(APP_EVENT_SHORT);assert(!strcmp(app_active_id(&manager.context),"launcher") && hardware_profile==APP_PROFILE_AUTO && restarts==0);
+    hardware_save_ok=false;servo_open();event(APP_EVENT_CONFIRM);
+    assert(!strcmp(app_active_id(&manager.context),"servocal") && hardware_profile==APP_PROFILE_AUTO && restarts==0 && shows_text(lv_screen_active(),"保存失败 再试一次") && shows_text(lv_screen_active(),"短按 返回"));
+    hardware_save_ok=true;event(APP_EVENT_CONFIRM);
+    assert(hardware_profile==APP_PROFILE_ROBOT && restarts==1 && servo_log.arm==arms && cal_log.applies==0); /* saved, then restarted; the servo is not touched */
+    assert(app_open(&manager.context,"launcher"));app_manager_commit(&manager);run(20);
+    /* Saved as robot but not restarted yet. */
+    hardware_active=APP_PROFILE_AUTO;restarts=0;servo_open();
+    assert(shows_text(lv_screen_active(),"舵机待重启") && shows_text(lv_screen_active(),"长按 重启生效"));
+    event(APP_EVENT_CONFIRM);assert(restarts==1 && hardware_profile==APP_PROFILE_ROBOT);
+    assert(app_open(&manager.context,"launcher"));app_manager_commit(&manager);run(20);
+    /* A screen-only firmware has no servo driver at all. */
+    hardware_active=APP_PROFILE_SCREEN;hardware_profile=APP_PROFILE_SCREEN;hardware_drivers=false;restarts=0;servo_open();
+    assert(shows_text(lv_screen_active(),"没有舵机") && shows_text(lv_screen_active(),"本固件不含舵机驱动"));
+    event(APP_EVENT_CONFIRM);assert(!strcmp(app_active_id(&manager.context),"launcher") && restarts==0 && hardware_profile==APP_PROFILE_SCREEN);
+    hardware_active=hardware_profile=APP_PROFILE_ROBOT;hardware_drivers=true;restarts=0;
     servo_fresh();
     /* A robot whose calibration is stored does not ask at boot; the first page waits for the go-ahead and arms nothing. */
     assert(!has_servocal_first_run());
@@ -1640,6 +1734,9 @@ int main(int argc,char **argv)
     check_records();
 #ifdef ESPHOOK_TEST_SCREENTEST
     play_screentest(out);
+#endif
+#ifdef ESPHOOK_TEST_BUZZTEST
+    play_buzztest(out);
 #endif
 #ifdef ESPHOOK_TEST_SERVOCAL
     play_servocal(out);
