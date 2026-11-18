@@ -28,6 +28,8 @@ idf.py build
 | `framework/core/app_alarm.c` | 全局闹钟注册表：任何应用登记“到点打开哪个应用并通知它”，框架负责判定、排队、贪睡与唤醒；见“闹钟 API” |
 | `framework/include/esphook/app_ui.h` | LVGL 标签、矩形、图层、字体、确认圆（`app_ui_ring`，设置等应用用）；共享 RGB565 画布 `app_ui_canvas`、底部状态条 `app_ui_band`、按住进度线 `app_ui_hold_bar` |
 | `framework/include/esphook/app_gfx.h` | 画布软件绘图：线/圆/圆环/椭圆光晕/渐变（抖动）、半透明叠加、调色板点阵、山脉/云/太阳，只在 UI 任务调用 |
+| `framework/include/esphook/app_stack.h` | 切片堆叠（sprite stacking）：把 ASCII 层图拼成能转、能倾倒、有厚度、可一层层“堆叠入场”的立体粗像素体，固定仰角或第一人称透视相机，阴影、体素位置投影，纯整数、不分配、无 LVGL；见 [stack-render.md](stack-render.md)，僵尸围城的僵尸/墓碑/枪都用它 |
+| `framework/include/esphook/app_canvas.h` | 共享画布的尺寸 `APP_CANVAS_W/H`，不依赖 LVGL，所以 `app_gfx.h`、`app_stack.h` 和它们的主机测试也不依赖 LVGL |
 | `framework/include/esphook/app_math.h` | 纯整数数学（无 LVGL/RTOS，可进 `*_core.c`）：abs/clamp/lerp、饱和加、开方、抛物线正弦、哈希、固定步长累加器 |
 | `framework/include/esphook/app_rand.h` | 确定性 xorshift32：种子即序列，主机测试与实机一致 |
 | `framework/include/esphook/app_sync.h` | UI 任务与 USB 任务交接数据：`app_shared_copy`、临界区、互斥锁；应用不再 include FreeRTOS |
@@ -75,10 +77,11 @@ const app_descriptor_t esphook_app_counter = {
 
 ## 公共 API 速查
 
-应用只能 include 白名单里的头文件：C 标准库、cJSON、自己的本地头、`esphook/app*.h`（含 `app_math/rand/sync/command/best/screen/gfx/ui/haptic/steer/fish/alarm`）、`esphook/radar_view.h` 和 `robot_ui_protocol.h`。`check-apps.py` 对每个应用的 `firmware/` 逐文件检查，FreeRTOS、ESP-IDF、驱动或 `app_runtime.h` 一律拒绝（要什么就由框架出 API，而不是应用越层）。越稳定的 API 越能装更多应用，所以下面这些**不要在应用里再写一份**：
+应用只能 include 白名单里的头文件：C 标准库、cJSON、自己的本地头、`esphook/app*.h`（含 `app_math/rand/sync/command/best/screen/gfx/stack/ui/haptic/steer/fish/alarm`）、`esphook/radar_view.h` 和 `robot_ui_protocol.h`。`check-apps.py` 对每个应用的 `firmware/` 逐文件检查，FreeRTOS、ESP-IDF、驱动或 `app_runtime.h` 一律拒绝（要什么就由框架出 API，而不是应用越层）。越稳定的 API 越能装更多应用，所以下面这些**不要在应用里再写一份**：
 
 | 需求 | 用这个 | 备注 |
 | --- | --- | --- |
+| 立体感：把 2D 像素切片堆成能转的 3D 物体（角色、道具、手里的枪、墓碑…） | `app_stack.h`：`stack_model_t`（ASCII 层图）、`stack_view_init/pitch/world`、`stack_draw/shadow/bounds/project` | 纯头文件，返回画了多少个体素供做预算；详见 [stack-render.md](stack-render.md) |
 | 绝对值/限幅/插值/开方/抛物线正弦/哈希 | `app_math.h`：`app_abs/min/max/clamp/lerp`、`app_isqrt`、`app_wave127`（±127）、`app_sin256`（±256）、`app_hash32` | 纯头文件、仅依赖 `<stdint.h>`，核心逻辑（`*_core.c`）可直接用，主机测试同步编译 |
 | 计时器“距今多久”不回绕 | `app_age_add(age, dt)`（上限 `APP_AGE_MAX`）、`app_sat_add(v, d, max)` | 放置几小时的计数器也不会溢出 |
 | 固定步长模拟 | `for (n = app_step_take(&carry, dt, STEP_MS, MAX_ADVANCE_MS); n; --n) step(g);` | 卡帧不会一次补太多；同输入逐位重放一致 |
@@ -288,6 +291,7 @@ python3 apps/key_report/pc/test_bridge.py
 ./scripts/test-miner.sh
 ./scripts/test-jump.sh
 ./scripts/test-zombie.sh
+./scripts/test-stack.sh
 ./scripts/test-mirror.sh
 ./scripts/test-robot-ui.sh
 python3 apps/mirror/pc/test_mirror.py   # 需要 Pillow

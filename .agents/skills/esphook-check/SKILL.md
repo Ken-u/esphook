@@ -9,7 +9,7 @@ description: Validate esphook framework and app changes with manifest checks, li
 
 1. 执行 `python3 scripts/check-apps.py` 和 `git diff --check`，检查 manifest/id/源文件、descriptor、应用越层引用和 skills 元数据。
 2. 执行 `scripts/test-app-games.sh`，确认公共头文件无 RTOS 也能编译、生命周期、单根节点所有权、延后导航、500ms 确认、三击、松手消费、10s 菜单超时和 NVS 保存失败时不切换。
-3. 规则变化运行对应模型测试；共享服务变化回归 `test-robot.sh`、`test-basketball.sh`、`test-dino.sh`、`test-ski.sh`、`test-muyu.sh`、`test-haptic-steer.sh`、`test-aquarium.sh`、`test-fishing.sh`、`test-starship.sh`、`test-racing.sh`、`test-app-time.sh`、`test-app-util.sh`、`test-app-best.sh`、`test-app-screen.sh`、`test-fortune.sh`、`test-app-alarm.sh`、`test-alarm.sh`、`test-miner.sh`、`test-jump.sh`、`test-zombie.sh`、`test-mirror.sh`、`test-robot-ui.sh`。依赖为 C 编译器和 libcjson-dev，其他环境使用脚本的 CJSON_INCLUDE_DIR/CJSON_LIB 覆盖。
+3. 规则变化运行对应模型测试；共享服务变化回归 `test-robot.sh`、`test-basketball.sh`、`test-dino.sh`、`test-ski.sh`、`test-muyu.sh`、`test-haptic-steer.sh`、`test-aquarium.sh`、`test-fishing.sh`、`test-starship.sh`、`test-racing.sh`、`test-app-time.sh`、`test-app-util.sh`、`test-app-best.sh`、`test-app-screen.sh`、`test-fortune.sh`、`test-app-alarm.sh`、`test-alarm.sh`、`test-miner.sh`、`test-jump.sh`、`test-zombie.sh`、`test-stack.sh`、`test-mirror.sh`、`test-robot-ui.sh`。依赖为 C 编译器和 libcjson-dev，其他环境使用脚本的 CJSON_INCLUDE_DIR/CJSON_LIB 覆盖。
 4. 设置 `LVGL_SOURCE_DIR` 为 v9.5.0 源码，运行 `scripts/test-app-ui.sh`。它编译全部已启用应用并用真实 LVGL/中文字体在 64KB UI 堆上反复切换；查看屏幕帧、控件裁剪和退出后的对象释放。新增应用也由同一 manifest 发现。
 5. 运行 `tests/test_app_sdk.py` 和 `tests/test_scaffold.py`，受影响的 `apps/<id>/pc` 测试（副屏的 `apps/mirror/pc/test_mirror.py` 需要 Pillow）、`--dry-run`；原 Hook 回归位于 `apps/hook/pc/test_*.py`。
 6. 用 ESP-IDF 5.5.4 构建默认通用配置和 `CONFIG_DESKTOP_FOLLOW_ROBOT=n` 配置，或查看仓库 CI。查看应用分区剩余空间后再决定是否移除 OTA，不能仅看源码大小。

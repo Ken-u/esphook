@@ -74,6 +74,8 @@ jobs:
         run: ./scripts/test-jump.sh
       - name: Test zombie shooter
         run: ./scripts/test-zombie.sh
+      - name: Test slice stacking renderer and the zombie voxel models
+        run: ./scripts/test-stack.sh
       - name: Test screen mirror strip codec and ring
         run: ./scripts/test-mirror.sh
       - name: Install Pillow for the screen mirror PC tool

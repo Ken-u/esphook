@@ -1239,6 +1239,9 @@ static void play_zombie(const char *out)
     assert(app_open(&manager.context,"zombie"));app_manager_commit(&manager);run(400);
     assert(ZB_STATUS("phase=")==ZB_TITLE && ZB_STATUS("servo=")==1 && ZB_STATUS("hp=")==3);
     assert(shows_text(lv_screen_active(),"僵尸围城") && shows_hint("按键开战 长按开舵机"));dump(out,"zombie-title");
+    /* the gun and the title's pair of zombies are put together slice by slice: the picture grows for a second and a half */
+    const unsigned building=(unsigned)ZB_STATUS("vox=");assert(building>0);run(1700);
+    assert((unsigned)ZB_STATUS("vox=")>building+100 && ZB_STATUS("phase=")==ZB_TITLE);
     ztap();
     assert(ZB_STATUS("phase=")==ZB_INTRO && shows_text(lv_screen_active(),"第1波") && shows_text(lv_screen_active(),"僵尸 7 只"));dump(out,"zombie-intro");
     run(ZB_INTRO_MS+200);
@@ -1247,11 +1250,14 @@ static void play_zombie(const char *out)
     zomb()->cam_x=zomb()->target_x=0;
     zb_z_t crowd[]={zz(ZK_WALKER,-40,430),zz(ZK_RUNNER,70,700),zz(ZK_BRUTE,-300,900),zz(ZK_WALKER,260,620),zz(ZK_WALKER,10,1200),zz(ZK_RUNNER,-120,1100)};
     zpose(6,crowd);run(40);dump(out,"zombie-crowd");
+    /* the whole crowd, the gravestones and the gun are a thousand or two slices: that is the cost of the picture */
+    assert(ZB_STATUS("vox=")>800 && ZB_STATUS("vox=")<3500);
     zkey(0,true);run(60);dump(out,"zombie-fire");run(700);
     assert(ZB_STATUS("shots=")>=3 && ZB_STATUS("hits=")>=1 && servo_log.arm==0 && ZB_STATUS("servo=")==1);
     zkey(0,false);
     zb_z_t near3[]={zz(ZK_WALKER,-70,230),zz(ZK_BRUTE,10,300),zz(ZK_RUNNER,80,260)};
     zpose(3,near3);run(30);dump(out,"zombie-closeup");
+    assert(ZB_STATUS("vox=")>800 && ZB_STATUS("vox=")<3500);
     zb_z_t dead[]={zz(ZK_WALKER,0,360),zz(ZK_WALKER,90,700)};
     zpose(2,dead);zomb()->ammo=ZB_MAG;ztap();run(40);dump(out,"zombie-kill");
     assert(ZB_STATUS("kills=")>=1 && ZB_STATUS("score=")>=100);

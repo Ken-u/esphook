@@ -24,7 +24,8 @@
 ## 实现
 
 - `apps/zombie/firmware/zombie_core.{h,c}`：纯 C，无 ESP/LVGL 依赖，固定 20ms 步进（一次最多处理 200ms），世界坐标 x 是方位、z 是距离（`ZB_UNITS_PX` 个单位一个屏幕像素），僵尸 z 走到 `ZB_ZN` 就咬人；波次人数、种类和速度由波数决定。
-- `apps/zombie/firmware/app.c`：共享画布第一人称墓地：夜空和月亮、远处的墓碑和枯树（雾中渐隐）、按距离排序绘制的僵尸（步态、倒地、受击闪白）、枪口火光、准星、弹匣和血量、边缘提示、咬伤红屏；LVGL 放标题、状态栏和分数。雷达转向通过 `app_steer.h`（站在机器前面的人的视角）。会话状态小于 2048 字节，核心是状态的第一个成员，编译期有 `_Static_assert`。
+- `apps/zombie/firmware/app.c`：共享画布第一人称墓地：夜空和月亮、远处的墓碑和枯树（雾中渐隐）、按距离排序绘制的僵尸（步态、倒地、受击闪白）、枪口火光、准星、弹匣和血量、边缘提示、咬伤红屏；LVGL 放标题、状态栏和分数。
+- `apps/zombie/firmware/zombie_models.{h,c}`：体素模型（行尸、奔跑者、巨人、墓碑、十字架和手里的枪），每层是一张 ASCII 俯视图，一个体素 `ZM_VOXEL` = 5 个世界单位，模型高度和核心里的僵尸高度一致。僵尸、墓碑和枪都用框架的切片堆叠渲染（`esphook/app_stack.h`，用法见 [stack-render.md](stack-render.md)），所以会转身、侧身，能看到身体的厚度、顶面和侧面。雷达转向通过 `app_steer.h`（站在机器前面的人的视角）。会话状态小于 2048 字节，核心是状态的第一个成员，编译期有 `_Static_assert`。
 
 ## USB 调试命令
 
@@ -32,14 +33,15 @@
 robot zombie status
 ```
 
-返回 `active`、`phase`（0 标题 1 开场 2 战斗 3 被咬倒下 4 结束）、`wave`、`hp`、`ammo`、`alive`（场上僵尸数）、`remain`（本波还剩）、`score`、`best`、`kills`、`shots`、`hits`、`steer`、`cam`（视角偏移）、`src`（转向来源 0 无 1 雷达 2 按键）、`servo`（0 无 1 未启用 2 已启用 3 故障）和 `frames`。
+返回 `active`、`vox`（上一帧画了多少个体素，即画面成本，真实对局约 1500）、`phase`（0 标题 1 开场 2 战斗 3 被咬倒下 4 结束）、`wave`、`hp`、`ammo`、`alive`（场上僵尸数）、`remain`（本波还剩）、`score`、`best`、`kills`、`shots`、`hits`、`steer`、`cam`（视角偏移）、`src`（转向来源 0 无 1 雷达 2 按键）、`servo`（0 无 1 未启用 2 已启用 3 故障）和 `frames`。
 
 ## 验证
 
 ```bash
 ./scripts/test-zombie.sh         # 核心：命中几何、弹匣与装弹、三种僵尸的速度/血量、被咬与无敌、波次递增、连杀、结算
+./scripts/test-stack.sh           # 切片堆叠渲染和僵尸体素模型：几何、转动、遮挡顺序、堆叠入场、步态、越界与成本
 ./scripts/test-haptic-steer.sh   # 舵机摇晃/限位限速，雷达与按键转向
-./scripts/test-app-ui.sh         # 真实 LVGL：标题、开场、人群、开火、近身、击杀、边缘提示、被咬、倒下、结算；雷达/舵机桩；三击不退出、按住 2 秒才退出
+./scripts/test-app-ui.sh         # 真实 LVGL：标题（枪和僵尸一层层拼出来）、开场、人群、开火、近身、击杀、边缘提示、被咬、倒下、结算；体素数在预算内；雷达/舵机桩；三击不退出、按住 2 秒才退出
 ```
 
 未接雷达/舵机时，只能验证屏幕和 K2/K3 转向；雷达和舵机路径靠核心测试与无屏渲染中的雷达/舵机桩覆盖，**没有在真实雷达、舵机上验证**。

@@ -5,7 +5,7 @@ description: Develop native apps and mini games in the esphook ESP32 project usi
 
 # 开发设备应用
 
-在仓库根目录操作。先阅读 `docs/app-framework.md`，再按功能读取 `framework/include/esphook/app.h`、`app_ui.h`、`app_services.h`，以及“公共 API 速查”列出的 `app_math.h`、`app_rand.h`、`app_sync.h`、`app_command.h`、`app_best.h`。应用只能 include `esphook/app*.h`（外加 C 标准库、cJSON、自己的头），不要碰 FreeRTOS/ESP-IDF/`app_runtime.h`（`check-apps.py` 会拒绝）。参考 `apps/demo/firmware/app.c`；投篮和做 T 展示独立模型及 PC 分工。
+在仓库根目录操作。先阅读 `docs/app-framework.md`，再按功能读取 `framework/include/esphook/app.h`、`app_ui.h`、`app_services.h`，以及“公共 API 速查”列出的 `app_math.h`、`app_rand.h`、`app_sync.h`、`app_command.h`、`app_best.h`，要做立体感（角色、道具、枪）用 `app_stack.h` 的切片堆叠（`docs/stack-render.md`，参考 `apps/zombie`）。应用只能 include `esphook/app*.h`（外加 C 标准库、cJSON、自己的头），不要碰 FreeRTOS/ESP-IDF/`app_runtime.h`（`check-apps.py` 会拒绝）。参考 `apps/demo/firmware/app.c`；投篮和做 T 展示独立模型及 PC 分工。
 
 1. 用 `python3 scripts/new-app.py <id> --title '<最多四个汉字>' [--pc]` 创建应用。检查新目录，保留 `manifest.json` 中的真实源文件列表。CMake 自动发现，无需修改中央分派器或注册数组。
 2. 将逻辑放在 `apps/<id>/firmware`。用 descriptor 的 `on_enter/on_leave/on_event/on_tick/render` 实现生命周期；把可单测的规则与 LVGL 绘制分开。

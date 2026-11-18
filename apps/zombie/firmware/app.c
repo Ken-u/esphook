@@ -1,6 +1,7 @@
 #include "esphook/app_math.h"
 #include "esphook/app.h"
 #include "esphook/app_gfx.h"
+#include "esphook/app_stack.h"
 #include "esphook/app_haptic.h"
 #include "esphook/app_services.h"
 #include "esphook/app_steer.h"
@@ -9,6 +10,7 @@
 #include "esphook/app_command.h"
 #include "esphook/app_sync.h"
 #include "zombie_core.h"
+#include "zombie_models.h"
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
@@ -17,7 +19,8 @@
  * The radar (or the K2/K3 keys) turns the view, the main key fires the gun at the crosshair, and a zombie that gets
  * to you costs one of three lives and gives the servo a short shake when it has been enabled (hold a key for 0.5 s on
  * the title or game over screen; it is never enabled on its own). The rules live in zombie_core.c; this file draws
- * the world with the same bearing and distance the core uses. */
+ * the world with the same bearing and distance the core uses. Zombies, gravestones and the gun are stacks of voxel
+ * slices (esphook/app_stack.h, models in zombie_models.c): they turn, lean and show their sides as they weave. */
 #define BAND_Y 64
 #define CX 80
 #define HY 24     /* the horizon */
@@ -25,6 +28,7 @@
 #define EXIT_HOLD_MS 2000U
 #define HINT_SLOT_MS 2600U
 #define PROPS 24U
+#define VEYE 90   /* the camera of the stacked models: how high above the ground it looks down at them (their tops show) */
 
 typedef struct { int16_t z; uint8_t zombie, index; } item_t; /* what is in the picture: a prop (0), a zombie of the game (1), a title one (2) */
 
@@ -36,13 +40,14 @@ typedef struct {
     uint64_t last_ms;
     uint32_t shown_key, shown_score, shown_info;
     uint8_t down_in_play;
+    unsigned voxels; /* slices drawn in the last frame (the cost of the picture) */
 } state_t;
 _Static_assert(sizeof(state_t) <= APP_STATE_CAPACITY, "zombie state too large");
 _Static_assert(offsetof(state_t, core) == 0, "tests pose the scene through the core at the start of the state");
 typedef struct {
     bool active;
     uint8_t phase, hp, wave, ammo, alive, src, servo;
-    uint32_t score, best, kills, shots, hits, frames, remaining;
+    uint32_t score, best, kills, shots, hits, frames, remaining, voxels;
     int steer, cam;
 } status_t;
 static status_t s_status;
@@ -54,72 +59,62 @@ static int feet_y(int z) { return HY + EYE * ZB_FOC / (z < 40 ? 40 : z); }
 static uint32_t misty(uint32_t rgb, int z) { return gfx_mix(rgb, 0x2A2040, (unsigned)app_clamp((z - 250) * 190 / 1250, 0, 190)); }
 
 /* ---- the zombies ------------------------------------------------------------------------------------------------ */
-/* A colour as it is on this zombie right now: darker as it falls, white for a moment when it is hit, and misty by distance. */
-static uint16_t paint(uint32_t rgb, int z, int fall, unsigned flash)
+static const stack_model_t *model_of(unsigned kind) { return kind == ZK_BRUTE ? &zm_brute : kind == ZK_RUNNER ? &zm_runner : &zm_walker; }
+/* The view of something standing in the graveyard `z` away, its foot at screen column `x`. */
+static void ground_view(stack_view_t *v, int x, int z, bool blood)
 {
-    return c565(misty(gfx_mix(gfx_mix(rgb, 0x1A1830, (unsigned)(fall * 100 / 256)), 0xFFFFFF, flash), z));
+    stack_view_init(v);
+    stack_view_world(v, x, feet_y(z), z, ZM_VOXEL, VEYE, ZB_FOC);
+    v->tint = 0x2A2040; /* the mist */
+    v->tint_amt = (unsigned)app_clamp((z - 250) * 190 / 1250, 0, 190);
+    v->light = blood ? 0xFF9A80 : 0xC4D4FF; /* the moon lights the tops */
+    v->top_light = 80;
+    v->shade = 90;
+    v->edge = z < 480 ? 70U : 0U;
 }
-static void draw_zombie(uint16_t *px, int cx, int z, const zb_z_t *zz, unsigned now)
+/* `build` is how much of the stack is put together (256 all of it), `spin` turns it about its own axis (a showcase). */
+static void draw_zombie(uint16_t *px, int cx, int z, const zb_z_t *zz, unsigned now, bool blood, unsigned build, int spin, unsigned *voxels)
 {
-    static const uint32_t skin[ZK_KINDS] = {0x86A860, 0x93AE7C, 0x7C8C66};
     static const uint32_t shirts[4] = {0x7A4B3A, 0x3F5F86, 0x6A6A6A, 0x86403A};
-    const zb_info_t *info = zb_info(zz->kind);
-    const int feet = feet_y(z);
-    const int full = info->height * ZB_FOC / z;
+    const stack_model_t *model = model_of(zz->kind);
     const int t = zz->dying_ms ? (int)(ZB_DYING_MS - zz->dying_ms) * 256 / (int)ZB_DYING_MS : 0;
-    const int h = (full < 3 ? 3 : full) * (256 - t * 3 / 4) / 256;
-    if (cx + h < 0 || cx - h >= APP_CANVAS_W || feet - h >= APP_CANVAS_H || h < 2) return;
-    const unsigned flash = zz->flash ? 170U : 0U;
-#define PAINT(rgb) paint((rgb), z, t, flash)
-    const int w = (h * (zz->kind == ZK_BRUTE ? 62 : zz->kind == ZK_RUNNER ? 34 : 44) / 100) * (256 + t / 2) / 256;
-    const int stride = zz->kind == ZK_RUNNER ? 110 : zz->kind == ZK_BRUTE ? 260 : 180;
-    const bool step = (((now / (unsigned)stride) + zz->seed) & 1U) != 0U && !zz->dying_ms;
-    const int leg_h = h * 40 / 100 > 1 ? h * 40 / 100 : 1, torso_h = h * 32 / 100 > 1 ? h * 32 / 100 : 1;
-    const int head_r = h * 13 / 100 > 1 ? h * 13 / 100 : 1;
-    const int y_legs = feet - leg_h, y_torso = y_legs - torso_h;
-    const int shear = t * h / 420 * (zz->seed & 1U ? 1 : -1); /* a falling one topples to a side */
-    const int lean = zz->kind == ZK_RUNNER && !zz->dying_ms ? (step ? 1 : -1) * (h / 14) : 0;
-    const uint32_t shirt = zz->kind == ZK_BRUTE ? 0x5C2A2A : zz->kind == ZK_RUNNER ? 0x3E6E4A : shirts[zz->seed & 3U];
-    const uint32_t pants = zz->kind == ZK_BRUTE ? 0x2A2A30 : 0x34343E;
-    gfx_tint_ellipse(px, cx, feet, w * 6 / 10 + 1, h / 16 + 1, 0x000000, 90);
-    if (h < 7) { /* a few pixels: a head and a body */
-        gfx_rect(px, cx - w / 2 + shear, y_torso, w < 2 ? 2 : w, torso_h + leg_h, PAINT(shirt));
-        gfx_rect(px, cx - 1 + shear + lean, y_torso - head_r - 1, 2, head_r + 1, PAINT(skin[zz->kind]));
-        return;
+    stack_view_t v;
+    ground_view(&v, cx, z, blood);
+    if (v.scale < 48) return;
+    const unsigned stride = zz->kind == ZK_RUNNER ? 110U : zz->kind == ZK_BRUTE ? 260U : 180U;
+    const unsigned rate = zz->kind == ZK_RUNNER ? 5U : zz->kind == ZK_BRUTE ? 2U : 3U;
+    const int sign = zz->seed & 1U ? 1 : -1;
+    /* it turns into its weave, and lurches */
+    const int weave = (app_wave127((zz->age + 1U) * rate + zz->seed) - app_wave127(zz->age * rate + zz->seed)) * zz->amp / 127;
+    const int lurch = app_sin256(now / (zz->kind == ZK_RUNNER ? 9U : 14U) + (unsigned)zz->seed * 37U) * (zz->kind == ZK_RUNNER ? 10 : zz->kind == ZK_BRUTE ? 7 : 12) / 256;
+    v.yaw = (unsigned)(app_clamp(weave * 3 / 2, -26, 26) + lurch + spin + sign * t / 3) & 255U;
+    v.step = zz->dying_ms || zz->stun ? 0U : 1U;                  /* a foot is always off the ground when it walks... */
+    v.mirror = (uint8_t)(((now / stride) + zz->seed) & 1U);       /* ...and the feet take turns */
+    v.build = build;
+    if (z > 1100 && zz->age < 24U) v.build = (unsigned)zz->age * 256U / 24U; /* it takes shape as it comes out of the dark */
+    v.lean = sign * t * (v.scale * model->h >> 8) * 3 / 100;      /* a falling one topples to a side... */
+    v.squash = v.squash * (unsigned)(256 - t * 3 / 4) / 256U;     /* ...and sinks */
+    v.dark = (unsigned)(t * 100 / 256);
+    if (zz->flash) { v.tint = 0xFFFFFF; v.tint_amt = 170U; }
+    uint32_t pal[ZM_COLORS];
+    if (zz->kind == ZK_WALKER) { /* every walker has a shirt of its own */
+        memcpy(pal, model->colors, sizeof pal);
+        pal[ZM_SHIRT] = shirts[zz->seed & 3U];
+        pal[ZM_SHIRT_DARK] = gfx_mix(pal[ZM_SHIRT], 0x000000, 90);
+        v.palette = pal;
     }
-    const int lw = w * 38 / 100 > 1 ? w * 38 / 100 : 1, drop = h / 14 > 0 ? h / 14 : 1;
-    gfx_rect(px, cx - w * 45 / 100, y_legs + (step ? drop : 0), lw, leg_h - (step ? drop : 0), PAINT(pants)); /* the gait */
-    gfx_rect(px, cx + w * 45 / 100 - lw + 1, y_legs + (step ? 0 : drop), lw, leg_h - (step ? 0 : drop), PAINT(pants));
-    gfx_rect(px, cx - w / 2 + shear / 2, y_torso, w + 1, torso_h, PAINT(shirt));
-    gfx_rect(px, cx + w / 6 + shear / 2, y_torso, w / 3 + 1, torso_h, PAINT(gfx_mix(shirt, 0x000000, 90)));
-    if (zz->seed & 4U && h >= 14) gfx_rect(px, cx - w / 4 + shear / 2, y_torso + torso_h / 4, w / 4 + 1, torso_h / 3, PAINT(0x7A1010)); /* a stain */
-    if (zz->kind == ZK_BRUTE) gfx_rect(px, cx - w / 2 - 1 + shear / 2, y_torso, w + 3, h / 12 + 1, PAINT(0x3A2020)); /* heavy shoulders */
-    const int ah = h / 12 > 1 ? h / 12 : 1, alen = w * 55 / 100 + 1, shoulder = y_torso + torso_h / 6 + (step ? 1 : 0);
-    gfx_rect(px, cx - w / 2 - alen + shear / 2, shoulder, alen, ah, PAINT(skin[zz->kind])); /* the arms reach for you */
-    gfx_rect(px, cx + w / 2 + 1 + shear / 2, shoulder, alen, ah, PAINT(skin[zz->kind]));
-    gfx_rect(px, cx - w / 2 - alen + shear / 2, shoulder - ah * 2, ah + (h >= 20), ah * 2 + 1, PAINT(skin[zz->kind]));
-    gfx_rect(px, cx + w / 2 + alen + 1 - ah - (h >= 20) + shear / 2, shoulder - ah * 2, ah + (h >= 20), ah * 2 + 1, PAINT(skin[zz->kind]));
-    const int hx = cx + shear + lean, hy = y_torso - head_r + 1;
-    gfx_disc(px, hx, hy, head_r, PAINT(zz->kind == ZK_RUNNER ? 0x3E6E4A : skin[zz->kind]));
-    if (zz->kind == ZK_RUNNER) gfx_disc(px, hx, hy + 1, head_r > 2 ? head_r - 1 : 1, PAINT(skin[zz->kind]));
-    if (head_r >= 2) {
-        const uint16_t eye = zz->flash ? c565(0xFFFFFF) : c565(misty(0xFF3020, z));
-        gfx_plot(px, hx - head_r / 2, hy - 0, eye);
-        gfx_plot(px, hx + head_r / 2, hy - 0, eye);
-        if (head_r >= 3) gfx_hline(px, hx - head_r / 2, hx + head_r / 2, hy + head_r / 2 + 1, PAINT(0x2A1010));
-        if (head_r >= 3 && !(zz->seed & 8U)) gfx_hline(px, hx - head_r + 1, hx + head_r - 1, hy - head_r + 1, PAINT(0x2A2A22)); /* what is left of the hair */
-    }
-#undef PAINT
+    stack_shadow(px, model, &v, 0x000000, 90);
+    *voxels += stack_draw(px, model, &v);
 }
 /* ---- the graveyard ------------------------------------------------------------------------------------------------ */
-static void draw_prop(uint16_t *px, const zb_t *g, unsigned i)
+static void draw_prop(uint16_t *px, const zb_t *g, unsigned i, bool blood, unsigned *voxels)
 {
     const uint32_t h = gfx_hash(i * 0x9E37U + 77U);
     const int bearing = (int)(h % 2900U) - 1450, z = 300 + (int)((h >> 12) % 1150U);
     const int x = screen_x(g, bearing, 256), feet = feet_y(z);
-    const int ph = (z > 1100 && (h & 0x300000U) ? 90 : 38) * ZB_FOC / z, pw = 26 * ZB_FOC / z;
     if (x < -40 || x > APP_CANVAS_W + 40) return;
-    if (z > 1100 && (h & 0x300000U)) { /* a bare tree */
+    if (z > 1100 && (h & 0x300000U)) { /* a bare tree: a few lines, too thin to be worth slices */
+        const int ph = 90 * ZB_FOC / z;
         const uint16_t trunk = c565(misty(0x1C1A20, z));
         gfx_rect(px, x - 1, feet - ph, 2 + ph / 14, ph, trunk);
         gfx_line(px, x, feet - ph * 2 / 3, x - ph / 3, feet - ph * 9 / 10, trunk);
@@ -127,19 +122,14 @@ static void draw_prop(uint16_t *px, const zb_t *g, unsigned i)
         gfx_line(px, x, feet - ph, x + ph / 6, feet - ph - ph / 6, trunk);
         return;
     }
-    const uint16_t stone = c565(misty(0x6E7490, z)), lit = c565(misty(0x959CB8, z)), dark = c565(misty(0x30333E, z));
-    const int w = pw > 2 ? pw : 2, hh = ph > 3 ? ph : 3;
-    if (h & 0x40000U) { /* a cross */
-        gfx_rect(px, x - w / 6, feet - hh, w / 3 + 1, hh, stone);
-        gfx_rect(px, x - w / 2, feet - hh * 2 / 3, w + 1, hh / 4 + 1, stone);
-    } else { /* a rounded stone */
-        gfx_rect(px, x - w / 2, feet - hh + w / 2, w + 1, hh - w / 2, stone);
-        gfx_disc(px, x, feet - hh + w / 2, w / 2 + 1, stone);
-        gfx_vline(px, x + w / 2, feet - hh + w / 2, feet, dark);
-        gfx_plot(px, x - w / 4, feet - hh + 1, lit);
-        if (hh >= 8) gfx_rect(px, x - w / 6, feet - hh * 2 / 3, w / 3 + 1, hh / 5 + 1, dark); /* an inscription */
-    }
-    gfx_hline(px, x - w / 2 - 1, x + w / 2 + 1, feet, dark);
+    const stack_model_t *model = (h & 0x40000U) ? &zm_cross : &zm_tomb;
+    stack_view_t v;
+    ground_view(&v, x, z, blood);
+    /* a stone stands where it was put: as the view turns it is seen from another side */
+    v.yaw = (unsigned)((int)((h >> 8) & 31U) - 16 - (x - CX) * 87 / 256) & 255U;
+    v.edge = z < 450 ? 50U : 0U;
+    stack_shadow(px, model, &v, 0x000000, 70);
+    *voxels += stack_draw(px, model, &v);
 }
 static void draw_world(uint16_t *px, const zb_t *g, unsigned now)
 {
@@ -171,26 +161,29 @@ static void draw_world(uint16_t *px, const zb_t *g, unsigned now)
 }
 
 /* ---- the gun, the HUD and the edges of the screen ----------------------------------------------------------------- */
-static void draw_gun(uint16_t *px, const zb_t *g)
+/* The gun you hold, from behind and above. Turning the view makes it swing the other way (`sway`), a shot kicks it, a
+ * reload drops it, and at the start of a wave it is put together slice by slice (`build`). */
+static void draw_gun(uint16_t *px, const zb_t *g, int sway, unsigned build, unsigned *voxels)
 {
     const int kick = g->shot_age_ms < 140U ? (int)(140U - g->shot_age_ms) / 28 : 0;
     const int dip = g->reload ? (g->reload > ZB_RELOAD_STEPS - 8U ? (int)(ZB_RELOAD_STEPS - g->reload) * 2 : g->reload < 8U ? (int)g->reload * 2 : 16) : 0;
-    const int oy = kick + dip, gx = CX + 3 + (g->reload ? (int)(g->reload % 4U) - 1 : 0);
-    gfx_rect(px, gx - 6, 50 + oy, 13, 18, c565(0x2E3340));  /* the receiver */
-    gfx_rect(px, gx - 6, 50 + oy, 3, 18, c565(0x4A5160));
-    gfx_rect(px, gx - 3, 38 + oy, 7, 14, c565(0x555C6C));   /* the barrel */
-    gfx_vline(px, gx - 2, 38 + oy, 50 + oy, c565(0x8A93A6));
-    gfx_vline(px, gx + 3, 38 + oy, 50 + oy, c565(0x353A47));
-    gfx_rect(px, gx - 3, 36 + oy, 7, 2, c565(0x23262F));    /* the muzzle */
-    gfx_plot(px, gx, 35 + oy, c565(0xE8E8E8));              /* the sight */
-    gfx_rect(px, gx - 15, 58 + oy, 8, 8, c565(0x8F6A4E));   /* the hands */
-    gfx_rect(px, gx - 15, 58 + oy, 8, 2, c565(0xB08A68));
-    gfx_rect(px, gx + 8, 56 + oy, 8, 10, c565(0x8F6A4E));
-    gfx_rect(px, gx + 8, 56 + oy, 8, 2, c565(0xB08A68));
-    gfx_rect(px, gx - 18, 64 + oy, 12, 6, c565(0x2A3A56));  /* the sleeves */
-    gfx_rect(px, gx + 8, 64 + oy, 12, 6, c565(0x2A3A56));
+    stack_view_t v;
+    stack_view_init(&v);
+    v.x = CX + 3 + (g->reload ? (int)(g->reload % 4U) - 1 : 0);
+    v.y = 66 + kick + dip;
+    v.scale = 3 * 256 + 40;
+    stack_view_pitch(&v, 26U + (unsigned)kick);
+    v.yaw = (unsigned)(256 + sway) & 255U;
+    v.build = build;
+    v.edge = 50;
+    v.top_light = 34;
+    v.shade = 40;
+    v.light = 0xB4C0E0;
+    *voxels += stack_draw(px, &zm_gun, &v);
     if (g->shot_age_ms < 90U) { /* the muzzle flash */
-        const int fx = gx, fy = 34 + oy - kick;
+        int fx, fy;
+        stack_project(&zm_gun, &v, 4, 0, 3, &fx, &fy);
+        fy -= 2;
         gfx_tint_ellipse(px, fx, fy, 14, 11, 0xFFB030, 90);
         gfx_disc(px, fx, fy, 5, c565(0xFFD060));
         gfx_disc(px, fx, fy, 3, c565(0xFFFFFF));
@@ -300,11 +293,17 @@ static void draw_scene(uint16_t *px, state_t *s, unsigned now)
         while (j && order[j - 1].z < k.z) { order[j] = order[j - 1]; --j; }
         order[j] = k;
     }
+    const bool blood = g->wave >= 5U;
+    unsigned voxels = 0;
     for (unsigned i = 0; i < n; ++i) {
-        if (!order[i].zombie) draw_prop(px, g, order[i].index);
-        else {
-            const zb_z_t *z = order[i].zombie == 1 ? &g->z[order[i].index] : &idle[order[i].index];
-            draw_zombie(px, screen_x(g, z->x, 256), z->z < ZB_ZN ? ZB_ZN : z->z, z, now);
+        if (!order[i].zombie) draw_prop(px, g, order[i].index, blood, &voxels);
+        else if (order[i].zombie == 1) {
+            const zb_z_t *z = &g->z[order[i].index];
+            draw_zombie(px, screen_x(g, z->x, 256), z->z < ZB_ZN ? ZB_ZN : z->z, z, now, blood, 256U, 0, &voxels);
+        } else { /* the title: a pair that put themselves together slice by slice, and turn on the spot */
+            const zb_z_t *z = &idle[order[i].index];
+            const unsigned build = g->phase_ms >= 1400U ? 256U : g->phase_ms * 256U / 1400U;
+            draw_zombie(px, screen_x(g, z->x, 256), z->z, z, now, blood, build, order[i].index ? -(int)(now / 64U) : (int)(now / 48U), &voxels);
         }
     }
     draw_fx(px, g);
@@ -313,7 +312,10 @@ static void draw_scene(uint16_t *px, state_t *s, unsigned now)
     gfx_tint(px, 0, 0, 7, APP_CANVAS_H, 0x000000, 70); gfx_tint(px, APP_CANVAS_W - 7, 0, 7, APP_CANVAS_H, 0x000000, 70);
     gfx_tint(px, 0, 0, APP_CANVAS_W, 3, 0x000000, 60);
     if (g->phase == ZB_PLAY || g->phase == ZB_INTRO || g->phase == ZB_DYING) draw_crosshair(px, g);
-    draw_gun(px, g);
+    const int sway = app_clamp((g->target_x - g->cam_x) / 50, -10, 10);
+    const unsigned gun_build = (g->phase == ZB_TITLE || g->phase == ZB_INTRO) && g->phase_ms < 700U ? g->phase_ms * 256U / 700U : 256U;
+    draw_gun(px, g, sway, gun_build, &voxels);
+    s->voxels = voxels;
     draw_hud(px, g, now);
     if (g->bite_age_ms < 520U && g->phase != ZB_TITLE) { /* a bite: the screen goes red and claw marks cross it */
         const unsigned a = (520U - g->bite_age_ms) * 170U / 520U;
@@ -368,6 +370,7 @@ static void publish(const state_t *s, bool active, bool frame)
     s_status.ammo = g->ammo; s_status.alive = (uint8_t)zb_alive(g); s_status.src = s->steer.source; s_status.servo = (uint8_t)hs;
     s_status.score = g->score; s_status.best = g->best; s_status.kills = g->kills; s_status.shots = g->shots_fired;
     s_status.hits = g->hits; s_status.remaining = zb_remaining(g); s_status.steer = s->steer.steer; s_status.cam = g->cam_x;
+    s_status.voxels = s->voxels;
     if (frame) ++s_status.frames;
     app_critical_exit();
 }
@@ -522,9 +525,9 @@ static bool command(const char *line)
     if (!app_command_is(line, "robot zombie status")) return false;
     status_t v;
     app_shared_copy(v, s_status);
-    (void)app_command_replyf("active=%u phase=%u wave=%u hp=%u ammo=%u alive=%u remain=%lu score=%lu best=%lu kills=%lu shots=%lu hits=%lu steer=%d cam=%d src=%u servo=%u frames=%lu",
+    (void)app_command_replyf("active=%u phase=%u wave=%u hp=%u ammo=%u alive=%u remain=%lu score=%lu best=%lu kills=%lu shots=%lu hits=%lu steer=%d cam=%d src=%u servo=%u frames=%lu vox=%lu",
             v.active ? 1U : 0U, v.phase, v.wave, v.hp, v.ammo, v.alive, (unsigned long)v.remaining, (unsigned long)v.score, (unsigned long)v.best,
-            (unsigned long)v.kills, (unsigned long)v.shots, (unsigned long)v.hits, v.steer, v.cam, v.src, v.servo, (unsigned long)v.frames);
+            (unsigned long)v.kills, (unsigned long)v.shots, (unsigned long)v.hits, v.steer, v.cam, v.src, v.servo, (unsigned long)v.frames, (unsigned long)v.voxels);
     return true;
 }
 static void icon(void *parent, int x, int y, bool selected)

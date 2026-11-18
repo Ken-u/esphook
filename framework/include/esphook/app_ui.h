@@ -25,8 +25,7 @@ void app_ui_hold_line(lv_obj_t *line, unsigned hold_ms, bool confirm, unsigned e
 /* One framework-owned RGB565 scratch canvas of APP_CANVAS_W x APP_CANVAS_H, reused between applications.
  * Radar and stock use its first 48 rows, games use all of it. Repaint before invalidating the image;
  * never retain across an app transition. */
-#define APP_CANVAS_W 160
-#define APP_CANVAS_H 64
+#include "app_canvas.h" /* APP_CANVAS_W x APP_CANVAS_H */
 uint16_t *app_ui_pixels(void);
 void app_ui_plot_refresh(lv_obj_t *image, const lv_image_dsc_t *descriptor);
 /* The usual way to show the shared canvas: an image object at (x, y) under `parent` that displays the first `h` rows

@@ -7,7 +7,7 @@
 #include <stdint.h>
 #include <string.h>
 #include "app_math.h"
-#include "app_ui.h"
+#include "app_canvas.h"
 
 static inline uint16_t gfx_rgb565(uint32_t rgb)
 {
