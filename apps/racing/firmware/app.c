@@ -28,6 +28,7 @@
 #define KY 261000        /* distance in mm of a road row = KY / (row - HY) */
 #define FOC 200          /* pixels per mm at a distance of 1 mm: a row is KY / FOC = 1.3 m under the eye, the road 7 m wide */
 #define VEYE 2800        /* the camera of the stacked models: how high above the road it looks down at them (their roofs show) */
+#define BEND_VIEW 6      /* the road is drawn bending this much more than it pushes: a bend that is real on a 7 m road is a line on 160 px */
 #define VOXEL_NEAR_MM 80000 /* trees and posts nearer than this are voxels */
 #define DASH_Y 52
 
@@ -81,6 +82,8 @@ static void write_text(uint16_t *px, int x, int y, int scale, const char *text, 
 }
 
 /* ---- the road, row by row ------------------------------------------------------------------------------------ */
+/* The bend as it is drawn (the game's own bend, rc_curve_at(), is what pushes the car). */
+static int bend_at(const rc_t *r, int32_t pos_mm) { return rc_curve_at(r, pos_mm) * BEND_VIEW; }
 static void build_rows(rows_t *rw, const rc_t *r)
 {
     int64_t slope = 0; /* in 1e-5 */
@@ -89,7 +92,7 @@ static void build_rows(rows_t *rw, const rc_t *r)
         const int32_t z = KY / (y - HY), dz = prev ? z - prev : 0;
         if (dz) {
             const int64_t old = slope;
-            slope += (int64_t)rc_curve_at(r, r->pos_mm + (prev + z) / 2) * dz / 1000;
+            slope += (int64_t)bend_at(r, r->pos_mm + (prev + z) / 2) * dz / 1000;
             x += (int32_t)((old + slope) / 2 * dz / 100000);
         }
         prev = z;
@@ -179,6 +182,24 @@ static void draw_gantry(uint16_t *px, int cx, int hw, int y) /* far away: a flat
     }
     gfx_rect(px, x0 - 1, top - u / 2 - 1, x1 - x0 + 3, 1, c565(0xE03A2E));
     gfx_rect(px, x0 - 1, top + 1, x1 - x0 + 3, 1, c565(0xE03A2E));
+}
+
+/* A yellow board with black chevrons on the outside of a bend, pointing the way it goes (dir +1: to the right). */
+static void draw_chevrons(uint16_t *px, int x, int y, int u, int dir)
+{
+    if (u < 2) return;
+    const int w = u * 3 / 2 + 1, h = u + 1, pole = u * 3 / 2, top = y - pole - h / 2, half = w / 2;
+    gfx_rect(px, x, y - pole, u >= 6 ? 2 : 1, pole, c565(haze(0x8890A0, y)));
+    gfx_rect(px, x - half, top, w, h, c565(haze(0x181820, y)));
+    gfx_rect(px, x - half + 1, top + 1, w - 2, h - 2, c565(haze(0xF2C230, y)));
+    const uint16_t ink = c565(haze(0x181820, y));
+    const int tip = x + dir * (half / 2), tail = x - dir * (half / 2), mid = top + h / 2;
+    gfx_line(px, tail, top + 2, tip, mid, ink);
+    gfx_line(px, tip, mid, tail, top + h - 3, ink);
+    if (u >= 5) { /* a second, thicker stroke on the bigger boards */
+        gfx_line(px, tail + dir, top + 2, tip + dir, mid, ink);
+        gfx_line(px, tip + dir, mid, tail + dir, top + h - 3, ink);
+    }
 }
 
 /* ---- voxel things: cars, trees, posts and the gantry ---------------------------------------------------------- */
@@ -281,6 +302,11 @@ static void draw_objects(uint16_t *px, const rows_t *rw, const rc_t *r, unsigned
         const int y = dz > 0 ? HY + KY / dz : 0;
         if (y <= HY + 1 || y >= APP_CANVAS_H) continue;
         const int u = (y - HY) * 2 / 3;
+        const int bend = rc_curve_at(r, r->pos_mm + dz);
+        if (index % 4 == 2 && app_abs(bend) >= 90) { /* a bend ahead: chevrons on its outside, where the car is thrown */
+            const int side = bend > 0 ? -1 : 1;
+            draw_chevrons(px, rw->cx[y] + side * rw->hw[y] * 125 / 100, y, u, -side);
+        }
         for (int side = -1; side <= 1; side += 2) {
             const uint32_t salt = (uint32_t)index * 2U + (side > 0 ? 1U : 0U);
             if ((gfx_hash(salt * 7U) & 7U) == 0U) continue; /* a gap in the trees */
@@ -554,7 +580,7 @@ static void tick(app_context_t *ctx)
     rc_advance(&s->core, dt);
     s->last_ms = now;
     if (s->core.phase == RC_OVER) (void)app_best_record(ctx, s->core.best);
-    s->bg16 -= (int)((int64_t)rc_curve_at(&s->core, s->core.pos_mm) * (int)rc_speed_kmh(&s->core) * (int)(dt > 200U ? 200U : dt) / 165000);
+    s->bg16 -= (int)((int64_t)bend_at(&s->core, s->core.pos_mm) * (int)rc_speed_kmh(&s->core) * (int)(dt > 200U ? 200U : dt) / 165000);
     app_servo_t sv;
     app_servo_read(&sv);
     /* the servo is the steering wheel while racing and a shaker in a crash */

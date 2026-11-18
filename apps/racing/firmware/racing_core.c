@@ -146,7 +146,7 @@ static void drive(rc_t *r, bool racing)
 
     const int kmh = r->speed16 / 16, eff = r->stun_ms > 0 ? r->steer / 3 : r->steer;
     const int grip = kmh < 140 ? kmh : 140;
-    const int push = -(rc_curve_at(r, r->pos_mm) * kmh * kmh) * 16 / 1500000; /* the bend throws the car outwards */
+    const int push = -(rc_curve_at(r, r->pos_mm) * kmh * kmh) * 16 / 1000000; /* the bend throws the car outwards */
     r->px16 += eff * grip * 192 / 25600 + push;
     if (r->stun_ms > 0) r->stun_ms -= (int)RC_STEP_MS;
     if (app_abs(r->px16) > RC_WALL * 16) { /* the barrier */

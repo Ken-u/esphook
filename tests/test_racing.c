@@ -150,7 +150,7 @@ static void test_road(void)
     while (rc_curve_at(&r, at) < 220) at += 1000;
     r.pos_mm = at;
     for (unsigned i = 0; i < 50; ++i) { r.speed16 = 60 * 16; rc_advance(&r, 20); }
-    assert(absi(rc_px(&r)) < 30); /* slowly, the same bend is nothing */
+    assert(absi(rc_px(&r)) < 45); /* slowly, the same bend moves the car far less: the push goes with the square of the speed */
 }
 
 static void test_traffic(void)
@@ -206,7 +206,7 @@ static void bot(rc_t *r, bool smart, bool auto_nitro)
         }
     int steer = (target - px) * 256 / 250;
     const int grip = kmh < 140 ? kmh : 140;
-    if (smart && grip > 0) steer += rc_curve_at(r, r->pos_mm) * kmh * kmh / (grip * 703);
+    if (smart && grip > 0) steer += rc_curve_at(r, r->pos_mm) * kmh * kmh / (grip * 469);
     rc_steer(r, steer > 256 ? 256 : steer < -256 ? -256 : steer);
     rc_throttle(r, !smart || (absi(px) < 850 && (r->stun_ms <= 0 || kmh < 60)));
     if (smart && auto_nitro && r->nitro == RC_NITRO_FULL && absi(rc_curve_at(r, r->pos_mm + 200000)) < 100) rc_nitro(r);

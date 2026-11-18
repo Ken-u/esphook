@@ -858,6 +858,19 @@ static void pose_racing(const char *out)
     r->nitro_ms=0;r->car[2].pos_mm=r->pos_mm+4600;r->car[2].px=rc_px(r);r->car[2].speed=60;
     run(60);dump(out,"racing-pose-crash");
     assert(RC_STATUS("vox=")>500 && RC_STATUS("vox=")<3500);
+    /* and a bend to the left, with the road empty: the chevrons and the swing of the road */
+    memset(r->car,0,sizeof r->car);r->spawn_wait=60000;
+    at=r->pos_mm+300000;while(rc_curve_at(r,at)>-230) at+=1000;
+    r->pos_mm=at-45000;r->speed16=120*16;r->px16=0;r->nitro_ms=0;r->time_ms=30000;r->next_cp_mm=at+600000;
+    run(600);dump(out,"racing-pose-left");
+    assert(RC_STATUS("vox=")>100 && RC_STATUS("vox=")<3500); /* an empty road: trees and lamp posts only */
+    at=r->pos_mm+300000;while(rc_curve_at(r,at)<230) at+=1000;
+    r->pos_mm=at-45000;r->speed16=120*16;r->px16=0;r->next_cp_mm=at+600000;
+    run(600);dump(out,"racing-pose-right");
+    /* late in the run the bends are as hard as they get */
+    at=8000000;while(rc_curve_at(r,at)<290) at+=1000;
+    r->pos_mm=at-45000;r->speed16=120*16;r->px16=0;r->next_cp_mm=at+600000;
+    run(600);dump(out,"racing-pose-hard");
 }
 static void play_racing(const char *out)
 {

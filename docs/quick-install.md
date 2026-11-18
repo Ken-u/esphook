@@ -86,7 +86,7 @@ curl -fsSL https://raw.githubusercontent.com/Ken-u/esphook/agent/install-agent-h
 
 # 指定 Release，便于回滚或复现
 curl -fsSL https://raw.githubusercontent.com/Ken-u/esphook/agent/install-agent-hooks/install.sh \
-  | bash -s -- --release v0.0.0-123
+  | bash -s -- --release v0.3.0-64
 
 # 已经明确同意修改 Hook 的自动化环境
 curl -fsSL https://raw.githubusercontent.com/Ken-u/esphook/agent/install-agent-hooks/install.sh \
@@ -97,7 +97,7 @@ curl -fsSL https://raw.githubusercontent.com/Ken-u/esphook/agent/install-agent-h
 
 ## Release 生成规则
 
-CI 在 Pull Request 和非默认分支上只进行测试和固件构建。默认分支每次 push 在主机测试和 ESP32-C3 构建均成功后，自动创建一个编号形式的正式 Release：`v0.0.0-<GitHub Actions run number>`。因此 GitHub 的 `latest` Release 始终能被安装脚本发现。
+CI 在 Pull Request 和非默认分支上只进行测试和固件构建。默认分支每次 push 在主机测试和 ESP32-C3 构建均成功后，自动创建一个编号形式的正式 Release：`v<version.txt>-<GitHub Actions run number>`（例如 `v0.3.0-64`）。因此 GitHub 的 `latest` Release 始终能被安装脚本发现。
 
 ## 固件使用
 

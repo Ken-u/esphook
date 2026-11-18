@@ -69,7 +69,7 @@ K3 一端 ─ GPIO11      K3 另一端 ─ GND
 
 ## 初次 USB 烧录
 
-初次烧录或分区/字库变化时，在项目根目录执行：
+只想刷现成固件的话不用装 ESP-IDF，下载 Release 的 `esphook-kit.zip`，用 `python run.py flash` 即可，见 [README 的烧录一节](../README.md#1-烧录固件)。下面是自己从源码构建、再用 `idf.py` 烧录的做法：初次烧录或分区/字库变化时，在项目根目录执行：
 
 ```bash
 source "$IDF_PATH/export.sh"
