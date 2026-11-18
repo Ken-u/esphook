@@ -125,8 +125,9 @@ static void draw_prop(uint16_t *px, const zb_t *g, unsigned i, bool blood, unsig
     const stack_model_t *model = (h & 0x40000U) ? &zm_cross : &zm_tomb;
     stack_view_t v;
     ground_view(&v, x, z, blood);
-    /* a stone stands where it was put: as the view turns it is seen from another side */
-    v.yaw = (unsigned)((int)((h >> 8) & 31U) - 16 - (x - CX) * 87 / 256) & 255U;
+    /* a stone stands where it was put and faces the middle of the view: the side towards you shows, so as the view turns
+     * a stone that slides to the left of the screen shows its right side */
+    v.yaw = (unsigned)((int)((h >> 8) & 31U) - 16 + stack_yaw_seen(x - CX, 120)) & 255U;
     v.edge = z < 450 ? 50U : 0U;
     stack_shadow(px, model, &v, 0x000000, 70);
     *voxels += stack_draw(px, model, &v);

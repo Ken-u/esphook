@@ -9,6 +9,7 @@
 #include "esphook/app_command.h"
 #include "esphook/app_sync.h"
 #include "starship_core.h"
+#include "starship_models.h"
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
@@ -16,7 +17,11 @@
 /* 星际战机: a first-person cockpit view on the shared 160x64 canvas, the bottom 16 px a message strip. The radar (or
  * the K2/K3 keys) slides the ship left and right, the cannon fires while the main key is held, and an enemy bolt or a
  * collision costs one of three shield points and gives the servo a short shake when it has been enabled (hold a key for
- * 0.5 s on the title or game over screen; it is never enabled on its own). Game rules live in starship_core.c. */
+ * 0.5 s on the title or game over screen; it is never enabled on its own). Game rules live in starship_core.c.
+ *
+ * Asteroids, enemy fighters and the cannons on your own wings are voxel models drawn as stacks of slices (esphook/app_stack.h,
+ * models in starship_models.c) once they are big enough to show it; far away they are the flat sprites they used to be.
+ * Bolts, shots and explosions stay flat: they are light, not things. */
 #define BAND_Y 64
 #define CX 80
 #define HY 25     /* the horizon: where everything at eye level converges */
@@ -35,13 +40,14 @@ typedef struct {
     int prev_cam;
     uint32_t shown_key, shown_score, shown_best;
     uint8_t down_in_play;
+    unsigned voxels; /* slices drawn in the last frame (the cost of the picture) */
 } state_t;
 _Static_assert(sizeof(state_t) <= APP_STATE_CAPACITY, "starship state too large");
 _Static_assert(offsetof(state_t, core) == 0, "tests pose the scene through the core at the start of the state");
 typedef struct {
     bool active;
     uint8_t phase, hp, src, servo, objs, foes;
-    uint32_t score, best, kills, shots, frames;
+    uint32_t score, best, kills, shots, frames, voxels;
     int steer, cam;
 } status_t;
 static status_t s_status;
@@ -93,10 +99,65 @@ static void draw_space(uint16_t *px, const view_t *v, unsigned now, int cam_prev
 }
 
 /* ---- things in the field ------------------------------------------------------------------------------------- */
+static const uint32_t ROCK_TONES[4] = {0x7A6C5C, 0x626C7C, 0x8A604A, 0x6C7064};
+#define VOXEL_MIN_PX 5 /* a rock or fighter whose half width is under this many pixels stays a flat sprite */
+#define PITCH 20       /* every voxel thing is seen from the same 28 degrees above: a steady three quarter view */
+
+/* A model floating with its middle at (x, y), `scale` pixels per voxel (8.8), lit from the planet's side and dimmed into
+ * the dark with the distance `z`. */
+static void space_view(stack_view_t *v, const stack_model_t *m, int x, int y, int scale, int z)
+{
+    stack_view_init(v);
+    stack_view_pitch(v, PITCH);
+    v->scale = scale;
+    v->x = x;
+    v->y = y + (int)(((int64_t)m->h * ((scale * (int)v->squash) >> 8)) >> 9);
+    v->light = 0xFFEBC8;
+    v->top_light = 90;
+    v->shade = 50;
+    v->tint = 0x0B1238;
+    v->tint_amt = (unsigned)app_clamp(z - 700, 0, 1000) * 150U / 1000U;
+}
+static bool draw_rock_voxel(uint16_t *px, int x, int y, int rad, const ss_obj_t *o, unsigned now, unsigned *voxels)
+{
+    if (rad < VOXEL_MIN_PX) return false;
+    if (rad > 60) rad = 60; /* it is about to hit: it stops growing */
+    const stack_model_t *m = ((o->seed >> 2) % 3U) == 0U ? &sm_rock_a : ((o->seed >> 2) % 3U) == 1U ? &sm_rock_b : &sm_rock_c;
+    const uint32_t base = ROCK_TONES[o->seed & 3U];
+    uint32_t pal[5];
+    pal[0] = base;
+    pal[1] = gfx_mix(base, 0x000000, 110);
+    pal[2] = gfx_mix(base, 0xFFFFFF, 70);
+    pal[3] = gfx_mix(base, 0x000000, 170);
+    pal[4] = gfx_mix(0xFF6A20, 0xFFC060, (unsigned)(gfx_sin256(now / 7U + o->seed * 9U) + 256) / 2U); /* the ore glows */
+    stack_view_t v;
+    space_view(&v, m, x, y, rad * 2 * 256 / SM_ROCK_SIZE, o->z);
+    v.palette = pal;
+    v.yaw = ((unsigned)o->age / 2U + (unsigned)o->seed * 37U) & 255U; /* a slow tumble */
+    if (o->flash) { v.tint = 0xFFFFFF; v.tint_amt = 40U + (unsigned)o->flash * 24U; }
+    *voxels += stack_draw(px, m, &v);
+    return true;
+}
+static bool draw_enemy_voxel(uint16_t *px, int x, int y, int u, const ss_obj_t *o, unsigned now, unsigned *voxels)
+{
+    if (u < VOXEL_MIN_PX) return false;
+    if (u > 70) u = 70;
+    stack_view_t v;
+    space_view(&v, &sm_fighter, x, y, u * 2 * 256 / SM_FOE_WIDE, o->z);
+    uint32_t pal[6];
+    memcpy(pal, sm_fighter.colors, sizeof pal);
+    if (o->state == SE_HOLD && o->fire < 14U) { pal[3] = 0xFFC060; pal[4] = 0xFFF0B0; } /* the guns charge before a shot */
+    pal[5] = gfx_mix(0xFF2A2A, 0xFFD0C0, (unsigned)(gfx_sin256(now / 6U + o->seed) + 256) / 2U); /* the eye pulses */
+    v.palette = pal;
+    v.yaw = (unsigned)(stack_yaw_seen(x - CX, FOC) / 2 + gfx_sin256(now / 22U + o->seed) / 24) & 255U; /* nose to you, a little sway */
+    v.lean = v.scale * gfx_sin256(now / 20U + o->seed + 64U) / 2048;                                 /* and a bank */
+    if (o->flash) { v.tint = 0xFFFFFF; v.tint_amt = 40U + (unsigned)o->flash * 22U; }
+    *voxels += stack_draw(px, &sm_fighter, &v);
+    return true;
+}
 static void draw_rock(uint16_t *px, int x, int y, int rad, const ss_obj_t *o)
 {
-    static const uint32_t tones[4] = {0x7A6C5C, 0x626C7C, 0x8A604A, 0x6C7064};
-    const uint32_t base = tones[o->seed & 3U];
+    const uint32_t base = ROCK_TONES[o->seed & 3U];
     if (rad < 2) { gfx_rect(px, x, y, 2, 2, c565(gfx_mix(base, 0xFFFFFF, 60))); return; }
     if (rad > 70) rad = 70;
     gfx_disc(px, x, y, rad, c565(gfx_mix(base, 0x000000, 150)));
@@ -189,7 +250,7 @@ static void heart(uint16_t *px, int x, int y, bool full)
         for (int c = 0; c < 5; ++c)
             if (rows[r][c] == 'X') gfx_plot(px, x + c, y + r, c565(full ? (r == 0 && c == 1 ? 0xFFB0C4 : 0xFF4A7A) : 0x3A2A48));
 }
-static void draw_cockpit(uint16_t *px, const state_t *s, unsigned now)
+static void draw_cockpit(uint16_t *px, const state_t *s, unsigned now, unsigned *voxels)
 {
     const ss_t *g = &s->core;
     gfx_rect(px, 0, 0, APP_CANVAS_W, 2, c565(0x10142A)); /* the frame of the canopy */
@@ -204,13 +265,22 @@ static void draw_cockpit(uint16_t *px, const state_t *s, unsigned now)
     gfx_ellipse(px, CX, 59, 74, 8, c565(0x46558A)); /* the dashboard, a lit edge over a dark body */
     gfx_ellipse(px, CX, 60, 73, 8, c565(0x121830));
     gfx_rect(px, 0, 60, APP_CANVAS_W, 4, c565(0x0C1022));
-    for (int side = -1; side <= 1; side += 2) { /* the cannons, with a muzzle flash right after a shot */
-        const int gx = CX + side * 50;
-        gfx_rect(px, gx - 1, 48, 3, 6, c565(0x6A7AA8));
-        gfx_vline(px, gx, 48, 53, c565(0xB4C4F0));
+    for (int side = -1; side <= 1; side += 2) { /* the cannon pods on your wings, with a muzzle flash right after a shot */
+        stack_view_t v;
+        stack_view_init(&v);
+        stack_view_pitch(&v, 24);
+        v.scale = 400;
+        v.x = CX + side * 48;
+        v.y = 55;
+        v.yaw = (unsigned)(side * 6) & 255U; /* toed in: the muzzles point at the crosshair */
+        v.light = 0xCFE0FF;
+        v.top_light = 80;
+        *voxels += stack_draw(px, &sm_cannon, &v);
         if (g->phase == SS_PLAY && g->cooldown >= SS_FIRE_STEPS - 3U) {
-            gfx_tint_ellipse(px, gx, 47, 4, 3, 0x40F0FF, 200);
-            gfx_disc(px, gx, 47, 1, c565(0xFFFFFF));
+            int mx, my;
+            stack_project(&sm_cannon, &v, 2, 0, 1, &mx, &my);
+            gfx_tint_ellipse(px, mx, my - 1, 4, 3, 0x40F0FF, 200);
+            gfx_disc(px, mx, my - 1, 1, c565(0xFFFFFF));
         }
     }
     /* shield: three hearts, the newest loss blinks while the ship is untouchable */
@@ -277,6 +347,7 @@ static void draw_scene(uint16_t *px, state_t *s, unsigned now)
         v.oy = (int)((h >> 8) % (uint32_t)(a * 2 + 1)) - a;
     }
     draw_space(px, &v, now, s->prev_cam, g->phase == SS_PLAY || g->phase == SS_DYING ? 3U : 5U);
+    unsigned voxels = 0;
     uint8_t order[SS_OBJ];
     unsigned n = 0;
     for (unsigned i = 0; i < SS_OBJ; ++i)
@@ -293,8 +364,11 @@ static void draw_scene(uint16_t *px, state_t *s, unsigned now)
         const int lift = o->z > 800 ? 700 : o->z - SS_ZN, y_off = o->kind == SO_ENEMY ? (50 + gfx_sin256(now / 14U + o->seed) / 20) * lift / 700 : ((int)(o->seed >> 4) - 8) * 6;
         const int x = vx(&v, o->x, o->z), y = vy(&v, y_off, o->z), rad = o->r * FOC / (o->z < 40 ? 40 : o->z);
         if (x + rad < 0 || x - rad >= APP_CANVAS_W) continue;
-        if (o->kind == SO_ENEMY) draw_enemy(px, x, y, rad, o, now);
-        else draw_rock(px, x, y, rad, o);
+        if (o->kind == SO_ENEMY) {
+            if (!draw_enemy_voxel(px, x, y, rad, o, now, &voxels)) draw_enemy(px, x, y, rad, o, now);
+        } else if (!draw_rock_voxel(px, x, y, rad, o, now, &voxels)) {
+            draw_rock(px, x, y, rad, o);
+        }
     }
     for (unsigned i = 0; i < SS_BOLT; ++i) {
         const ss_bolt_t *b = &g->bolt[i];
@@ -325,7 +399,8 @@ static void draw_scene(uint16_t *px, state_t *s, unsigned now)
         gfx_tint(px, APP_CANVAS_W - 5, 3, 5, DASH_Y, 0xFF1A1A, a);
         gfx_tint(px, 0, 3, APP_CANVAS_W, DASH_Y, 0xFF2A1A, a / 3U);
     }
-    draw_cockpit(px, s, now);
+    draw_cockpit(px, s, now, &voxels);
+    s->voxels = voxels;
     if (g->phase == SS_TITLE || g->phase == SS_OVER) {
         gfx_tint(px, 0, 0, APP_CANVAS_W, APP_CANVAS_H, 0x01030C, g->phase == SS_OVER ? 150U : 80U);
         gfx_tint(px, 14, 6, 132, 38, 0x061024, 170);
@@ -369,7 +444,7 @@ static void publish(const state_t *s, bool active, bool frame)
     app_critical_enter();
     s_status.active = active; s_status.phase = g->phase; s_status.hp = g->hp; s_status.src = s->steer.source;
     s_status.servo = (uint8_t)hs; s_status.score = g->score; s_status.best = g->best; s_status.kills = g->kills;
-    s_status.shots = g->shots_fired; s_status.steer = s->steer.steer; s_status.cam = g->cam_x;
+    s_status.shots = g->shots_fired; s_status.steer = s->steer.steer; s_status.cam = g->cam_x; s_status.voxels = s->voxels;
     s_status.objs = (uint8_t)ss_live_objects(g); s_status.foes = 0;
     for (unsigned i = 0; i < SS_OBJ; ++i) s_status.foes = (uint8_t)(s_status.foes + (g->obj[i].alive && g->obj[i].kind == SO_ENEMY));
     if (frame) ++s_status.frames;
@@ -509,9 +584,9 @@ static bool command(const char *line)
     if (!app_command_is(line, "robot starship status")) return false;
     status_t v;
     app_shared_copy(v, s_status);
-    (void)app_command_replyf("active=%u phase=%u hp=%u score=%lu best=%lu kills=%lu shots=%lu steer=%d cam=%d objs=%u foes=%u src=%u servo=%u frames=%lu",
+    (void)app_command_replyf("active=%u phase=%u hp=%u score=%lu best=%lu kills=%lu shots=%lu steer=%d cam=%d objs=%u foes=%u src=%u servo=%u frames=%lu vox=%lu",
             v.active ? 1U : 0U, v.phase, v.hp, (unsigned long)v.score, (unsigned long)v.best, (unsigned long)v.kills,
-            (unsigned long)v.shots, v.steer, v.cam, v.objs, v.foes, v.src, v.servo, (unsigned long)v.frames);
+            (unsigned long)v.shots, v.steer, v.cam, v.objs, v.foes, v.src, v.servo, (unsigned long)v.frames, (unsigned long)v.voxels);
     return true;
 }
 static void icon(void *parent, int x, int y, bool selected)

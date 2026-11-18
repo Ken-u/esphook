@@ -1,4 +1,5 @@
 #include "esphook/app.h"
+#include "esphook/app_math.h"
 #include "esphook/app_gfx.h"
 #include "esphook/app_haptic.h"
 #include "esphook/app_services.h"
@@ -8,6 +9,7 @@
 #include "esphook/app_command.h"
 #include "esphook/app_sync.h"
 #include "racing_core.h"
+#include "racing_models.h"
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
@@ -15,16 +17,21 @@
 /* 极速赛车: a first-person drive on the shared 160x64 canvas, the bottom 16 px a message strip. Hold the key to
  * accelerate, double-tap it for nitro when the tank is full, steer with the radar (or K2/K3). The servo follows the
  * steering wheel once it has been enabled (hold a key for 0.5 s on the title or game over screen; it is never enabled
- * on its own) and gives a short shake in a crash. Game rules live in racing_core.c. */
+ * on its own) and gives a short shake in a crash. Game rules live in racing_core.c. The cars, the trees, the lamp posts and
+ * the checkpoint gantry that are close enough are stacks of voxel slices (esphook/app_stack.h, models in racing_models.c):
+ * they turn with the bends of the road and show their sides as they pass; the far ones stay flat sprites. */
 #define BAND_Y 64
 #define EXIT_HOLD_MS 2000U
 #define HINT_SLOT_MS 2600U
 #define CX 80
 #define HY 22            /* the horizon */
 #define KY 261000        /* distance in mm of a road row = KY / (row - HY) */
+#define FOC 200          /* pixels per mm at a distance of 1 mm: a row is KY / FOC = 1.3 m under the eye, the road 7 m wide */
+#define VEYE 2800        /* the camera of the stacked models: how high above the road it looks down at them (their roofs show) */
+#define VOXEL_NEAR_MM 80000 /* trees and posts nearer than this are voxels */
 #define DASH_Y 52
 
-typedef struct { int16_t cx[APP_CANVAS_H], hw[APP_CANVAS_H]; int32_t z[APP_CANVAS_H]; } rows_t;
+typedef struct { int16_t cx[APP_CANVAS_H], hw[APP_CANVAS_H]; int32_t z[APP_CANVAS_H], slope[APP_CANVAS_H]; } rows_t; /* slope: where the road heads, 1e-5 */
 typedef struct {
     rc_t core;
     steer_t steer;
@@ -34,13 +41,14 @@ typedef struct {
     int bg16;
     uint32_t shown_key, shown_score, shown_card;
     uint8_t down_in_race;
+    unsigned voxels; /* slices drawn in the last frame (the cost of the picture) */
 } state_t;
 _Static_assert(sizeof(state_t) <= APP_STATE_CAPACITY, "racing state too large");
 _Static_assert(offsetof(state_t, core) == 0, "tests pose the scene through the core at the start of the state");
 typedef struct {
     bool active;
     uint8_t phase, servo, nitro_ready, src;
-    uint32_t speed, dist, score, best, cps, crashes, frames;
+    uint32_t speed, dist, score, best, cps, crashes, frames, voxels;
     int px, steer;
     unsigned time_s, nitro;
 } status_t;
@@ -86,15 +94,18 @@ static void build_rows(rows_t *rw, const rc_t *r)
         }
         prev = z;
         rw->z[y] = z;
+        rw->slope[y] = (int32_t)slope;
         rw->hw[y] = (int16_t)((y - HY) * 8 / 3);
         rw->cx[y] = (int16_t)(CX + x * (y - HY) / 1500 - rc_px(r) * ((y - HY) * 8 / 3) / 1000);
     }
 }
-static uint32_t haze(uint32_t color, int y)
+static int haze_amount(int y)
 {
+    y = app_clamp(y, HY, APP_CANVAS_H - 1);
     const int far = (APP_CANVAS_H - 1 - y) * 256 / (APP_CANVAS_H - 1 - HY); /* 0 near .. 256 at the horizon */
-    return gfx_mix(color, 0xE8B890, (unsigned)(far * far / 256 * 150 / 256));
+    return far * far / 256 * 150 / 256;
 }
+static uint32_t haze(uint32_t color, int y) { return gfx_mix(color, 0xE8B890, (unsigned)haze_amount(y)); }
 static void draw_road(uint16_t *px, const rows_t *rw, const rc_t *r, unsigned now)
 {
     for (int y = APP_CANVAS_H - 1; y > HY; --y) {
@@ -131,7 +142,7 @@ static void draw_sky(uint16_t *px, const state_t *s, unsigned now)
 }
 
 /* ---- things beside and on the road --------------------------------------------------------------------------- */
-static void draw_tree(uint16_t *px, int x, int y, int u, uint32_t salt)
+static void draw_tree(uint16_t *px, int x, int y, int u, uint32_t salt) /* far away: a flat sprite */
 {
     const uint32_t h = gfx_hash(salt);
     if (u < 2) { gfx_rect(px, x, y - 3, 2, 3, c565(0x2E6A34)); return; }
@@ -150,14 +161,14 @@ static void draw_tree(uint16_t *px, int x, int y, int u, uint32_t salt)
         }
     }
 }
-static void draw_post(uint16_t *px, int x, int y, int u)
+static void draw_post(uint16_t *px, int x, int y, int u) /* far away: a flat sprite */
 {
     if (u < 2) { gfx_vline(px, x, y - 4, y, c565(0x8890A0)); return; }
     gfx_rect(px, x, y - u * 3, u / 4 + 1, u * 3, c565(haze(0x9098A8, y)));
     gfx_rect(px, x - u / 2, y - u * 3, u / 2 + u / 4 + 1, u / 4 + 1, c565(haze(0x9098A8, y)));
     gfx_tint_ellipse(px, x - u / 2, y - u * 3 + 1, u / 2 + 1, u / 2 + 1, 0xFFE8A0, 120);
 }
-static void draw_gantry(uint16_t *px, int cx, int hw, int y)
+static void draw_gantry(uint16_t *px, int cx, int hw, int y) /* far away: a flat sprite */
 {
     const int u = (y - HY) * 2 / 3, x0 = cx - hw * 118 / 100, x1 = cx + hw * 118 / 100, top = y - u * 5;
     gfx_rect(px, x0 - 1, top, 3, y - top, c565(0xD8D8E0));
@@ -169,33 +180,98 @@ static void draw_gantry(uint16_t *px, int cx, int hw, int y)
     gfx_rect(px, x0 - 1, top - u / 2 - 1, x1 - x0 + 3, 1, c565(0xE03A2E));
     gfx_rect(px, x0 - 1, top + 1, x1 - x0 + 3, 1, c565(0xE03A2E));
 }
-static void draw_car(uint16_t *px, int x, int y, int w, const rc_car_t *car, unsigned now)
+
+/* ---- voxel things: cars, trees, posts and the gantry ---------------------------------------------------------- */
+static int row_of(int z_mm) { return HY + KY / (z_mm < 1 ? 1 : z_mm); }
+/* The view of a model standing on the road: the middle of its footprint is `zc` mm ahead (that is the row its foot is on),
+ * the size of its voxels is the size at `zs` mm, and `x` is the screen column of its middle. It is seen from above and
+ * through the haze, and lit from the low sun. */
+static void road_view(stack_view_t *v, int x, int zc, int zs)
 {
-    static const uint32_t body[6] = {0xD8302A, 0x2E6FD8, 0xE8B82A, 0x38A85A, 0xB0B8C8, 0x9A4AC8};
-    if (w < 3) {
-        gfx_rect(px, x - w, y - w * 3 / 4 - 1, w * 2 + 1, w * 3 / 4 + 1, c565(body[car->color % 6U]));
-        gfx_plot(px, x - w, y - 1, c565(0xFF3A3A));
+    const int y = row_of(zc);
+    stack_view_init(v);
+    stack_view_world(v, x, y, zs, RM_VOXEL, VEYE, FOC);
+    v->tint = 0xE8B890;
+    v->tint_amt = (unsigned)haze_amount(y);
+    v->light = 0xFFE8C8;
+    v->top_light = 70;
+    v->shade = 70;
+    v->edge = zs < 30000 ? 40U : 0U;
+}
+/* What a fixed thing standing at screen column `x`, `row` of the road, is turned to: it faces the middle of the view and
+ * follows where the road is heading there (a bend to the right turns the tails of the cars to the left). */
+static unsigned heading_yaw(const rows_t *rw, int row, int x)
+{
+    return (unsigned)(stack_yaw_seen(x - CX, FOC) - (int)(rw->slope[app_clamp(row, HY + 1, APP_CANVAS_H - 1)] * 41 / 100000)) & 255U;
+}
+static const stack_model_t *car_model(const rc_car_t *car)
+{
+    const uint32_t kind = app_hash32((uint32_t)car->px * 7919U + car->color) % 3U; /* fixed for a car: the lane and the paint */
+    return kind == 0U ? &rm_coupe : kind == 1U ? &rm_sedan : &rm_van;
+}
+static void draw_car(uint16_t *px, const rows_t *rw, const rc_car_t *car, int dz, unsigned now, unsigned *voxels)
+{
+    static const uint32_t body[6] = {0xE87A22, 0x2E6FD8, 0xE8B82A, 0x38A85A, 0xB0B8C8, 0x9A4AC8};
+    const stack_model_t *model = car_model(car);
+    const int depth = model->d * RM_VOXEL, zc = dz + depth / 2, row = row_of(zc);
+    if (row <= HY + 1 || row >= APP_CANVAS_H) return;
+    const int x = rw->cx[row] + car->px * rw->hw[row] / 1000;
+    stack_view_t v;
+    road_view(&v, x, zc, dz + depth / 3);
+    const uint32_t paint = body[car->color % 6U];
+    if (v.scale < 80) { /* too far for slices: a dot of its paint and its tail lights */
+        const int w = v.scale * model->w / 512 + 1;
+        gfx_rect(px, x - w, row - w * 3 / 4 - 1, w * 2 + 1, w * 3 / 4 + 1, c565(haze(paint, row)));
+        gfx_plot(px, x - w, row - 1, c565(0xFF3A3A));
         return;
     }
-    const uint32_t b = body[car->color % 6U], dark = gfx_mix(b, 0x000000, 120), glass = 0x16243C;
-    const int hw = w, h = w * 3 / 5 + 1, cab = w * 3 / 5;
-    gfx_tint_ellipse(px, x, y, hw + 1, h / 5 + 1, 0x000000, 110);                          /* shadow */
-    gfx_rect(px, x - hw, y - h * 2 / 3, hw * 2 + 1, h * 2 / 3, c565(haze(b, y)));           /* body */
-    gfx_rect(px, x - cab, y - h - h / 4, cab * 2 + 1, h / 3 + h / 4, c565(haze(gfx_mix(b, 0x000000, 40), y))); /* cabin */
-    gfx_rect(px, x - cab + 1, y - h - h / 4 + 1, cab * 2 - 1, h / 3 + h / 4 - 1, c565(haze(glass, y)));      /* rear window */
-    gfx_hline(px, x - cab + 1, x + cab - 1, y - h - h / 4 + 1, c565(haze(0x4A6890, y)));
-    gfx_rect(px, x - hw, y - h * 2 / 3, hw * 2 + 1, 1, c565(haze(gfx_mix(b, 0xFFFFFF, 70), y)));             /* roof line of the boot */
-    gfx_rect(px, x - hw, y - h / 3, hw * 2 + 1, h / 3, c565(haze(dark, y)));                                 /* bumper */
-    const int lw = w / 3 + 1;
     const bool braking = car->flash || (now / 160U) % 9U < 1U;
-    for (int side = -1; side <= 1; side += 2) {
-        gfx_rect(px, x + side * (hw - lw) - (side > 0 ? 0 : lw - 1), y - h * 2 / 3 + 1, lw, h / 4 + 1, c565(braking ? 0xFF6A5A : 0xC0201C)); /* tail lights */
-        gfx_rect(px, x + side * (hw - w / 6) - w / 8, y - h / 5, w / 4 + 1, h / 5 + 1, c565(0x0C0C10));                            /* wheels */
+    uint32_t pal[RM_CAR_COLORS];
+    memcpy(pal, model->colors, sizeof pal);
+    pal[RM_BODY] = paint;
+    pal[RM_BODY_SHADE] = gfx_mix(paint, 0x000000, 120);
+    pal[RM_TAIL] = braking ? 0xFFC8B0 : 0xFF2A22; /* the tail lights glow, whitest when braking */
+    v.palette = pal;
+    v.yaw = heading_yaw(rw, row, x);
+    if (car->flash) { /* knocked ahead by a crash: it spins once and flashes white */
+        v.yaw = (v.yaw + (unsigned)(10 - car->flash) * 26U) & 255U;
+        v.tint = 0xFFFFFF;
+        v.tint_amt = 120U;
     }
-    gfx_rect(px, x - w / 6, y - h / 3, w / 3 + 1, h / 6 + 1, c565(0xE8E8E0)); /* number plate */
-    if (car->flash) gfx_tint(px, x - hw, y - h - h / 4, hw * 2 + 1, h + h / 4, 0xFFFFFF, 120);
+    stack_shadow(px, model, &v, 0x000000, 100);
+    *voxels += stack_draw(px, model, &v);
 }
-static void draw_objects(uint16_t *px, const rows_t *rw, const rc_t *r, unsigned now)
+static void draw_tree_voxel(uint16_t *px, const rows_t *rw, int x, int dz, uint32_t h, unsigned *voxels)
+{
+    const stack_model_t *model = (h & 1U) ? &rm_round : &rm_pine;
+    stack_view_t v;
+    road_view(&v, x, dz, dz);
+    v.edge = 0;
+    v.yaw = (heading_yaw(rw, row_of(dz), x) + ((h >> 8) & 63U)) & 255U; /* each one stands its own way */
+    stack_shadow(px, model, &v, 0x000000, 80);
+    *voxels += stack_draw(px, model, &v);
+}
+static void draw_post_voxel(uint16_t *px, const rows_t *rw, int x, int side, int dz, unsigned *voxels)
+{
+    stack_view_t v;
+    road_view(&v, x, dz, dz);
+    v.edge = 0;
+    v.mirror = side < 0 ? 1U : 0U; /* the arm reaches over the road from either side */
+    v.x = x - side * (v.scale * 3 / 2 >> 8);
+    v.yaw = heading_yaw(rw, row_of(dz), x);
+    *voxels += stack_draw(px, &rm_post, &v);
+}
+static void draw_gantry_voxel(uint16_t *px, const rows_t *rw, int dz, unsigned *voxels)
+{
+    const int row = row_of(dz);
+    stack_view_t v;
+    road_view(&v, rw->cx[row], dz, dz);
+    v.yaw = heading_yaw(rw, row, rw->cx[row]);
+    v.edge = dz < 60000 ? 30U : 0U;
+    stack_shadow(px, &rm_gantry, &v, 0x000000, 60);
+    *voxels += stack_draw(px, &rm_gantry, &v);
+}
+static void draw_objects(uint16_t *px, const rows_t *rw, const rc_t *r, unsigned now, unsigned *voxels)
 {
     /* roadside trees and posts every 18 m, far to near */
     const int32_t slot_mm = 18000;
@@ -209,14 +285,21 @@ static void draw_objects(uint16_t *px, const rows_t *rw, const rc_t *r, unsigned
             const uint32_t salt = (uint32_t)index * 2U + (side > 0 ? 1U : 0U);
             if ((gfx_hash(salt * 7U) & 7U) == 0U) continue; /* a gap in the trees */
             const int off = rw->hw[y] * (1500 + (int)(gfx_hash(salt + 99U) % 700U)) / 1000;
-            if (index % 4 == 0) draw_post(px, rw->cx[y] + side * rw->hw[y] * 118 / 100, y, u);
+            const bool near = dz < VOXEL_NEAR_MM;
+            if (index % 4 == 0) {
+                if (near) draw_post_voxel(px, rw, rw->cx[y] + side * rw->hw[y] * 118 / 100, side, dz, voxels);
+                else draw_post(px, rw->cx[y] + side * rw->hw[y] * 118 / 100, y, u);
+            } else if (near) draw_tree_voxel(px, rw, rw->cx[y] + side * off, dz, gfx_hash(salt), voxels);
             else draw_tree(px, rw->cx[y] + side * off, y, u * 4 / 3 + 1, salt);
         }
     }
     const int32_t cp = r->next_cp_mm - r->pos_mm; /* the checkpoint gantry */
     if (r->phase == RC_RACE && cp > 6000 && cp < 250000) {
         const int y = HY + KY / cp;
-        if (y > HY + 1 && y < APP_CANVAS_H) draw_gantry(px, rw->cx[y], rw->hw[y], y);
+        if (y > HY + 1 && y < APP_CANVAS_H) {
+            if (cp < 160000) draw_gantry_voxel(px, rw, cp, voxels);
+            else draw_gantry(px, rw->cx[y], rw->hw[y], y);
+        }
     }
     uint8_t order[RC_CARS];
     unsigned count = 0;
@@ -230,11 +313,7 @@ static void draw_objects(uint16_t *px, const rows_t *rw, const rc_t *r, unsigned
     }
     for (unsigned i = 0; i < count; ++i) {
         const rc_car_t *c = &r->car[order[i]];
-        const int32_t dz = c->pos_mm - r->pos_mm;
-        const int y = HY + KY / dz;
-        if (y <= HY + 1 || y >= APP_CANVAS_H) continue;
-        const int hw = rw->hw[y];
-        draw_car(px, rw->cx[y] + c->px * hw / 1000, y, hw * 18 / 40 + 1, c, now);
+        draw_car(px, rw, c, c->pos_mm - r->pos_mm, now, voxels);
     }
 }
 
@@ -360,7 +439,9 @@ static void draw_scene(uint16_t *px, state_t *s, unsigned now)
     } else if (r->offroad && r->speed16 > 16 * 20 && r->phase == RC_RACE) oy = (int)(now / 40U & 1U);
     draw_sky(px, s, now);
     draw_road(px, &rows, r, now);
-    draw_objects(px, &rows, r, now);
+    unsigned voxels = 0;
+    draw_objects(px, &rows, r, now, &voxels);
+    s->voxels = voxels;
     draw_streaks(px, r, now);
     draw_fx(px, r, now);
     if (ox || oy) { /* shake the view: shift the scene, the edge that opens up repeats its neighbour */
@@ -433,7 +514,7 @@ static void publish(const state_t *s, bool active, bool frame)
     s_status.active = active; s_status.phase = r->phase; s_status.servo = (uint8_t)hs; s_status.src = s->steer.source;
     s_status.nitro_ready = r->nitro >= RC_NITRO_FULL; s_status.speed = rc_speed_kmh(r); s_status.dist = rc_distance_m(r);
     s_status.score = rc_score(r); s_status.best = r->best; s_status.cps = r->checkpoints; s_status.crashes = r->crashes;
-    s_status.px = rc_px(r); s_status.steer = s->steer.steer; s_status.time_s = rc_time_s(r); s_status.nitro = (unsigned)r->nitro;
+    s_status.px = rc_px(r); s_status.steer = s->steer.steer; s_status.time_s = rc_time_s(r); s_status.nitro = (unsigned)r->nitro; s_status.voxels = s->voxels;
     if (frame) ++s_status.frames;
     app_critical_exit();
 }
@@ -587,9 +668,9 @@ static bool command(const char *line)
     if (!app_command_is(line, "robot racing status")) return false;
     status_t v;
     app_shared_copy(v, s_status);
-    (void)app_command_replyf("active=%u phase=%u speed=%lu px=%d dist=%lu time=%u nitro=%u score=%lu best=%lu cps=%lu crashes=%lu steer=%d src=%u servo=%u frames=%lu",
+    (void)app_command_replyf("active=%u phase=%u speed=%lu px=%d dist=%lu time=%u nitro=%u score=%lu best=%lu cps=%lu crashes=%lu steer=%d src=%u servo=%u frames=%lu vox=%lu",
             v.active ? 1U : 0U, v.phase, (unsigned long)v.speed, v.px, (unsigned long)v.dist, v.time_s, v.nitro, (unsigned long)v.score,
-            (unsigned long)v.best, (unsigned long)v.cps, (unsigned long)v.crashes, v.steer, v.src, v.servo, (unsigned long)v.frames);
+            (unsigned long)v.best, (unsigned long)v.cps, (unsigned long)v.crashes, v.steer, v.src, v.servo, (unsigned long)v.frames, (unsigned long)v.voxels);
     return true;
 }
 static void icon(void *parent, int x, int y, bool selected)

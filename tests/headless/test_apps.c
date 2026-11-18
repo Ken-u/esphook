@@ -727,11 +727,13 @@ static void pose_starship(const char *out)
     g->shot[1]=(ss_shot_t){.x=60,.z=1200,.pz=1148,.alive=1};
     g->cooldown=SS_FIRE_STEPS;
     run(40);dump(out,"starship-pose-near");
+    assert(SS_STATUS("vox=")>300 && SS_STATUS("vox=")<3000); /* rocks, fighters and the cannon pods are stacks of slices */
     g->obj[0].z=g->obj[0].pz=190;g->obj[0].state=SE_DIVE;g->obj[0].x=60;g->obj[0].flash=3;
     g->obj[1].z=g->obj[1].pz=190;g->obj[1].x=-260;g->obj[1].r=190;g->obj[0].hp=1;
     g->bolt[0].z=300;g->bolt[0].x=-130;
     memset(g->shot,0,sizeof g->shot);
     run(40);dump(out,"starship-pose-close");
+    assert(SS_STATUS("vox=")>200 && SS_STATUS("vox=")<3000);
     g->obj[0].z=g->obj[0].pz=1100;g->obj[0].state=SE_ENTER;
     run(40);dump(out,"starship-pose-far");
 }
@@ -850,10 +852,12 @@ static void pose_racing(const char *out)
     r->car[2]=(rc_car_t){.pos_mm=r->pos_mm+95000,.px=640,.speed=70,.alive=1,.color=2};
     r->car[3]=(rc_car_t){.pos_mm=r->pos_mm+170000,.px=-640,.speed=90,.alive=1,.color=3};
     run(40);dump(out,"racing-pose-bend");
+    assert(RC_STATUS("vox=")>1000 && RC_STATUS("vox=")<3500); /* cars, trees, posts and the gantry are stacks of slices, within budget */
     r->nitro_ms=2000;r->nitro=700;r->speed16=250*16;
     run(40);dump(out,"racing-pose-nitro");
     r->nitro_ms=0;r->car[2].pos_mm=r->pos_mm+4600;r->car[2].px=rc_px(r);r->car[2].speed=60;
     run(60);dump(out,"racing-pose-crash");
+    assert(RC_STATUS("vox=")>500 && RC_STATUS("vox=")<3500);
 }
 static void play_racing(const char *out)
 {

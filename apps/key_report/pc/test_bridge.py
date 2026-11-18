@@ -36,6 +36,9 @@ class FakeLink:
     def hold(self, key, ms):
         self._do("hold", key, ms)
 
+    def press(self, key, ms):
+        self._do("press", key, ms)
+
     def triple(self, key):
         self._do("triple", key)
 
@@ -223,6 +226,60 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(link.serial.history[0]["op"], "keys_release")
 
 
+class ThreeKeyDefaultTests(unittest.TestCase):
+    """Space is K1, the arrows are K2/K3: the board's three keys on a keyboard, so games can steer."""
+
+    def make(self, link=None, **kwargs):
+        out = []
+        return bridge.KeyBridge(link or FakeLink(), bridge.bindings(bridge.DEFAULT_KEYMAP), emit=out.append, **kwargs), out
+
+    def test_default_keymap_is_three_keys(self):
+        self.assertEqual(bridge.bindings(bridge.DEFAULT_KEYMAP), {"space": 0, "left": 1, "right": 2})
+
+    def test_arrow_keys_reach_the_terminal_backend_as_k2_and_k3(self):
+        self.assertEqual(bridge.decode("\x1b[D\x1b[C"), ["left", "right"])
+        c = bridge.TerminalCommands(bridge.bindings(bridge.DEFAULT_KEYMAP))
+        self.assertEqual((c.feed("left"), c.feed("right")), (("tap", "left"), ("tap", "right")))
+        self.assertEqual(c.feed("left"), ("tap", "left"))
+        self.assertIsNone(c.feed("up"))  # up and down stay unbound
+        self.assertEqual(bridge.terminal_keymap(bridge.DEFAULT_KEYMAP, lambda message: self.fail(message)), bridge.DEFAULT_KEYMAP)
+
+    def test_a_steering_tap_is_long_enough_to_move_but_never_a_confirmation(self):
+        b, out = self.make()
+        b.handle("tap", "space")
+        b.handle("tap", "left")
+        b.handle("tap", "right")
+        self.assertEqual(b.link.calls, [("tap", 0), ("press", 1, 200), ("press", 2, 200)])
+        self.assertEqual(out[1], dict(type="forward", action="tap", key="left", usb=1))
+        b, _ = self.make(side_tap_ms=120)
+        b.handle("tap", "right")
+        self.assertEqual(b.link.calls, [("press", 2, 120)])
+        for bad in (0, 500):
+            with self.assertRaises(ValueError):
+                self.make(side_tap_ms=bad)
+
+    def test_a_held_arrow_is_a_real_hold_with_the_global_listener(self):
+        b, _ = self.make()
+        for command in (("down", "right"), ("down", "right"), ("down", "space"), ("up", "right"), ("up", "space")):
+            b.handle(*command)
+        self.assertEqual(b.link.calls, [("down", 2), ("down", 0), ("up", 2), ("up", 0)])  # auto-repeat is ignored
+
+    def test_the_banner_lists_the_three_keys_in_key_order(self):
+        text = bridge.banner("pynput", bridge.bindings(bridge.DEFAULT_KEYMAP), 550, "f12")
+        self.assertIn("space=K1, left=K2, right=K3", text)
+
+    def test_through_the_real_sdk_steering_tap_is_one_short_press(self):
+        link = real_link()
+        b = bridge.KeyBridge(link, bridge.bindings(bridge.DEFAULT_KEYMAP), emit=lambda item: None, side_tap_ms=150)
+        started = time.monotonic()
+        b.handle("tap", "left")
+        elapsed = time.monotonic() - started
+        ops = [(r["op"], r["key"], r.get("pressed")) for r in link.serial.history]
+        self.assertEqual((ops[0], ops[-1]), (("key", 1, True), ("key", 1, False)))
+        self.assertGreaterEqual(elapsed, 0.14)
+        self.assertLess(elapsed, 0.5)
+
+
 class MainTests(unittest.TestCase):
     def run_main(self, argv, **kwargs):
         out, err = io.StringIO(), io.StringIO()
@@ -234,7 +291,7 @@ class MainTests(unittest.TestCase):
         code, out, err = self.run_main(["--dry-run"])
         plan = json.loads(out)
         self.assertEqual((code, plan["backend"], plan["hold_ms"]), (0, "auto", 550))
-        self.assertEqual(plan["bindings"], {"space": 0})  # the default is Space = K1, nothing else
+        self.assertEqual(plan["bindings"], {"space": 0, "left": 1, "right": 2})  # the three keys: Space = K1, Left = K2, Right = K3
         code, out, _ = self.run_main(["--dry-run", "--backend", "pynput", "--config", str(HERE / "bridge.example.json")])
         plan = json.loads(out)
         self.assertEqual((plan["bindings"], plan["quit_key"]), (dict(f9=0, f10=1, f11=2), "f12"))

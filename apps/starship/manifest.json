@@ -4,6 +4,7 @@
   "required": false,
   "sources": [
     "firmware/app.c",
-    "firmware/starship_core.c"
+    "firmware/starship_core.c",
+    "firmware/starship_models.c"
   ]
 }

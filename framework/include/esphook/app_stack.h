@@ -98,6 +98,12 @@ static inline void stack_view_world(stack_view_t *v, int x, int foot_y, int z, i
     v->squash = 65536U / gfx_isqrt(65536U + (uint32_t)(v->ky0 * v->ky0));
 }
 
+/* How a fixed object looks from where the viewer is: seen from the middle of the screen, something `dx` pixels to the right
+ * of the middle shows its left side (the side towards you) and something to the left shows its right side. This is the yaw
+ * to add to the object's own heading to get that. `foc_px` is how far the eye is from the screen, in pixels: about 100 for
+ * a 77 degree view of this canvas, or the `foc` passed to stack_view_world() when positions are `x * foc / z`. */
+static inline int stack_yaw_seen(int dx, int foc_px) { return app_atan256(dx, foc_px); }
+
 /* The model is well formed: every layer is w*d characters of palette letters or '.', alt layers are as well, and the
  * lowest layer is not empty. Models are constant data, so this is for tests and for asserts while authoring. */
 static inline bool stack_model_valid(const stack_model_t *m)

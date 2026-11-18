@@ -137,15 +137,52 @@ static void stepping(void)
         assert(fast == slow && fast_steps == slow_steps && fast < 20U);
     }
 }
+static double ref_sqrt(double v) /* the maths library is not linked into this test */
+{
+    double r = v > 1.0 ? v : 1.0;
+    for (int i = 0; i < 40; ++i) r = 0.5 * (r + v / r);
+    return r;
+}
+static double ref_atan_turns(double x) /* in 1/256 turn: halve the angle twice, then a short series */
+{
+    const double sign = x < 0 ? -1.0 : 1.0;
+    double a = x < 0 ? -x : x;
+    const int flip = a > 1.0;
+    if (flip) a = 1.0 / a;
+    a = a / (1.0 + ref_sqrt(1.0 + a * a));
+    a = a / (1.0 + ref_sqrt(1.0 + a * a));
+    double term = a, sum = a;
+    for (int k = 1; k < 12; ++k) { term *= -a * a; sum += term / (2 * k + 1); }
+    double rad = 4.0 * sum;
+    if (flip) rad = 1.5707963267948966 - rad;
+    return sign * rad * 256.0 / 6.283185307179586;
+}
+static void angles(void)
+{
+    assert(app_atan256(0, 100) == 0 && app_atan256(100, 100) == 32 && app_atan256(-100, 100) == -32);
+    assert(app_atan256(5, 0) == 64 && app_atan256(-5, 0) == -64 && app_atan256(0, 0) == 0 && app_atan256(7, -3) == 64);
+    for (int den = 1; den <= 400; den += 7) {
+        int previous = -65;
+        for (int num = -800; num <= 800; num += 9) {
+            const int got = app_atan256(num, den);
+            const double want = ref_atan_turns((double)num / den), err = (double)got - want;
+            assert(err < 0.8 && err > -0.8 && got >= -64 && got <= 64);
+            assert(app_atan256(-num, den) == -got && got >= previous); /* odd and never going back */
+            previous = got;
+        }
+    }
+    assert(app_atan256(INT32_MAX / 2, 1) == 64 && app_atan256(1, INT32_MAX / 2) == 0); /* huge ratios do not overflow */
+}
 int main(void)
 {
     ints();
     saturation();
     roots();
     waves();
+    angles();
     hashing();
     random_numbers();
     stepping();
-    puts("app util: integer maths, saturation, roots, waves, hashing, deterministic random and fixed steps passed");
+    puts("app util: integer maths, saturation, roots, waves, angles, hashing, deterministic random and fixed steps passed");
     return 0;
 }

@@ -50,6 +50,20 @@ static inline int app_sin256(unsigned phase) /* -256 .. 256 */
     return (phase & 128U) ? -v : v;
 }
 
+/* The angle whose tangent is num/den, in 256ths of a turn (45 degrees is 32, 90 degrees is 64): what turn makes an object
+ * at a sideways offset `num` at distance `den` face the viewer. den must be positive; the result is -64..64 and the error
+ * stays within a step (about 1.4 degrees). */
+static inline int app_atan256(int num, int den)
+{
+    if (den <= 0) return num < 0 ? -64 : num > 0 ? 64 : 0;
+    const int sign = num < 0 ? -1 : 1, a = num < 0 ? -num : num;
+    const int64_t big = a > den ? a : den, small = a > den ? den : a;
+    const int64_t t = small * 256 / big; /* 0..256: the shorter side over the longer one */
+    int turn = (int)((t * (8192 + 2847 * (256 - t) / 256) + 32768) >> 16); /* atan(t) = t (pi/4 + 0.273 (1 - t)), rounded */
+    if (a > den) turn = 64 - turn;
+    return sign * turn;
+}
+
 /* A well mixed 32 bit hash (murmur finalizer): value-in/value-out noise for scenery, track shapes and salts. */
 static inline uint32_t app_hash32(uint32_t z)
 {

@@ -9,7 +9,7 @@
 | 示例程序 | `uv run --with pyserial python apps/demo/pc/main.py --text '你好'` |
 | 按键事件查看器 | `uv run --with pyserial python apps/key_report/pc/main.py` |
 | USB 键盘窗口 | `python run.py keys --config apps/key_report/pc/bindings.example.json` |
-| 实时键盘转发 | `uv run apps/key_report/pc/bridge.py`（默认空格 = K1，全局监听，按住即设备按住）或 `python run.py bridge` |
+| 实时键盘转发 | `uv run apps/key_report/pc/bridge.py`（默认空格 = K1、← = K2、→ = K3，全局监听，按住即设备按住）或 `python run.py bridge` |
 | 设置设备时钟 | `python run.py time`（`--show` 只读）；`AppLink.set_time()` |
 | 副屏（电脑窗口投到小屏） | `python run.py mirror --window <名字>` 或 `--region x,y,w,h`；协议见下，说明见 [robot-mirror.md](robot-mirror.md) |
 | 通用 USB SDK | `framework/pc/esphook_sdk`，AppLink / UsbLink |
@@ -96,7 +96,7 @@ print(link.hardware())
 link.set_hardware_profile("robot", reboot=True)
 ```
 
-`bridge.py`（`run.py bridge`）是同一 SDK 的持续键盘转发：监听 PC 键盘并转成 key_down/key_up，同时把设备事件（key_report、应用事件）按行 JSON 打印。默认只绑定空格 = K1：按下/按住/连按三次分别是设备上的短按/长按确认/全局三击，手势仍由设备判定。`--backend auto`（默认）在装有 pynput 时用全局监听，得到真实的按下/松开（按住期间 SDK 每 0.1s 续租 350ms 租约，系统自动重复被忽略），窗口是否在前台都生效，`--quit-key`（默认 F12）停止；macOS 要给终端“输入监控”权限，缺权限时启动即提示。没有 pynput 时退回 `terminal` 后端：终端拿不到松开事件，因此每个键是一次短按并过滤系统自动重复（按住不再连发，但无法变成长按），`h` 再按键是 550ms 长按，`t` 三击 K1，`m` 菜单，`r` 取消按住，`q`/Esc 退出。全局监听无法吞掉按键，空格仍会输入到当前窗口；要避免请用 `--config`（`bridge.example.json` 用 F9/F10/F11）绑定专用键。它不向其他程序注入按键，和 monitor、其他 PC 配套一样独占串口。
+`bridge.py`（`run.py bridge`）是同一 SDK 的持续键盘转发：监听 PC 键盘并转成 key_down/key_up，同时把设备事件（key_report、应用事件）按行 JSON 打印。默认绑定三个键：空格 = K1、← = K2、→ = K3（所以赛车、飞船、僵尸的左右转向在没有雷达时也能在电脑上玩）。K1 的按下/按住/连按三次分别是设备上的短按/长按确认/全局三击，手势仍由设备判定。K2/K3 是转向键，一次点按会被延长到 200ms（`--side-tap-ms`，1..499）：游戏按“按住的时间”转向，终端后端又看不到松开，几毫秒的点按几乎转不动；装了 pynput 时按住方向键就是真实按住，转向不会被这个延长截断。`--backend auto`（默认）在装有 pynput 时用全局监听，得到真实的按下/松开（按住期间 SDK 每 0.1s 续租 350ms 租约，系统自动重复被忽略），窗口是否在前台都生效，`--quit-key`（默认 F12）停止；macOS 要给终端“输入监控”权限，缺权限时启动即提示。没有 pynput 时退回 `terminal` 后端：终端拿不到松开事件，因此每个键是一次短按并过滤系统自动重复（按住不再连发，但无法变成长按），`h` 再按键是 550ms 长按，`t` 三击 K1，`m` 菜单，`r` 取消按住，`q`/Esc 退出。全局监听无法吞掉按键，空格仍会输入到当前窗口；要避免请用 `--config`（`bridge.example.json` 用 F9/F10/F11）绑定专用键。它不向其他程序注入按键，和 monitor、其他 PC 配套一样独占串口。
 
 keymap ACK 的 mapping 是已持久化配置，usb_lease_ms 为 350。physical/usb 各为三个 0..2 的逻辑键；允许多个原始键映射到同一键。words 为三个 1..15 字符可打印 ASCII 回复词。正在按住的键使用 DOWN 时的映射直到松开。
 

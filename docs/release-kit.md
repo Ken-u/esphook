@@ -77,13 +77,13 @@ python run.py keys --config apps/key_report/pc/bindings.example.json
 ```
 
 ```bash
-uv run apps/key_report/pc/bridge.py       # 推荐：自动装 pyserial/pynput，持续全局监听，空格 = 开发板 K1，F12 / Ctrl+C 退出
+uv run apps/key_report/pc/bridge.py       # 推荐：自动装 pyserial/pynput，持续全局监听，空格 = K1、← = K2、→ = K3，F12 / Ctrl+C 退出
 python run.py bridge                       # 已装 pynput 时同上；没有时退回终端（只有短按，见下）
 python run.py bridge --app key_report      # 先打开应用，再转发，并打印设备回传事件
 python run.py bridge --config apps/key_report/pc/bridge.example.json   # 换成自己的键位（例：F9/F10/F11 = K1/K2/K3）
 ```
 
-默认只绑定空格 = K1：按下空格 = 按下开发板按键，按住空格 = 设备端按住（500ms 确认），快速三次 = 全局三击。全局后端（pynput）拿到真实的按下/松开，窗口在不在前台都能用；它不能吞键，所以空格仍会输入到当前窗口，需要时用 `--config` 绑定专用键。macOS 首次运行要在“系统设置 › 隐私与安全性 › 输入监控（和辅助功能）”允许所用终端，之后重启程序；缺权限时程序会提示。
+默认绑定三个键：空格 = K1、← = K2、→ = K3。按下空格 = 按下开发板 K1，按住空格 = 设备端按住（500ms 确认），快速三次 = 全局三击；← / → 是 K2 / K3，赛车、星际战机、僵尸围城在没有雷达时就用它们左右转向（按住方向键就一直转，装了 pynput 时是真实按住；终端后端看不到松开，所以一次点按被延长到 200ms，可用 `--side-tap-ms` 调，1..499）。全局后端（pynput）拿到真实的按下/松开，窗口在不在前台都能用；它不能吞键，所以空格仍会输入到当前窗口，需要时用 `--config` 绑定专用键。macOS 首次运行要在“系统设置 › 隐私与安全性 › 输入监控（和辅助功能）”允许所用终端，之后重启程序；缺权限时程序会提示。
 
 bridge 不依赖 Tkinter。没有 pynput 时自动退回终端后端：终端看不到按键松开，每个键是一次短按并忽略系统自动重复（按住不会连发），真实长按用 `h` 再按空格（550ms）；`t` 三击、`m` 菜单、`r` 取消按住、`q`/Esc 退出。
 

@@ -39,7 +39,7 @@ robot zombie status
 
 ```bash
 ./scripts/test-zombie.sh         # 核心：命中几何、弹匣与装弹、三种僵尸的速度/血量、被咬与无敌、波次递增、连杀、结算
-./scripts/test-stack.sh           # 切片堆叠渲染和僵尸体素模型：几何、转动、遮挡顺序、堆叠入场、步态、越界与成本
+./scripts/test-stack.sh           # 切片堆叠渲染和僵尸、赛车、飞船的体素模型：几何、转动、遮挡顺序、堆叠入场、步态、越界与成本
 ./scripts/test-haptic-steer.sh   # 舵机摇晃/限位限速，雷达与按键转向
 ./scripts/test-app-ui.sh         # 真实 LVGL：标题（枪和僵尸一层层拼出来）、开场、人群、开火、近身、击杀、边缘提示、被咬、倒下、结算；体素数在预算内；雷达/舵机桩；三击不退出、按住 2 秒才退出
 ```

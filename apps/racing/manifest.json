@@ -4,6 +4,7 @@
   "required": false,
   "sources": [
     "firmware/app.c",
-    "firmware/racing_core.c"
+    "firmware/racing_core.c",
+    "firmware/racing_models.c"
   ]
 }

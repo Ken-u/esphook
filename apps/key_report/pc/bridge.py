@@ -5,9 +5,11 @@
 # ///
 """Listen to the PC keyboard in real time and forward it to the ESP as USB virtual keys.
 
-By default Space is the board's K1: press Space = press the key, hold Space = hold it,
-three quick presses = the global triple-click. `uv run apps/key_report/pc/bridge.py`
-installs the dependencies by itself and keeps listening until F12 or Ctrl+C.
+By default the board's three keys are on the keyboard: Space is K1 (the main key: press, hold,
+three quick presses = the global triple-click), Left is K2 and Right is K3 (games steer with them
+when there is no radar: the starship, the racing car and the zombie hunter). Hold an arrow to keep
+steering. `uv run apps/key_report/pc/bridge.py` installs the dependencies by itself and keeps
+listening until F12 or Ctrl+C.
 
 Every forwarded action and every device event (key_report, apps, game buttons) is
 printed as one JSON line on stdout, so the output can be piped or logged.
@@ -20,9 +22,9 @@ confirmations and the global triple-click.
             cannot swallow them (Space still types where you are). macOS needs the
             terminal allowed under Privacy & Security > Input Monitoring.
   terminal  needs only a TTY. A terminal cannot report key release, so each key is a
-            tap and the operating system's auto-repeat is ignored; `h` then a key is a
-            550ms hold, `t` is a triple tap on K1, `m` opens the menu, `r` cancels
-            held keys, `q`/Esc quits.
+            tap and the operating system's auto-repeat is ignored (K2/K3 taps last 200ms,
+            enough to steer a little each time); `h` then a key is a 550ms hold, `t` is a
+            triple tap on K1, `m` opens the menu, `r` cancels held keys, `q`/Esc quits.
 """
 import argparse
 import importlib.util
@@ -38,7 +40,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "framework" / "pc")
 from esphook_sdk import AppLink
 from esphook_sdk.keys import bindings
 
-DEFAULT_KEYMAP = {"space": 0}
+DEFAULT_KEYMAP = {"space": 0, "left": 1, "right": 2}  # K1 the main key, K2 left, K3 right
+SIDE_KEYS = (1, 2)  # K2/K3 steer; a tap on them lasts SIDE_TAP_MS (a terminal cannot hold a key)
+SIDE_TAP_MS = 200
 PYNPUT_HINT = "install pynput for global listening with real press/release: uv run apps/key_report/pc/bridge.py"
 TERMINAL_COMMANDS = {"h": "hold prefix", "t": "triple K1", "m": "menu", "r": "release", "q": "quit"}
 CSI_NAMES = {"A": "up", "B": "down", "C": "right", "D": "left"}
@@ -224,10 +228,13 @@ class PynputKeys:
 class KeyBridge:
     """Applies keyboard actions to one AppLink and relays device events."""
 
-    def __init__(self, link, keymap, *, hold_ms=550, emit=None, show_events=True):
+    def __init__(self, link, keymap, *, hold_ms=550, emit=None, show_events=True, side_tap_ms=SIDE_TAP_MS):
         if hold_ms < 500:
             raise ValueError("hold needs at least 500 milliseconds to confirm")
+        if not 1 <= side_tap_ms < 500:
+            raise ValueError("a K2/K3 tap must stay shorter than the 500 millisecond confirmation")
         self.link, self.keymap, self.hold_ms, self.show_events = link, keymap, hold_ms, show_events
+        self.side_tap_ms = side_tap_ms
         self.emit = emit or (lambda item: print(json.dumps(item, ensure_ascii=False), flush=True))
         self.down = {}  # USB key -> names currently held (several PC keys may share one USB key)
 
@@ -271,7 +278,10 @@ class KeyBridge:
             del self.down[usb]
             self.link.key_up(usb)
         elif action == "tap":
-            self.link.tap(usb)
+            if usb in SIDE_KEYS:  # a steering nudge: long enough for a game to move, short of a confirmation
+                self.link.press(usb, self.side_tap_ms)
+            else:
+                self.link.tap(usb)
         elif action == "hold":
             self.link.hold(usb, self.hold_ms)
         elif action == "triple":
@@ -297,7 +307,7 @@ class KeyBridge:
 
 
 def banner(backend, keymap, hold_ms, quit_key):
-    names = ", ".join(f"{name}=K{usb + 1}" for name, usb in sorted(keymap.items()))
+    names = ", ".join(f"{name}=K{usb + 1}" for name, usb in sorted(keymap.items(), key=lambda item: (item[1], item[0])))
     if backend == "terminal":
         return (f"Forwarding terminal keys: {names}. A terminal cannot see key release: each key is one tap "
                 f"(auto-repeat ignored); h+key holds {hold_ms}ms, t = triple K1, m = menu, r = release, "
@@ -341,15 +351,18 @@ def main(argv=None, link_factory=AppLink, sources=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--port")
     p.add_argument("--backend", choices=("auto", "pynput", "terminal"), default="auto")
-    p.add_argument("--config", type=Path, help="PC bindings JSON replacing the default space=K1 (see bridge.example.json)")
+    p.add_argument("--config", type=Path, help="PC bindings JSON replacing the default space=K1, left=K2, right=K3 (see bridge.example.json)")
     p.add_argument("--app", help="open this app before forwarding")
     p.add_argument("--hold-ms", type=int, default=550, help="duration of h+key in terminal mode")
+    p.add_argument("--side-tap-ms", type=int, default=SIDE_TAP_MS, help="duration of a K2/K3 tap in terminal mode (1..499)")
     p.add_argument("--quit-key", default="f12", help="global stop key for the pynput backend")
     p.add_argument("--no-events", action="store_true", help="do not print device events")
     p.add_argument("--dry-run", action="store_true", help="print the plan without opening USB or the keyboard")
     a = p.parse_args(argv)
     if a.hold_ms < 500:
         p.error("--hold-ms must be at least 500 for a confirmation")
+    if not 1 <= a.side_tap_ms < 500:
+        p.error("--side-tap-ms must be 1..499 so a K2/K3 tap never becomes a confirmation")
     warn = lambda message: print(f"warning: {message}", file=sys.stderr)
     keymap = bindings(a.config if a.config else DEFAULT_KEYMAP)
     if a.dry_run:
@@ -369,7 +382,7 @@ def main(argv=None, link_factory=AppLink, sources=None):
         if a.app:
             link.open(a.app)
             link.wait_active(a.app)
-        bridge = KeyBridge(link, keymap, hold_ms=a.hold_ms, show_events=not a.no_events)
+        bridge = KeyBridge(link, keymap, hold_ms=a.hold_ms, show_events=not a.no_events, side_tap_ms=a.side_tap_ms)
         print(banner(backend, keymap, a.hold_ms, a.quit_key), file=sys.stderr)
         bridge.run(source)
     except KeyboardInterrupt:

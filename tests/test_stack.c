@@ -1,11 +1,13 @@
-/* Host tests for the slice-stacking kit (framework/include/esphook/app_stack.h) and the models the zombie game draws with
- * it: the geometry of a known box, turning, mirroring, the painting order seen from above and below, build-up,
+/* Host tests for the slice-stacking kit (framework/include/esphook/app_stack.h) and the models the zombie, racing and starship
+ * games draw with it: the geometry of a known box, turning, mirroring, the painting order seen from above and below, build-up,
  * the gait layers, level of detail, the bounds, writing near and outside the canvas edges, and the cost of a crowd. */
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "esphook/app_stack.h"
+#include "racing_models.h"
+#include "starship_models.h"
 #include "zombie_models.h"
 
 #define W APP_CANVAS_W
@@ -69,11 +71,66 @@ static stack_view_t plain(int x, int y, int px_per_voxel)
     return v;
 }
 
+/* a box whose left side is green, right side blue and front red: which of them shows says which way it is turned */
+static const char *const SIDES[] = {"lccr" "lccr" "ffff", "lccr" "lccr" "ffff", "lccr" "lccr" "ffff", "lccr" "lccr" "ffff", "cccc" "cccc" "cccc"}; /* a grey roof */
+static const uint32_t SIDES_COLORS[] = {0x20FF20, 0x808080, 0xFF2020, 0x4040FF};
+static const stack_model_t sides = {.layers = SIDES, .keys = "lcfr", .colors = SIDES_COLORS, .w = 4, .d = 3, .h = 5};
+static unsigned count_of(uint32_t color)
+{
+    unsigned n = 0;
+    for (int i = 0; i < W * H; ++i) n += canvas[i] == rgb(color);
+    return n;
+}
+static void seen_from_the_middle(void)
+{
+    /* the turn that shows an object the way the viewer sees it: the side towards the middle of the screen shows */
+    assert(stack_yaw_seen(0, 100) == 0 && stack_yaw_seen(100, 100) == 32 && stack_yaw_seen(-100, 100) == -32);
+    assert(stack_yaw_seen(40, 100) > 0 && stack_yaw_seen(-40, 100) == -stack_yaw_seen(40, 100));
+    assert(stack_yaw_seen(80, 100) > stack_yaw_seen(40, 100) && stack_yaw_seen(80, 100) >= 26 && stack_yaw_seen(80, 100) <= 29);
+    assert(stack_yaw_seen(80, 200) < stack_yaw_seen(80, 100)); /* the same pixels are a smaller angle for a longer lens */
+    for (int dx = -80; dx <= 80; dx += 16) {
+        clear();
+        stack_view_t v = plain(80, 54, 5);
+        stack_view_pitch(&v, 20);
+        v.yaw = (unsigned)stack_yaw_seen(dx, 100) & 255U;
+        (void)stack_draw(canvas, &sides, &v);
+        const unsigned green = count_of(0x20FF20), blue = count_of(0x4040FF), red = count_of(0xFF2020);
+        assert(red > 0U);
+        if (dx < 0) assert(blue > 0U && green == 0U);      /* to the left of the middle: its right side shows */
+        else if (dx > 0) assert(green > 0U && blue == 0U); /* to the right: its left side */
+        else assert(green == 0U && blue == 0U);            /* straight ahead: only the front */
+    }
+    /* and it grows with the angle: twice as far out shows a wider side */
+    unsigned width[2];
+    for (int k = 0; k < 2; ++k) {
+        clear();
+        stack_view_t v = plain(80, 54, 5);
+        stack_view_pitch(&v, 20);
+        v.yaw = (unsigned)stack_yaw_seen(k ? 80 : 40, 100) & 255U;
+        (void)stack_draw(canvas, &sides, &v);
+        width[k] = count_of(0x20FF20);
+    }
+    assert(width[1] > width[0]);
+}
+
 static void validity(void)
 {
     assert(stack_model_valid(&block) && stack_model_valid(&bar) && stack_model_valid(&two) && stack_model_valid(&one));
     assert(stack_model_valid(&zm_walker) && stack_model_valid(&zm_runner) && stack_model_valid(&zm_brute));
     assert(stack_model_valid(&zm_tomb) && stack_model_valid(&zm_cross) && stack_model_valid(&zm_gun));
+    /* the road and the star field: every model stands on something, and the apps index their palettes by letter */
+    assert(stack_model_valid(&rm_coupe) && stack_model_valid(&rm_sedan) && stack_model_valid(&rm_van));
+    assert(stack_model_valid(&rm_pine) && stack_model_valid(&rm_round) && stack_model_valid(&rm_post) && stack_model_valid(&rm_gantry));
+    assert(stack_model_valid(&sm_rock_a) && stack_model_valid(&sm_rock_b) && stack_model_valid(&sm_rock_c));
+    assert(stack_model_valid(&sm_fighter) && stack_model_valid(&sm_cannon));
+    assert(strlen(RM_CAR_KEYS) == RM_CAR_COLORS && RM_CAR_KEYS[RM_BODY] == 'b' && RM_CAR_KEYS[RM_BODY_SHADE] == 'B' && RM_CAR_KEYS[RM_TAIL] == 'r');
+    assert(RM_CAR_LIT == 1 && strlen(RM_TREE_KEYS) == 4);
+    /* a car is about 3.1 m wide, as the game's crash boxes and the road expect (the road is 6.96 m wide) */
+    assert(rm_coupe.w * RM_VOXEL > 3000 && rm_coupe.w * RM_VOXEL < 3300 && rm_sedan.w == rm_coupe.w && rm_van.w == rm_coupe.w);
+    assert(rm_coupe.d * RM_VOXEL > 4300 && rm_van.d * RM_VOXEL < 4300 && rm_sedan.d * RM_VOXEL < 5000);
+    /* rocks are 9 voxels across whatever size the game gives them, a fighter 15 (its wings) */
+    assert(sm_rock_a.w == SM_ROCK_SIZE && sm_rock_b.w == SM_ROCK_SIZE && sm_rock_c.w == SM_ROCK_SIZE && sm_fighter.w == SM_FOE_WIDE);
+    assert(strlen(SM_ROCK_KEYS) == 5 && SM_ROCK_LIT == 1 && strlen(SM_FOE_KEYS) == 6 && SM_FOE_LIT == 2);
     /* the standard zombie palette is what the app indexes */
     assert(strlen(ZM_KEYS) == ZM_COLORS && ZM_LIT == 1 && ZM_KEYS[ZM_SHIRT] == 's' && ZM_KEYS[ZM_SHIRT_DARK] == 't');
     /* a walker is 100 world units tall: 20 voxels of ZM_VOXEL, and half its width is 22 units, the core's half_w */
@@ -451,8 +508,10 @@ static void edges_and_safety(void)
     static uint16_t arena[GUARD + W * H + GUARD];
     for (int i = 0; i < GUARD; ++i) arena[i] = arena[GUARD + W * H + i] = 0xA5A5;
     uint16_t *px = arena + GUARD;
-    const stack_model_t *models[] = {&zm_walker, &zm_runner, &zm_brute, &zm_tomb, &zm_cross, &zm_gun, &block, &two};
-    for (int i = 0; i < 4000; ++i) {
+    const stack_model_t *models[] = {&zm_walker, &zm_runner, &zm_brute, &zm_tomb, &zm_cross, &zm_gun, &block, &two,
+                                     &rm_coupe, &rm_sedan, &rm_van, &rm_pine, &rm_round, &rm_post, &rm_gantry,
+                                     &sm_rock_a, &sm_rock_b, &sm_rock_c, &sm_fighter, &sm_cannon};
+    for (int i = 0; i < 6000; ++i) {
         stack_view_t v;
         stack_view_init(&v);
         v.x = (int)rnd(520) - 180;
@@ -469,7 +528,7 @@ static void edges_and_safety(void)
         v.step = (uint8_t)rnd(2);
         v.tint_amt = rnd(300);
         v.dark = rnd(300);
-        const stack_model_t *m = models[rnd(8)];
+        const stack_model_t *m = models[rnd(20)];
         const unsigned n = stack_draw(px, m, &v);
         int x0, y0, x1, y1;
         stack_bounds(m, &v, &x0, &y0, &x1, &y1);
@@ -483,8 +542,10 @@ static void edges_and_safety(void)
 static void bounds_hold(void)
 {
     /* the bounds are the promise stack_draw keeps: nothing is painted outside them */
-    const stack_model_t *models[] = {&zm_walker, &zm_runner, &zm_brute, &zm_tomb, &zm_cross, &zm_gun};
-    for (int i = 0; i < 1500; ++i) {
+    const stack_model_t *models[] = {&zm_walker, &zm_runner, &zm_brute, &zm_tomb, &zm_cross, &zm_gun,
+                                     &rm_coupe, &rm_sedan, &rm_van, &rm_pine, &rm_round, &rm_post, &rm_gantry,
+                                     &sm_rock_a, &sm_rock_b, &sm_rock_c, &sm_fighter, &sm_cannon};
+    for (int i = 0; i < 3000; ++i) {
         stack_view_t v;
         stack_view_init(&v);
         v.x = 40 + (int)rnd(80);
@@ -500,7 +561,7 @@ static void bounds_hold(void)
         v.mirror = (uint8_t)(i & 1);
         v.step = (uint8_t)((i >> 1) & 1);
         v.top_light = 50;
-        const stack_model_t *m = models[rnd(6)];
+        const stack_model_t *m = models[rnd(18)];
         clear();
         (void)stack_draw(canvas, m, &v);
         const box_t b = painted();
@@ -562,6 +623,7 @@ static void determinism_and_cost(void)
 int main(void)
 {
     validity();
+    seen_from_the_middle();
     geometry();
     turning();
     mirroring();
