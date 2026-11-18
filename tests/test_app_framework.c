@@ -235,18 +235,20 @@ static void back_and_double(void)
 }
 /* descriptor->first_run: asked once while booting; the first app that says yes is the first screen, ahead of the standby
  * app, outside the "back" history, and ends with app_idle(). */
+static bool second_wanted;
 static bool wants_setup(void) { ++setup_asked;return setup_wanted; }
+static bool wants_second(void) { return second_wanted; }
 static void first_run_hook(void)
 {
     app_descriptor_t setup=DESC("setup",0),other=DESC("other",0);
-    setup.first_run=wants_setup;other.first_run=wants_setup;
+    other.first_run=wants_setup; /* `setup` has none yet */
     const app_descriptor_t *const catalog[]={&launcher,&face,&other,&setup,&game};
     app_platform_t p={.scene_create=scene2,.scene_delete=destroy2};
     /* Nothing to set up: the board boots as it always did, and the hook was asked exactly once per candidate. */
     setup_wanted=false;setup_asked=0;first_runs=0;
     app_manager_t quiet;assert(app_manager_init(&quiet,catalog,5,&p,"face",0));
-    active(&quiet,"face");assert(quiet.idle && !quiet.context.first_run && first_runs==0 && setup_asked==2);
-    /* Something to set up: the first candidate in catalog order starts, not idle, and the standby app waits. */
+    active(&quiet,"face");assert(quiet.idle && !quiet.context.first_run && first_runs==0 && setup_asked==1);
+    /* Something to set up: the candidate starts, not idle, and the standby app waits. */
     setup_wanted=true;setup_asked=0;first_runs=0;
     app_manager_t m;assert(app_manager_init(&m,catalog,5,&p,"face",0));
     active(&m,"other");assert(!m.idle && m.context.first_run && first_runs==1 && setup_asked==1);
@@ -266,6 +268,34 @@ static void first_run_hook(void)
     app_menu(&n.context);app_manager_commit(&n);active(&n,"launcher");assert(!n.context.first_run);
     assert(app_open(&n.context,"other"));app_manager_commit(&n);assert(!n.context.first_run && first_runs==1);
     setup_wanted=false;
+    /* Two apps with something to set up run one after the other, in catalog order, before the standby screen. */
+    setup.first_run=wants_setup;
+    app_descriptor_t second=DESC("second",0);second.first_run=wants_second;
+    const app_descriptor_t *const two[]={&launcher,&face,&setup,&second,&game};
+    second_wanted=true;setup_wanted=true;first_runs=0;
+    app_manager_t c;assert(app_manager_init(&c,two,5,&p,"face",0));
+    active(&c,"setup");assert(c.context.first_run && !c.idle);
+    app_idle(&c.context);app_manager_commit(&c);
+    active(&c,"second");assert(c.context.first_run && !c.idle && first_runs==2);
+    assert(!strcmp(app_standby_id(&c.context),"face"));
+    app_idle(&c.context);app_manager_commit(&c);
+    active(&c,"face");assert(c.idle && !c.context.first_run && first_runs==2 && !app_back(&c.context));
+    /* The second is not asked when the first one has already left for somewhere else, and the first is not offered again
+     * when the second ends: the hand-over only looks forward. */
+    app_manager_t d;assert(app_manager_init(&d,two,5,&p,"face",0));
+    active(&d,"setup");app_menu(&d.context);app_manager_commit(&d);active(&d,"launcher");
+    app_idle(&d.context);app_manager_commit(&d);active(&d,"face");
+    setup_wanted=false; /* nothing to set up in the first: the second still comes up on its own */
+    app_manager_t e;assert(app_manager_init(&e,two,5,&p,"face",0));
+    active(&e,"second");assert(e.context.first_run);
+    setup_wanted=true; /* answers true again (it was left without storing), but it is behind us */
+    app_idle(&e.context);app_manager_commit(&e);active(&e,"face");assert(e.idle);
+    /* A first run that ends with app_idle() after it has been left for the menu and entered again is an ordinary visit. */
+    app_manager_t f;assert(app_manager_init(&f,two,5,&p,"face",0));
+    active(&f,"setup");app_menu(&f.context);app_manager_commit(&f);
+    assert(app_open(&f.context,"setup"));app_manager_commit(&f);active(&f,"setup");assert(!f.context.first_run);
+    app_idle(&f.context);app_manager_commit(&f);active(&f,"face"); /* not handed over to "second": this was not a first run */
+    setup_wanted=false;second_wanted=false;
 }
 int main(void)
 {

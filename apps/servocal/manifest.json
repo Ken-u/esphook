@@ -1,0 +1,8 @@
+{
+  "id": "servocal",
+  "order": "091",
+  "required": false,
+  "sources": [
+    "firmware/app.c"
+  ]
+}

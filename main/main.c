@@ -67,13 +67,9 @@ void app_main(void)
     beeper_init();
 #endif
 
-    /* 显示任务（消费 display_q，统一改 model） */
-    display_task_start();
-
-    /* 输入任务（按键 + CDC 命令已在 handler） */
-    input_start();
-
-    /* Hardware ports are optional; all builds share the same app framework. */
+    /* Hardware ports are optional; all builds share the same app framework. They start before the display task so
+     * that when the app manager boots, the servo's presence and stored calibration are already known (the
+     * `first_run` hooks of the apps ask for them). */
 #ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
     esp_err_t robot_err = robot_start();
     if (robot_err != ESP_OK) {
@@ -81,6 +77,13 @@ void app_main(void)
         cdc_write("ERR robot initialization failed; check pin configuration");
     }
 #endif
+
+    /* 显示任务（消费 display_q，统一改 model） */
+    display_task_start();
+
+    /* 输入任务（按键 + CDC 命令已在 handler） */
+    input_start();
+
     device_link_start();
 
     /* 尝试连 Wi-Fi（有凭证则连，连上后启 http） */

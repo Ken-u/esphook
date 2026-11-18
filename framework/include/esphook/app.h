@@ -47,8 +47,10 @@ struct app_descriptor {
     /* Optional first-run setup. Asked once while the board starts, after every init(): the first app that answers
      * true is the first screen instead of the standby app (and `first_run` below is true for that entry only), so a
      * setting the rest of the device depends on - the panel flavour, say - is made before anything else is shown.
-     * The app ends the run with app_idle(): the board then goes on to the standby screen as if it had just started.
-     * The run is not part of the "back" history. Called on the UI task; answer from stored state, do not block. */
+     * The app ends the run with app_idle(): the board then goes on to the next first run (the apps after it in catalog
+     * order are asked again, so the screen is set up before the servo, say) and, when none is left, to the standby
+     * screen as if it had just started. The run is not part of the "back" history. Called on the UI task; answer from
+     * stored state, do not block. */
     bool (*first_run)(void);
 };
 struct app_context {

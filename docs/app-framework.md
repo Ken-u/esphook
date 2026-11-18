@@ -58,7 +58,7 @@ const app_descriptor_t esphook_app_counter = {
 | 回调 / 数据 | 契约 |
 | --- | --- |
 | `init()` | 每次启动调用一次，USB 接收前初始化；此时没有 LVGL，不能建控件；可分配应用的常驻传输资源 |
-| `first_run()` | 可选。启动时在所有 `init()` 之后问一次：第一个答 `true` 的应用成为开机后的第一个画面，排在待机应用之前（只有这一次进入时 `ctx->first_run` 为真，不在“返回”历史里，也不算待机，不会被通知抢占）；它做完后调 `app_idle(ctx)`，板子接着进待机画面，等于重新正常开机。用来放开机前必须先做的设置，例如 `screentest` 在没保存过屏幕调整时先让用户把屏幕调对。用已保存的状态回答，不要阻塞 |
+| `first_run()` | 可选。启动时在所有 `init()` 之后问一次：第一个答 `true` 的应用成为开机后的第一个画面，排在待机应用之前（只有这一次进入时 `ctx->first_run` 为真，不在“返回”历史里，也不算待机，不会被通知抢占）；它做完后调 `app_idle(ctx)`，框架接着按目录顺序问排在它后面的应用（所以屏幕设置在舵机校准之前），都问完才进待机画面，等于重新正常开机；用 `app_menu`/`app_open` 离开则不再接力。用来放开机前必须先做的设置：`screentest` 在没保存过屏幕调整时先让用户把屏幕调对，`servocal` 在装了舵机却没存过校准时接着校准。用已保存的状态回答，不要阻塞 |
 | `on_enter(ctx)` | 新会话；state 已清零，root 已创建；在 root 下建控件 |
 | `on_leave(ctx)` | 释放应用资源、图片缓存等；随后框架释放服务租约、删除 root 及动画、清零 state |
 | `on_event(ctx, e)` | DOWN / UP / SHORT / CONFIRM / CANCEL / MESSAGE / NOTIFY / NETWORK / ALARM；text 只在回调期间有效；ALARM 的 key 是闹钟条目 id、text 是 label，见“闹钟 API” |
@@ -153,7 +153,7 @@ USB 按住租期为 350ms，SDK 通过 hold/press/poll 每 100ms 续期；失联
 
 ## 硬件与 Hook 服务
 
-`app_radar_read` 返回三目标快照、在线状态、age、帧计数和显示范围，应用不接触 UART。`app_servo_read` 返回运动状态；`app_servo_request(ctx, action, value)` 排队给运动服务，支持 ARM / DISARM / FOLLOW / CENTER / ANGLE。首次调用申请当前应用的舵机租约；退出强制 disarm，队列满也可提交停止请求。未装机器人硬件时返回不可用，应用仍可运行屏幕部分。`app_servo_read` 还给出配置的限位 `limit_deg` 和限速 `speed_dps`。
+`app_radar_read` 返回三目标快照、在线状态、age、帧计数和显示范围，应用不接触 UART。`app_servo_read` 返回运动状态；`app_servo_request(ctx, action, value)` 排队给运动服务，支持 ARM / DISARM / FOLLOW / CENTER / ANGLE。首次调用申请当前应用的舵机租约；退出强制 disarm，队列满也可提交停止请求。未装机器人硬件时返回不可用，应用仍可运行屏幕部分。`app_servo_read` 还给出配置的限位 `limit_deg` 和限速 `speed_dps`。校准本身用 `app_servo_cal_read`（中位脉宽、摆幅、速度、方向、`available`、`stored`）和 `app_servo_cal_apply(ctx, &config, save)`（舵机已通电时也生效，回到新的中位，但不会让舵机通电；别的应用占着舵机时拒绝；`app_servo_cal_valid` 判断组合是否被接受），见 [robot-servocal.md](robot-servocal.md)。
 
 游戏想“摇一下舵机”或“把舵机当方向盘”，使用头文件 `framework/include/esphook/app_haptic.h`：它只通过公开舵机服务发 ANGLE 请求，按限位减 1° 钳幅度，按限速拉长半周期，两次请求至少间隔 60ms；舵机缺失、未启用或故障时一律静默。**框架不会自动启用舵机**：只有玩家在应用的待机/标题画面长按 500ms 确认后，应用才可调用 `haptic_arm()`。左右转向（雷达，或 K2/K3 两个键作后备）使用 `app_steer.h`：雷达按站在机器前面的人的视角处理（传感器 +X 是它自己的右边，面对机器的人的右边是传感器的 −X，所以内部取反，向你的右边侧身就是向右转，和雷达页一致）；以开局时最近的人为中心，侧身约 35cm 满舵，目标丢失保持 1.2 秒再回中，另一个人经过不会抢控制权。两者都是对时间戳的纯函数，主机测试见 `scripts/test-haptic-steer.sh`。
 
@@ -250,11 +250,13 @@ app_alarm_spec_t once = {.owner = "fishing", .target = "alarm", .label = "鱼汛
 | 雷达 | 三目标扇形调试图，服务快照 |
 | Hook | 通知展示、未读信息、选择回复词及确认回传 |
 | 按键 | USB `app_event` 回传词；复用 Hook 回传服务 |
+| 屏幕测试 | 测试图案 + 短按在四种极性/偏移组合间切换、长按保存；没存过屏幕设置的板子开机先进这里，见 [hardware.md](hardware.md) |
+| 舵机校准 | 五页：解锁回中、中位、摆幅、方向、速度，只用 K1；装了舵机却没存过校准的机器人开机先进这里，见 [robot-servocal.md](robot-servocal.md) |
 | 设置 | 六页：固件版本/构建时间、应用数量、Hook 信息、待机设置、硬件状态、硬件配置 |
 | 示例 | 点击计数、清零、动画、雷达状态和 PC 自定义标题 |
 | 启动器 | 隐藏的系统应用，iPod 式列表、高亮条滑动、滚动条、图标预览和长按填充 |
 
-设置短按循环六页。硬件配置页长按编辑、短按切换、长按保存，再长按重启生效。待机页长按进入编辑，短按切换可选应用，长按保存；三击随时回菜单。固件版本取 ESP-IDF app descriptor，当前版本由 `version.txt` 管理。数量统计已编译的可见应用，默认 22 个，不含系统 launcher；不显示凭据或认证密钥。
+设置短按循环六页。硬件配置页长按编辑、短按切换、长按保存，再长按重启生效。待机页长按进入编辑，短按切换可选应用，长按保存；三击随时回菜单。固件版本取 ESP-IDF app descriptor，当前版本由 `version.txt` 管理。数量统计已编译的可见应用，默认 24 个，不含系统 launcher；不显示凭据或认证密钥。
 
 PC 的运行入口和协议见 [app-pc-protocol.md](app-pc-protocol.md)。旧投篮命令仍可用，start 排队打开新局，stop 回菜单，status 查询最近快照；`robot menu` 通用开菜单。
 

@@ -18,6 +18,7 @@ add_executable(apps_headless test_apps.c ${ESPHOOK_APP_SOURCES}
     "${PROJECT_DIR}/framework/core/app_alarm.c"
     "${PROJECT_DIR}/framework/core/app_best.c"
     "${PROJECT_DIR}/framework/core/app_screen.c"
+    "${PROJECT_DIR}/framework/services/robot_follow.c"
     "${PROJECT_DIR}/framework/services/display_protocol.c"
     "${PROJECT_DIR}/framework/services/radar_plot.c"
     "${PROJECT_DIR}/framework/ports/esp32/app_ui.c"
@@ -80,6 +81,9 @@ if(ESPHOOK_APP_demo)
 endif()
 if(ESPHOOK_APP_screentest)
     target_compile_definitions(apps_headless PRIVATE ESPHOOK_TEST_SCREENTEST)
+endif()
+if(ESPHOOK_APP_servocal)
+    target_compile_definitions(apps_headless PRIVATE ESPHOOK_TEST_SERVOCAL)
 endif()
 target_link_options(apps_headless PRIVATE -fsanitize=address,undefined)
 target_compile_options(lvgl PRIVATE -g -fsanitize=address,undefined -fno-omit-frame-pointer)

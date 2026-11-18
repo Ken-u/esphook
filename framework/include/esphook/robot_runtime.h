@@ -12,6 +12,7 @@ typedef struct {
     uint32_t radar_age_ms;
     bool radar_online;
     robot_config_t config;
+    bool config_stored; /* `config` is what NVS holds (or was stored this boot), not the built-in defaults */
 } robot_status_t;
 
 esp_err_t robot_start(void);
@@ -21,3 +22,6 @@ bool robot_command(const char *line);
 
 /* Port adapter: action values are app_servo_action_t; enqueue only. */
 bool robot_servo_request(unsigned action, int value);
+/* Queues a calibration (robot_config_valid() must hold); with `save` it is also stored. Works while armed (the servo is
+ * centred on the new neutral) and never arms. False when there is no servo or the queue is full. */
+bool robot_servo_calibrate(const robot_config_t *config, bool save);

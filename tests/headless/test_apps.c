@@ -116,6 +116,18 @@ bool app_servo_request(app_context_t *c,app_servo_action_t a,int v)
     if(a!=APP_SERVO_ANGLE || !servo_state.armed || v>servo_state.limit_deg || v<-servo_state.limit_deg) return false;
     ++servo_log.angle;servo_log.last=v;if(v<servo_log.lo) servo_log.lo=v;if(v>servo_log.hi) servo_log.hi=v;servo_state.angle_deg=(float)v;return true;
 }
+/* The calibration service is a record too: what the servo uses, what was stored, and every request. */
+static app_servo_cal_t servo_cal={.config={.center_us=1500,.limit_deg=30,.speed_dps=35},.available=true,.stored=true};
+static struct { unsigned applies,saves;bool busy; } cal_log;
+void app_servo_cal_read(app_servo_cal_t *c) { *c=servo_cal; }
+bool app_servo_cal_apply(app_context_t *c,const robot_config_t *cfg,bool save)
+{
+    (void)c;
+    if(cal_log.busy || !servo_cal.available || !app_servo_cal_valid(cfg)) return false;
+    ++cal_log.applies;servo_cal.config=*cfg;servo_state.limit_deg=cfg->limit_deg;servo_state.speed_dps=cfg->speed_dps;
+    if(save) { ++cal_log.saves;servo_cal.stored=true; }
+    return true;
+}
 void app_hook_read(app_hook_t *h) { memset(h,0,sizeof *h);h->current=h->connected=true;h->clients=1;h->unread=2;strcpy(h->client,"Codex");strcpy(h->title,"任务已完成");strcpy(h->body,"长按回复继续"); }
 bool app_hook_reply(unsigned key) { return key<3; }
 void app_key_word(unsigned key,char *s,size_t n) { const char *words[]={"ok","continue","done"};snprintf(s,n,"%s",words[key%3]); }
@@ -365,6 +377,127 @@ static void play_screentest(const char *out)
     for(size_t i=0;i<esphook_app_count;++i) if(!strcmp(esphook_apps[i]->id,"screentest")) assert(!esphook_apps[i]->first_run()); /* stored: boot goes straight on */
     /* put the panel back for whoever looks at it next */
     screen.now=(app_screen_t){.invert=true,.x_gap=1,.y_gap=26,.mhz=20,.saved_mhz=20,.configured=true};
+}
+#endif
+#ifdef ESPHOOK_TEST_SERVOCAL
+/* The servo calibration: five pages on K1 alone, the explicit go-ahead, what it asks of the servo, what it stores, and the first run. */
+static void servo_fresh(void)
+{
+    servo_state.armed=false;servo_state.angle_deg=0;servo_state.limit_deg=30;servo_state.speed_dps=35;
+    servo_cal.config=(robot_config_t){.center_us=1500,.limit_deg=30,.speed_dps=35};servo_cal.available=true;servo_cal.stored=true;
+    cal_log.busy=false;
+}
+static void servo_open(void) { assert(app_open(&manager.context,"servocal"));app_manager_commit(&manager);run(100); }
+static bool has_servocal_first_run(void)
+{
+    for(size_t i=0;i<esphook_app_count;++i) if(!strcmp(esphook_apps[i]->id,"servocal")) return esphook_apps[i]->first_run && esphook_apps[i]->first_run();
+    assert(!"servocal is not in the catalog");return false;
+}
+static void play_servocal(const char *out)
+{
+    servo_fresh();
+    const unsigned arms=servo_log.arm,disarms=servo_log.disarm;
+    /* Without a servo (auto/screen profile) the app only says so, and nothing asks for a first run. */
+    servo_cal.available=false;servo_cal.stored=false;
+    assert(!has_servocal_first_run());
+    servo_open();assert(shows_text(lv_screen_active(),"没有舵机") && shows_text(lv_screen_active(),"短按 返回"));dump(out,"servocal-none");
+    event(APP_EVENT_CONFIRM);assert(!strcmp(app_active_id(&manager.context),"launcher") && servo_log.arm==arms && cal_log.applies==0);
+    servo_fresh();
+    /* A robot whose calibration is stored does not ask at boot; the first page waits for the go-ahead and arms nothing. */
+    assert(!has_servocal_first_run());
+    servo_open();
+    assert(!manager.context.first_run && app_triple_exit(&manager.context));
+    assert(shows_text(lv_screen_active(),"舵机校准 1/5") && shows_text(lv_screen_active(),"先别装舵盘") && shows_text(lv_screen_active(),"长按 解锁并回中") && shows_text(lv_screen_active(),"短按 返回"));
+    dump(out,"servocal");run(500);assert(servo_log.arm==arms && !servo_state.armed);
+    event(APP_EVENT_SHORT);assert(!strcmp(app_active_id(&manager.context),"launcher") && cal_log.applies==0 && servo_log.arm==arms); /* a short press only goes back */
+    /* The long press is the go-ahead: it arms (at the centre) and moves to the centre page. */
+    servo_open();event(APP_EVENT_CONFIRM);run(60);
+    assert(servo_log.arm==arms+1 && servo_state.armed && shows_text(lv_screen_active(),"舵机校准 2/5") && shows_text(lv_screen_active(),"中位 1500us"));
+    assert(shows_text(lv_screen_active(),"舵机应停在正中") && shows_text(lv_screen_active(),"短按 +10 长按 下一步"));dump(out,"servocal-center");
+    /* Short presses step the centre pulse by 10 us and the servo follows at once (nothing stored); 1600 wraps to 1400. */
+    event(APP_EVENT_SHORT);run(60);
+    assert(servo_cal.config.center_us==1510 && cal_log.applies==1 && cal_log.saves==0 && shows_text(lv_screen_active(),"中位 1510us"));
+    for(unsigned i=0;i<9;++i) event(APP_EVENT_SHORT);
+    run(60);assert(servo_cal.config.center_us==1600 && shows_text(lv_screen_active(),"中位 1600us"));
+    event(APP_EVENT_SHORT);run(60);assert(servo_cal.config.center_us==1400 && shows_text(lv_screen_active(),"中位 1400us"));
+    /* Travel: the servo sweeps the whole range, and a centre that does not leave room for it is skipped (1400 with 40 degrees would run below 1000 us). */
+    servo_log.lo=servo_log.hi=0;event(APP_EVENT_CONFIRM);run(60);
+    assert(shows_text(lv_screen_active(),"舵机校准 3/5") && shows_text(lv_screen_active(),"摆幅 ±30°") && shows_text(lv_screen_active(),"短按 +5 长按 下一步"));
+    assert(servo_log.hi==30 && servo_log.last==30);run(500);dump(out,"servocal-limit");
+    run(2600);assert(servo_log.lo==-30 && servo_log.last==-30);
+    servo_log.hi=0;event(APP_EVENT_SHORT);run(60);assert(servo_cal.config.limit_deg==35 && shows_text(lv_screen_active(),"摆幅 ±35°") && servo_log.hi==35); /* the new range is swept at once */
+    event(APP_EVENT_SHORT);run(60);assert(servo_cal.config.limit_deg==5 && shows_text(lv_screen_active(),"摆幅 ±5°")); /* 40 and 45 do not fit with 1400 */
+    event(APP_EVENT_CONFIRM);event(APP_EVENT_SHORT);run(60); /* a hold on page 3 goes to page 4; the short press there flips the direction */
+    assert(shows_text(lv_screen_active(),"舵机校准 4/5") && servo_cal.config.reverse && shows_text(lv_screen_active(),"方向 反向"));
+    event(APP_EVENT_SHORT);run(60);assert(!servo_cal.config.reverse && shows_text(lv_screen_active(),"方向 正向") && shows_text(lv_screen_active(),"应先朝你的左边转") && shows_text(lv_screen_active(),"短按 反向 长按 对了"));
+    servo_log.hi=servo_log.lo=0;run(2500);assert(servo_log.hi==5 && servo_log.lo==0); /* a nod toward the positive side only */
+    event(APP_EVENT_CONFIRM);run(60);
+    assert(shows_text(lv_screen_active(),"舵机校准 5/5") && shows_text(lv_screen_active(),"速度 35°/s") && shows_text(lv_screen_active(),"短按 换档 长按 保存"));
+    event(APP_EVENT_SHORT);run(60);assert(servo_cal.config.speed_dps==50 && shows_text(lv_screen_active(),"速度 50°/s"));
+    event(APP_EVENT_SHORT);event(APP_EVENT_SHORT);run(60);assert(servo_cal.config.speed_dps==90);
+    event(APP_EVENT_SHORT);run(60);assert(servo_cal.config.speed_dps==15);
+    /* A busy motion service keeps the final hold from leaving; the next one stores, disarms and goes back to the menu. */
+    event(APP_EVENT_SHORT);event(APP_EVENT_SHORT);run(60);assert(servo_cal.config.speed_dps==35);
+    cal_log.busy=true;event(APP_EVENT_CONFIRM);assert(!strcmp(app_active_id(&manager.context),"servocal") && cal_log.saves==0);
+    cal_log.busy=false;event(APP_EVENT_CONFIRM);run(30);
+    assert(cal_log.saves==1 && servo_cal.stored && servo_cal.config.center_us==1400 && servo_cal.config.limit_deg==5 && servo_cal.config.speed_dps==35 && !servo_cal.config.reverse);
+    assert(!servo_state.armed && servo_log.disarm>disarms && !strcmp(app_active_id(&manager.context),"launcher"));
+    /* Only that hold stores: the triple press from the menu puts back what the app started with and disarms. */
+    servo_fresh();servo_cal.stored=true;const unsigned saves=cal_log.saves;
+    servo_open();event(APP_EVENT_CONFIRM);run(60);event(APP_EVENT_SHORT);event(APP_EVENT_SHORT);run(60);assert(servo_cal.config.center_us==1520 && servo_state.armed);
+    assert(mash_leaves("servocal"));run(30);
+    assert(servo_cal.config.center_us==1500 && cal_log.saves==saves && !servo_state.armed);
+    /* Armed and left without a change: only the disarm. */
+    servo_open();event(APP_EVENT_CONFIRM);run(60);assert(servo_state.armed);
+    assert(app_open(&manager.context,APP_LAUNCHER));app_manager_commit(&manager);run(30);
+    assert(servo_cal.config.center_us==1500 && cal_log.saves==saves);
+
+    /* First run: a robot with no stored calibration starts here and the triple press is off. A short press on the first page
+     * skips for now: the standby screen, nothing stored, asked again at the next boot. */
+    servo_fresh();servo_cal.stored=false;assert(has_servocal_first_run());
+    manager.first_run_next=true;servo_open();
+    assert(manager.context.first_run && !manager.idle && !app_triple_exit(&manager.context));
+    assert(shows_text(lv_screen_active(),"短按 先跳过"));dump(out,"servocal-first-run");
+    const unsigned applied=cal_log.applies;
+    event(APP_EVENT_SHORT);run(30);
+    assert(cal_log.saves==saves && !servo_cal.stored && !manager.context.first_run && manager.idle && cal_log.applies==applied);
+    assert(!strcmp(app_active_id(&manager.context),app_standby_id(&manager.context)) && has_servocal_first_run());
+    /* Armed, the three presses do not leave (they only step the centre), and they are not undone by a leave that never comes. */
+    servo_fresh();servo_cal.stored=false;
+    manager.first_run_next=true;servo_open();event(APP_EVENT_CONFIRM);run(60);
+    assert(!mash_leaves("servocal") && servo_state.armed && shows_text(lv_screen_active(),"舵机校准 2/5"));
+    assert(app_open(&manager.context,APP_LAUNCHER));app_manager_commit(&manager);run(30);
+    assert(!servo_state.armed && servo_cal.config.center_us==1500 && !servo_cal.stored && cal_log.saves==saves); /* any exit puts the servo back */
+    /* No key on the first page: 30 s later it goes on to the standby screen without storing anything. */
+    servo_fresh();servo_cal.stored=false;
+    manager.first_run_next=true;servo_open();
+    run(28000);assert(!left("servocal"));
+    run(3000);assert(!strcmp(app_active_id(&manager.context),app_standby_id(&manager.context)) && manager.idle && !servo_cal.stored && cal_log.saves==saves && has_servocal_first_run());
+    /* Armed and changed, then nobody touches it: 60 s, then the servo is disarmed and has its old calibration back. */
+    servo_fresh();servo_cal.stored=false;
+    manager.first_run_next=true;servo_open();
+    event(APP_EVENT_CONFIRM);event(APP_EVENT_SHORT);run(60);assert(servo_state.armed && servo_cal.config.center_us==1510);
+    run(58000);assert(!left("servocal"));
+    run(3000);assert(!strcmp(app_active_id(&manager.context),app_standby_id(&manager.context)) && !servo_state.armed && servo_cal.config.center_us==1500 && !servo_cal.stored && cal_log.saves==saves);
+    /* The whole first run: confirmed on the last page it stores and goes on to the standby screen. */
+    servo_fresh();servo_cal.stored=false;
+    manager.first_run_next=true;servo_open();
+    event(APP_EVENT_CONFIRM);event(APP_EVENT_SHORT);event(APP_EVENT_CONFIRM);event(APP_EVENT_CONFIRM);event(APP_EVENT_SHORT);event(APP_EVENT_CONFIRM);
+    assert(shows_text(lv_screen_active(),"舵机校准 5/5") && shows_text(lv_screen_active(),"方向 反向")==false);
+    event(APP_EVENT_CONFIRM);run(30);
+    assert(cal_log.saves==saves+1 && servo_cal.stored && servo_cal.config.center_us==1510 && servo_cal.config.reverse && !manager.context.first_run);
+    assert(!strcmp(app_active_id(&manager.context),app_standby_id(&manager.context)) && manager.idle && !servo_state.armed);
+#ifdef ESPHOOK_TEST_SCREENTEST
+    /* Both are due on a new robot: the screen first, then the servo, then the standby screen. */
+    servo_fresh();servo_cal.stored=false;screen.now.configured=false;
+    manager.first_run_next=true;assert(app_open(&manager.context,"screentest"));app_manager_commit(&manager);run(100);
+    event(APP_EVENT_SHORT);k1(true);run(600);k1(false);run(60);
+    assert(!strcmp(app_active_id(&manager.context),"servocal") && manager.context.first_run && !manager.idle && screen.now.configured);
+    event(APP_EVENT_CONFIRM);event(APP_EVENT_CONFIRM);event(APP_EVENT_CONFIRM);event(APP_EVENT_CONFIRM);event(APP_EVENT_CONFIRM);run(30);
+    assert(!strcmp(app_active_id(&manager.context),app_standby_id(&manager.context)) && manager.idle && servo_cal.stored);
+    screen.now=(app_screen_t){.invert=true,.x_gap=1,.y_gap=26,.mhz=20,.saved_mhz=20,.configured=true};
+#endif
+    servo_fresh();
 }
 #endif
 /* The best score outlives the game (app_best.h): a game that finished a run is left and entered again, and its record is
@@ -1416,6 +1549,9 @@ int main(int argc,char **argv)
     check_records();
 #ifdef ESPHOOK_TEST_SCREENTEST
     play_screentest(out);
+#endif
+#ifdef ESPHOOK_TEST_SERVOCAL
+    play_servocal(out);
 #endif
     assert(app_open(&manager.context,"settings"));app_manager_commit(&manager);run(20);
     event(APP_EVENT_SHORT);event(APP_EVENT_SHORT);event(APP_EVENT_SHORT);event(APP_EVENT_CONFIRM);

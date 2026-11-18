@@ -177,7 +177,7 @@ class SdkTests(unittest.TestCase):
         link = object.__new__(AppLink)
         link.serial, link.sequence, link.events, link.pending, link.selected = ListAckSerial(frame), 0, deque(), bytearray(), False
         apps = link.catalog()
-        self.assertEqual([a["id"] for a in apps], ["alarm", "aquarium", "basketball", "demo", "dino", "face", "fishing", "fortune", "hook", "jump", "key_report", "miner", "mirror", "muyu", "racing", "radar", "screentest", "settings", "ski", "starship", "stock", "wedding", "zombie"])
+        self.assertEqual([a["id"] for a in apps], ["alarm", "aquarium", "basketball", "demo", "dino", "face", "fishing", "fortune", "hook", "jump", "key_report", "miner", "mirror", "muyu", "racing", "radar", "screentest", "servocal", "settings", "ski", "starship", "stock", "wedding", "zombie"])
         self.assertEqual({a["id"]: a["title"] for a in apps}["aquarium"], "水族箱")
 
     def test_opening_the_port_never_resets_the_chip(self):

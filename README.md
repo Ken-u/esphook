@@ -26,6 +26,7 @@ ESP32-C3 小屏应用与小游戏框架，所有内置应用共用生命周期�
 > [僵尸围城](docs/robot-zombie.md)：第一人称打僵尸，**雷达控制转向，按住按键开火**，被咬掉血并轻摇舵机（共 3 滴），一波比一波多。
 > [今日幸运签](docs/robot-fortune.md)：按住摇签筒、松手出签，事业/人际/家庭/学业/爱情里随机一个方面，大吉/中吉/小吉，附幸运数和幸运色。
 > [闹钟 / 整点报时](docs/robot-alarm.md)：七段数码管时钟，到点**自动打开**（闹钟抢占任何画面，整点报时只在待机时），可贪睡，可选舵机摇晃提醒；`python run.py time` 校时。日程由框架的**全局闹钟 API**（`app_alarm.h`）管理，闹钟应用只是界面，其他应用和游戏也能登记定时提醒，见[应用框架](docs/app-framework.md#闹钟-api全局注册--唤醒)。
+> [舵机校准](docs/robot-servocal.md)：只用 K1 校准舵机的中位、摆幅、方向和速度；**装了舵机的机器人第一次开机，在屏幕设置之后自动进入**，保存后才进待机。
 > [副屏](docs/robot-mirror.md)：把电脑上的某个窗口（macOS）或屏幕区域实时投到小屏，`python run.py mirror --window Terminal`。
 > [做 T 高手](docs/robot-stock-t.md)：PC 随机准备 A 股历史五分钟 K 线和 MA30/MA60，通过 USB 上传 RAM；按住暂停并确认满仓买入，短按满仓卖出，每天结束结算收益。PC 入口：`./scripts/stock-t.sh`。
 > 下方保留原 Agent Hook 项目说明；两种硬件共用应用框架和可选 device link，Wi-Fi 用于 Hook 连接、配置和 OTA。

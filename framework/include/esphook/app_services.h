@@ -19,6 +19,14 @@ typedef struct {
 } app_servo_t;
 typedef enum { APP_SERVO_ARM, APP_SERVO_DISARM, APP_SERVO_FOLLOW,
                APP_SERVO_CENTER, APP_SERVO_ANGLE } app_servo_action_t;
+/* The servo's calibration (docs/robot-bringup.md): `config.center_us` is the pulse that centres it (1400..1600),
+ * `limit_deg` the travel to each side (5..45), `speed_dps` the slew limit (5..90), `reverse` flips the direction.
+ * Positive angles turn toward the sensor's +X, which is the player's left when they face the machine. `stored` is
+ * false until a calibration has been saved: a robot that never had one runs the `servocal` first-run setup. */
+typedef struct {
+    robot_config_t config;
+    bool available, stored;
+} app_servo_cal_t;
 typedef struct {
     bool current, connected;
     unsigned clients, unread;
@@ -36,6 +44,13 @@ void app_servo_read(app_servo_t *out);
 /* Queued, bounded and rate-limited by the motion service. Never auto-arms.
  * The first request leases the servo to this app; leaving disarms its lease. */
 bool app_servo_request(app_context_t *ctx, app_servo_action_t action, int value);
+/* A combination the motion service accepts (centre and travel have to fit inside 1000..2000 us together). */
+static inline bool app_servo_cal_valid(const robot_config_t *config) { return config && robot_config_valid(config); }
+void app_servo_cal_read(app_servo_cal_t *out);
+/* Queues a calibration; with `save` it is stored. It works while the servo is armed (the servo is then centred on the new
+ * neutral so the change can be watched) but never arms it, and it is refused (false) while another app holds the servo,
+ * when there is no servo, for an invalid combination or when the motion service's queue is full. */
+bool app_servo_cal_apply(app_context_t *ctx, const robot_config_t *config, bool save);
 void app_display_read(robot_ui_t *out);
 bool app_display_update(const char *json, size_t length, char *error, size_t error_size);
 void app_hook_read(app_hook_t *out);

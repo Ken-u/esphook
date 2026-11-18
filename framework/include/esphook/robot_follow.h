@@ -1,4 +1,5 @@
 #pragma once
+#include <stddef.h>
 #include "ld2450.h"
 
 typedef enum { ROBOT_IDLE, ROBOT_ACQUIRING, ROBOT_TRACKING, ROBOT_LOST, ROBOT_FAULT } robot_state_t;
@@ -18,6 +19,10 @@ typedef struct {
 
 robot_config_t robot_default_config(void);
 bool robot_config_valid(const robot_config_t *config);
+/* "cal:<center_us>,<limit>,<speed>,<reverse>[,save]": the queue line of a calibration request. Parse fails for anything
+ * malformed or outside robot_config_valid(); format returns snprintf's length. */
+bool robot_cal_parse(const char *text, robot_config_t *out, bool *save);
+int robot_cal_format(char *buf, size_t size, const robot_config_t *config, bool save);
 void robot_follow_init(robot_follow_t *f, const robot_config_t *config, uint64_t now_ms);
 void robot_follow_frame(robot_follow_t *f, const ld2450_frame_t *frame, uint64_t now_ms);
 void robot_follow_tick(robot_follow_t *f, uint64_t now_ms);

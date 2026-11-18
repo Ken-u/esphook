@@ -51,6 +51,17 @@ void app_servo_read(app_servo_t *out)
     out->angle_deg = s.angle_deg; out->target_deg = s.target_deg; out->tracking = s.state;
     out->limit_deg = s.config.limit_deg; out->speed_dps = s.config.speed_dps;
 }
+void app_servo_cal_read(app_servo_cal_t *out)
+{
+    robot_status_t s; robot_get_status(&s); memset(out, 0, sizeof *out);
+    out->available = s.servo_ready; out->stored = s.config_stored;
+    out->config = s.servo_ready ? s.config : robot_default_config();
+}
+bool app_servo_cal_apply(app_context_t *ctx, const robot_config_t *config, bool save)
+{
+    if (s_servo_owner[0] && strcmp(s_servo_owner, ctx->app->id)) return false;
+    return robot_servo_calibrate(config, save);
+}
 bool app_servo_request(app_context_t *ctx, app_servo_action_t action, int value)
 {
     if (s_servo_owner[0] && strcmp(s_servo_owner, ctx->app->id)) return false;

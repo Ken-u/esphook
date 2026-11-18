@@ -88,8 +88,15 @@ void app_manager_commit(app_manager_t *m)
 {
     if (!m->pending_set) return;
     size_t target = m->pending; bool idle = m->pending_idle;
-    const bool first_run = m->first_run_next; /* only the very first entry of a boot can be the first run */
+    bool first_run = m->first_run_next; /* the very first entry of a boot, or the next first run after one that has ended */
     m->pending_set = false; m->first_run_next = false;
+    /* A first run that ends with app_idle() hands over to the next app (in catalog order) that has something to set up;
+     * only when none is left does the board go on to the standby screen. Going forward only means that a run left
+     * without storing anything is not offered again before the next boot. */
+    if (m->ready && m->context.first_run && idle && target == m->standby) {
+        for (size_t i = m->active + 1; i < m->catalog_count; ++i)
+            if (m->catalog[i]->first_run && m->catalog[i]->first_run()) { target = i; idle = false; first_run = true; break; }
+    }
     if (m->ready) {
         if (m->context.app->on_leave) m->context.app->on_leave(&m->context);
         app_alarm_leaving(m->context.app->id); /* leaving an app answers the alarm that was ringing in it */

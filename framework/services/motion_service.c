@@ -20,6 +20,8 @@ static const char *TAG = "robot";
 static QueueHandle_t s_commands;
 static bool s_force_disarm;
 static bool s_servo_ready, s_radar_ready;
+static robot_config_t s_boot_config; /* read in robot_start(), before the app manager asks for it, then owned by the task */
+static bool s_boot_stored;
 static portMUX_TYPE s_status_lock = portMUX_INITIALIZER_UNLOCKED;
 static robot_status_t s_status = {.state = ROBOT_FAULT, .radar_age_ms = UINT32_MAX};
 typedef struct { char line[80]; } command_t;
@@ -31,21 +33,25 @@ void robot_get_status(robot_status_t *out)
     *out = s_status;
     portEXIT_CRITICAL(&s_status_lock);
 }
-static void load_config(robot_config_t *c)
+/* True when a valid calibration was stored (robot save, or the calibration app): a robot that never had one is
+ * offered the calibration at first boot. */
+static bool load_config(robot_config_t *c)
 {
     *c = robot_default_config();
     nvs_handle_t h;
-    if (nvs_open("robot", NVS_READONLY, &h) != ESP_OK) return;
+    if (nvs_open("robot", NVS_READONLY, &h) != ESP_OK) return false;
     robot_config_t v = *c;
     int32_t value;
     uint8_t reverse;
-    if (nvs_get_i32(h, "center", &value) == ESP_OK) v.center_us = value;
+    const bool stored = nvs_get_i32(h, "center", &value) == ESP_OK;
+    if (stored) v.center_us = value;
     if (nvs_get_i32(h, "limit", &value) == ESP_OK) v.limit_deg = value;
     if (nvs_get_i32(h, "speed", &value) == ESP_OK) v.speed_dps = value;
     if (nvs_get_u8(h, "reverse", &reverse) == ESP_OK) v.reverse = reverse != 0;
     nvs_close(h);
-    if (robot_config_valid(&v)) *c = v;
-    else ESP_LOGW(TAG, "invalid saved calibration; using defaults");
+    if (robot_config_valid(&v)) { *c = v; return stored; }
+    ESP_LOGW(TAG, "invalid saved calibration; using defaults");
+    return false;
 }
 static esp_err_t save_config(const robot_config_t *c)
 {
@@ -88,8 +94,8 @@ static void receive_frame(const ld2450_frame_t *frame, uint64_t ms, void *user)
 static void robot_task(void *arg)
 {
     (void)arg;
-    robot_config_t config;
-    load_config(&config);
+    robot_config_t config = s_boot_config;
+    bool config_stored = s_boot_stored;
     robot_follow_t follow;
     robot_follow_init(&follow, &config, now_ms());
     ld2450_frame_t raw = {0};
@@ -161,8 +167,30 @@ static void robot_task(void *arg)
                 cdc_write("OK robot motion mode set");
                 continue;
             }
+            if (!strncmp(cmd, "cal:", 4)) {
+                /* The calibration app (robot_servo_calibrate). Unlike the text settings below it works while armed: the
+                 * servo is then centred on the new neutral at once, so the change can be watched; it never arms. */
+                robot_config_t next;
+                bool store;
+                if (!robot_cal_parse(cmd, &next, &store)) { ESP_LOGW(TAG, "calibration request rejected"); continue; }
+                robot_follow_init(&follow, &next, now_ms());
+                angle = manual_goal = 0;
+                following = false;
+                if (armed) {
+                    const esp_err_t err = servo_port_write(next.center_us);
+                    if (err == ESP_OK) last_pulse = next.center_us;
+                    else { (void)servo_port_write(0); armed = false; last_pulse = 0; hardware_fault = true; }
+                }
+                if (store) {
+                    if (save_config(&next) == ESP_OK) config_stored = true;
+                    else ESP_LOGW(TAG, "calibration not saved");
+                }
+                continue;
+            }
             if (!strcmp(cmd, "save")) {
-                cdc_write(save_config(&follow.config) == ESP_OK ? "OK robot saved" : "ERR robot save failed");
+                const bool saved = save_config(&follow.config) == ESP_OK;
+                if (saved) config_stored = true;
+                cdc_write(saved ? "OK robot saved" : "ERR robot save failed");
                 continue;
             }
             if (armed) { cdc_write("ERR disarm before changing calibration"); continue; }
@@ -205,7 +233,7 @@ static void robot_task(void *arg)
             .state = hardware_fault ? ROBOT_FAULT : follow.state,
             .armed = armed, .following = following, .hardware_fault = hardware_fault,
             .servo_ready=s_servo_ready,.radar_ready=s_radar_ready,
-            .angle_deg = angle, .target_deg = follow.goal_deg,
+            .config_stored = config_stored, .angle_deg = angle, .target_deg = follow.goal_deg,
             .x_mm = (int)follow.x_mm, .y_mm = (int)follow.y_mm,
             .frames = radar_port_parser()->frames, .rejected = radar_port_parser()->rejected, .config = follow.config,
             .raw = raw,
@@ -252,8 +280,10 @@ esp_err_t robot_start(void)
         s_radar_ready=err==ESP_OK;
         if(err!=ESP_OK) ESP_LOGW(TAG,"optional radar driver unavailable: %s",esp_err_to_name(err));
     }
+    s_boot_stored = load_config(&s_boot_config);
     portENTER_CRITICAL(&s_status_lock);
     s_status.radar_ready=s_radar_ready;s_status.servo_ready=s_servo_ready;
+    s_status.config=s_boot_config;s_status.config_stored=s_boot_stored;
     portEXIT_CRITICAL(&s_status_lock);
     s_commands = xQueueCreate(8, sizeof(command_t));
     if (!s_commands) { if(s_radar_ready) radar_port_close(); return ESP_ERR_NO_MEM; }
@@ -283,6 +313,13 @@ bool robot_servo_request(unsigned action, int value)
     else strcpy(c.line, names[action]);
     return xQueueSend(s_commands, &c, 0) == pdTRUE;
 }
+bool robot_servo_calibrate(const robot_config_t *config, bool save)
+{
+    if (!s_commands || !s_servo_ready || !config || !robot_config_valid(config)) return false;
+    command_t c = {0};
+    if (robot_cal_format(c.line, sizeof c.line, config, save) >= (int)sizeof c.line) return false;
+    return xQueueSend(s_commands, &c, 0) == pdTRUE;
+}
 bool robot_command(const char *line)
 {
     if (strncmp(line, "robot", 5) || (line[5] && line[5] != ' ')) return false;
@@ -304,5 +341,6 @@ bool robot_command(const char *line)
 esp_err_t robot_start(void) { return ESP_ERR_NOT_SUPPORTED; }
 void robot_get_status(robot_status_t *s) { memset(s, 0, sizeof *s); }
 bool robot_servo_request(unsigned a, int v) { (void)a; (void)v; return false; }
+bool robot_servo_calibrate(const robot_config_t *c, bool save) { (void)c; (void)save; return false; }
 bool robot_command(const char *line) { (void)line; return false; }
 #endif
