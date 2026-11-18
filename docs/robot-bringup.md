@@ -18,7 +18,7 @@
 
 所有模块共地，舵机不从 3V3 稳压输出取电。须核对 SuperMini 5V 排针和 Type-C VBUS 的实际连接。电脑 USB 口能否承受整机峰值电流尚待实测；本方案不引入额外电源。
 
-机器人模式只扫描 GPIO6 单按键；GPIO10/11 的旧按键扫描不启动，也不启动蜂鸣器。LEDC timer 1 / channel 1 用于舵机。应用日志改走 USB，避免 UART0 日志混入 GPIO21；ROM 启动日志仍可能在 GPIO21 出现，因此该脚只接雷达 RX，不能改接舵机信号。
+机器人模式只扫描 GPIO6 单按键；GPIO10/11 的旧按键扫描不启动；GPIO7 的蜂鸣器照常工作（LEDC timer 0 / channel 0，不动舵机的 timer 1 / channel 1；两者都显式用 APB 时钟，见 `hw_pwm.h`），USB `sound` 命令会同时打印蜂鸣器和舵机定时器的实际频率，播放前后舵机应保持 50 Hz。LEDC timer 1 / channel 1 用于舵机。应用日志改走 USB，避免 UART0 日志混入 GPIO21；ROM 启动日志仍可能在 GPIO21 出现，因此该脚只接雷达 RX，不能改接舵机信号。
 
 ## 构建与刷写
 

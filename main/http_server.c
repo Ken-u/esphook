@@ -157,14 +157,14 @@ static esp_err_t h_notify(httpd_req_t *req)
     }
 
     /* type 缺省按 done；非法值拒绝，避免主机端误拼请求后静默变成普通通知。 */
-    beep_kind_t bk = BEEP_NOTIFY;
+    app_beep_t bk = APP_BEEP_NOTIFY;
     dm_status_t status = DM_STATUS_DONE;
     if (cJSON_IsString(ty) && ty->valuestring[0]) {
         if (strcmp(ty->valuestring, "confirm") == 0) {
-            bk = BEEP_CONFIRM;
+            bk = APP_BEEP_CONFIRM;
             status = DM_STATUS_CONFIRM;
         } else if (strcmp(ty->valuestring, "error") == 0) {
-            bk = BEEP_ERROR;
+            bk = APP_BEEP_ERROR;
             status = DM_STATUS_ERROR;
         } else if (strcmp(ty->valuestring, "done") != 0) {
             cJSON_Delete(j);

@@ -1,6 +1,7 @@
 #pragma once
 #include "app.h"
 #include "app_hardware.h"
+#include "app_sound.h"
 #include "app_time.h"
 #include "robot_follow.h"
 #include "robot_ui_protocol.h"
@@ -56,6 +57,11 @@ bool app_display_update(const char *json, size_t length, char *error, size_t err
 void app_hook_read(app_hook_t *out);
 bool app_hook_reply(unsigned key);
 void app_key_word(unsigned key, char *out, size_t size);
+/* A sound on the passive buzzer (GPIO7, app_sound.h): queued for the buzzer's own task, so it never blocks and never
+ * touches the servo's PWM. True when it was queued; false when the queue is full (the sound is simply skipped). It is
+ * still silent when the player muted the device (USB `sound off`) or the board has no buzzer. Short sounds only: ask for
+ * the next one when you want it (an alarm ring asks every couple of seconds), do not queue a tune ahead. */
+bool app_beep(app_beep_t kind);
 void app_device_info(app_device_info_t *out);
 uint32_t app_random(void);
 uint64_t app_clock_ms(void);

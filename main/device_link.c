@@ -294,14 +294,14 @@ static bool queue_display_notify(int fd, cJSON *message)
     if (!cJSON_IsString(client) || !cJSON_IsString(session)) return false;
 
     dm_status_t status = DM_STATUS_DONE;
-    beep_kind_t beep = BEEP_NOTIFY;
+    app_beep_t beep = APP_BEEP_NOTIFY;
     if (cJSON_IsString(status_json) && status_json->valuestring[0]) {
         if (strcmp(status_json->valuestring, "confirm") == 0) {
             status = DM_STATUS_CONFIRM;
-            beep = BEEP_CONFIRM;
+            beep = APP_BEEP_CONFIRM;
         } else if (strcmp(status_json->valuestring, "error") == 0) {
             status = DM_STATUS_ERROR;
-            beep = BEEP_ERROR;
+            beep = APP_BEEP_ERROR;
         } else if (strcmp(status_json->valuestring, "done") != 0) {
             return false;
         }
@@ -317,10 +317,8 @@ static bool queue_display_notify(int fd, cJSON *message)
     config_seen_add("client", event.client_id);
     config_seen_add("session", event.session_id);
 
-    if (xQueueSend(display_q, &event, 0) != pdTRUE ||
-        xQueueSend(beeper_q, &beep, 0) != pdTRUE) {
-        return false;
-    }
+    if (xQueueSend(display_q, &event, 0) != pdTRUE) return false;
+    (void)xQueueSend(beeper_q, &beep, 0); /* a full or silent buzzer never makes a shown notification fail */
     return true;
 }
 

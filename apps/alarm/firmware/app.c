@@ -15,7 +15,9 @@
  * alarm) or over the standby screen (a chime) and tells it with APP_EVENT_ALARM. All it does then is show the ring and
  * answer it (snooze, done). The same ring screen shows alarms that other apps registered with this one as the target.
  * Settings are one key: short press = next, 500 ms hold = change. The servo shakes to remind only when the player
- * switched that on, only for this app's own entries, and only through the public servo service. */
+ * switched that on, only for this app's own entries, and only through the public servo service. An alarm ring also
+ * beeps (app_beep, muted by the USB `sound off`); the hourly chime stays silent on purpose: it opens over the standby
+ * screen in a room that may be asleep. */
 #define BAND_Y 64
 #define KEY "alarm"
 #define ROWS 7U
@@ -366,6 +368,7 @@ static void tick_ring(app_context_t *ctx, state_t *s, const app_time_t *t)
     if (s->kind == AL_ALARM) {
         if (now - s->ring_ms >= AL_RING_MS) { finish_ring(ctx, true); return; } /* nobody answered: try again in five minutes */
         if (now >= s->next_ms) {
+            (void)app_beep(APP_BEEP_ALARM); /* the buzzer's own task plays it: three beeps, asked for again every 2.2 s */
             if (s->armed) haptic_shake(&s->haptic, now, 10, 150, 1800, sv.speed_dps); /* a slow rocking the servo can follow */
             s->next_ms = now + 2200U;
         }

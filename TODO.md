@@ -30,7 +30,7 @@
 
 ## 暂缓问题
 
-- [ ] **蜂鸣器队列无人消费**:`beeper_q` 目前只有生产者,需要补 beeper task 或明确改为直接调用
+- [x] **蜂鸣器队列无人消费**:已补 `beeper` 任务消费 `beeper_q`(`main/beeper.c`),所有构建启用;device link 通知也不再因为蜂鸣器队列满而被拒绝
 - [ ] **daemon 注入命令错误**:`esphook daemon` 的 socat 路径调用不存在的 `esphook-inject`
 - [ ] **daemon setup**:`setup daemon` 仍只提示，需要另做 systemd user unit / desktop autostart
 - [ ] **HTTP body 可能被截断**:`http_server.c` 的路由只调用一次 `httpd_req_recv`,需循环读满 content length

@@ -48,7 +48,7 @@ void app_main(void)
     ESP_ERROR_CHECK(config_store_init());
 
     display_q = xQueueCreate(16, sizeof(display_event_t));
-    beeper_q  = xQueueCreate(8, sizeof(beep_kind_t));
+    beeper_q  = xQueueCreate(8, sizeof(app_beep_t));
 
     ESP_ERROR_CHECK(app_runtime_init());
 
@@ -63,10 +63,13 @@ void app_main(void)
     ESP_ERROR_CHECK(dv_init());
     dv_flush();
 
-    /* 蜂鸣器 */
-#ifndef CONFIG_DESKTOP_FOLLOW_ROBOT
-    beeper_init();
-#endif
+    /* 蜂鸣器（GPIO7，LEDC timer 0 / channel 0；舵机用 timer 1 / channel 1，见 hw_pwm.h）。没装或失败都不影响其它功能。 */
+    esp_err_t buzzer_err = beeper_init();
+    if (buzzer_err == ESP_OK) buzzer_err = beeper_start();
+    if (buzzer_err != ESP_OK) {
+        ESP_LOGE(TAG, "buzzer unavailable: %s", esp_err_to_name(buzzer_err));
+        cdc_write("ERR buzzer unavailable (no sound)");
+    }
 
     /* Hardware ports are optional; all builds share the same app framework. They start before the display task so
      * that when the app manager boots, the servo's presence and stored calibration are already known (the

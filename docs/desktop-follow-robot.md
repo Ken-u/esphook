@@ -30,7 +30,7 @@
 | 屏幕 CLK / MOSI | GPIO4 / GPIO5 | 保持 |
 | 屏幕 CS / DC / RST / BL | GPIO0 / GPIO3 / GPIO2 / GPIO1 | 保持 |
 | 游戏按键 | GPIO6，按下接 GND | 内部上拉、中断消抖、500ms 确认、三击回菜单；机器人模式不扫描原 GPIO10/11 按键 |
-| 蜂鸣器 | GPIO7，LEDC timer 0 / channel 0 | 舵机 PWM 使用独立定时器与通道；蜂鸣器是否装配尚未确认 |
+| 蜂鸣器 | GPIO7，LEDC timer 0 / channel 0 | 舵机 PWM 使用独立定时器 1 与通道 1，两者都显式选 APB 时钟（`hw_pwm.h`）；Hook 通知与闹钟响铃出声，`sound off` 可静音；没装蜂鸣器时无副作用 |
 | USB CDC | 现有 USB Serial/JTAG 驱动 | 保留配网、日志与调试入口 |
 | 雷达串口 | 尚未分配 | GPIO20 接雷达 TX、GPIO21 接雷达 RX 仅作候选，需核对实物引出与日志配置 |
 | 舵机信号 | GPIO10 | 由 PWM 驱动接管，原 K2 扫描已关闭；GPIO6 保留为游戏按键 |

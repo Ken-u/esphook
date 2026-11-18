@@ -78,6 +78,9 @@ bool app_storage_save(const char *key,const void *data,size_t size)
     return false;
 }
 bool app_transport_write(const char *s) { snprintf(output,sizeof output,"%s",s);return true; }
+/* The buzzer is a recorder too: which sounds an app asked for. */
+static struct { unsigned total,by_kind[APP_BEEP_COUNT]; } beep_log;
+bool app_beep(app_beep_t k) { if((unsigned)k>=APP_BEEP_COUNT) return false;++beep_log.total;++beep_log.by_kind[k];return true; }
 /* The panel tuning is a plain record: the screen test is checked by what it asks the service for. */
 static struct { app_screen_t now;unsigned applies,saves,raws,forgets;uint8_t raw[APP_SCREEN_RAW_MAX];size_t raw_length;bool busy; } screen={.now={.invert=true,.x_gap=1,.y_gap=26,.mhz=20,.saved_mhz=20,.configured=true}};
 void app_screen_read(app_screen_t *s) { *s=screen.now; }
@@ -1043,15 +1046,17 @@ static void play_alarm(const char *out)
     /* the alarm rings over another app: the framework opens it, and the servo reminder arms and shakes */
     assert(app_open(&manager.context,"settings"));app_manager_commit(&manager);run(60);
     set_clock(0,10,9,50);run(3000);assert(!on_alarm() && AL_STATUS("fired=")==0);
-    memset(&servo_log,0,sizeof servo_log);servo_state.armed=false;
+    memset(&servo_log,0,sizeof servo_log);servo_state.armed=false;memset(&beep_log,0,sizeof beep_log);
     run(7500);assert(on_alarm() && AL_STATUS("view=")==3 && AL_STATUS("ring=")==1 && AL_STATUS("fired=")==1);
     run(200);dump(out,"alarm-ring-a");run(160);dump(out,"alarm-ring-b");run(2000);dump(out,"alarm-ring-c");
     assert(shows_text(lv_screen_active(),"闹钟") && shows_text(lv_screen_active(),"短按稍后提醒 长按关闭"));
     assert(servo_log.arm==1 && servo_log.angle>=3 && servo_log.hi>=8 && servo_log.lo<=-4 && servo_log.hi<=29 && servo_log.lo>=-29); /* a shake inside the limits */
+    assert(beep_log.by_kind[APP_BEEP_ALARM]>=2 && beep_log.by_kind[APP_BEEP_ALARM]<=3 && beep_log.total==beep_log.by_kind[APP_BEEP_ALARM]); /* the ring beeps once every 2.2 s, nothing else */
     /* a short press snoozes it for five minutes (the framework counts them on its own uptime clock, not the wall clock) */
     event(APP_EVENT_SHORT);assert(!on_alarm() && !strcmp(app_active_id(&manager.context),app_standby_id(&manager.context)));
+    const unsigned snoozed_beeps=beep_log.total;
     run(5000);assert(!on_alarm());
-    run(280000);assert(!on_alarm()); /* 285 s from the press: not yet */
+    run(280000);assert(!on_alarm() && beep_log.total==snoozed_beeps); /* 285 s from the press: not yet, and a snoozed alarm is silent */
     run(20000);assert(on_alarm() && AL_STATUS("view=")==3 && AL_STATUS("fired=")==2);
     /* holding the key switches this ring off for good */
     event(APP_EVENT_CONFIRM);assert(!on_alarm());
@@ -1062,6 +1067,7 @@ static void play_alarm(const char *out)
     run(60000);assert(!on_alarm() && AL_STATUS("fired=")==3); /* unanswered for a minute: it snoozes by itself */
     run(300000);assert(on_alarm() && AL_STATUS("fired=")==4);event(APP_EVENT_CONFIRM);
     /* the hourly chime opens only over the standby screen, only in its first seconds, and only inside the hours set */
+    const unsigned beeps_before_chimes=beep_log.total;
     assert(app_open(&manager.context,"settings"));app_manager_commit(&manager);run(60);
     set_clock(7,11,59,57);run(20000);assert(!on_alarm() && AL_STATUS("chimes=")==0); /* not on the standby screen: the hour passes in silence */
     idle_screen();run(1000);assert(!on_alarm() && AL_STATUS("chimes=")==0);       /* and the chime is not made up for afterwards */
@@ -1077,14 +1083,15 @@ static void play_alarm(const char *out)
     set_clock(7,13,0,30);assert(app_open(&manager.context,"alarm"));app_manager_commit(&manager);run(500);
     assert(AL_STATUS("view=")==0 && AL_STATUS("chimes=")==3); /* opening the app half a minute after the hour is silent */
     assert(mash_leaves("alarm")); /* the global triple-click exit stays on */
+    assert(beep_log.total==beeps_before_chimes); /* the chimes stay silent: only a ring that waits for an answer makes noise */
     /* the same ring screen serves any app that registers an alarm with this one as the target; the servo is not moved for it */
     assert(app_open(&manager.context,"settings"));app_manager_commit(&manager);run(60);
     memset(&servo_log,0,sizeof servo_log);servo_state.armed=false;
-    const unsigned fired=(unsigned)AL_STATUS("fired=");
+    const unsigned fired=(unsigned)AL_STATUS("fired="),rung=beep_log.by_kind[APP_BEEP_ALARM];
     const unsigned foreign=app_alarm_add(&(app_alarm_spec_t){.owner="demo",.target="alarm",.label="提醒",.kind=APP_ALARM_AFTER,.after_s=2,.enabled=true,.tag=AL_TAG_ALARM});
     assert(foreign);run(1500);assert(!on_alarm());run(1500);
     assert(on_alarm() && AL_STATUS("view=")==3 && AL_STATUS("fired=")==fired+1U && shows_text(lv_screen_active(),"提醒") && shows_text(lv_screen_active(),"按键关闭"));
-    run(300);dump(out,"alarm-foreign");assert(servo_log.arm==0);
+    run(300);dump(out,"alarm-foreign");assert(servo_log.arm==0 && beep_log.by_kind[APP_BEEP_ALARM]>rung); /* it rings audibly, the servo stays put */
     {app_alarm_info_t info;assert(app_alarm_get(foreign,&info) && info.state==APP_ALARM_RINGING && al_kind_of(&info)==AL_NONE);}
     event(APP_EVENT_SHORT);assert(!on_alarm() && !app_alarm_get(foreign,&(app_alarm_info_t){0})); /* a key answers it, and a one-shot is gone */
     /* an alarm that nobody answers does not block the next one, and leaving the app answers it */

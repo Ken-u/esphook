@@ -125,7 +125,7 @@ Windows 用 `--port COM4`。电脑上只有一个 Espressif 串口时可以省�
 - 所有模块共地。电脑 USB 口能不能扛住整机峰值电流还没有实测，必要时换带供电的口。
 - **GPIO10 二选一**：接 K2，或者接舵机信号，不能同时接。
 - GPIO21 开机时 ROM 会打日志，所以它只接雷达 RX，不能改接舵机。
-- 无源蜂鸣器（GPIO7，串 100~330 Ω）只有精简 Hook 的 legacy 构建才用，通用固件不启用。
+- 无源蜂鸣器（GPIO7，串 100~330 Ω）：通用固件也启用。Hook 通知（通知/确认/错误三种音）和闹钟响铃会出声，用 LEDC timer 0 / channel 0，和舵机的 timer 1 / channel 1 互不影响；USB 命令 `sound off` / `sound on` 静音与恢复（保存在 NVS），`sound test` 试响，`sound` 看状态。没接蜂鸣器也没有副作用。
 
 三种运行配置（设置应用的“硬件配置”页，或 `python run.py hardware --set <配置> --reboot`）：
 

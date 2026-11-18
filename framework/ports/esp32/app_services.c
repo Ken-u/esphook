@@ -81,6 +81,11 @@ void app_display_read(robot_ui_t *out) { robot_ui_get(out); }
 bool app_display_update(const char *json, size_t length, char *error, size_t size)
 { return robot_ui_submit(json, length, error, size) == ESP_OK; }
 void app_key_word(unsigned key, char *out, size_t size) { if (size) snprintf(out, size, "%s", config_get_key((int)key)); }
+bool app_beep(app_beep_t kind)
+{
+    if (!beeper_q || (unsigned)kind >= (unsigned)APP_BEEP_COUNT) return false;
+    return xQueueSend(beeper_q, &kind, 0) == pdTRUE;
+}
 void app_hook_read(app_hook_t *out)
 {
     memset(out, 0, sizeof *out); out->connected = device_link_is_connected(); out->clients = dm_client_count();

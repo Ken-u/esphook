@@ -6,6 +6,7 @@
 #include "esphook/robot_ui.h"
 #include "usb_cdc.h"
 #include "config_store.h"
+#include "beeper.h"
 #include "net_wifi.h"
 #include "device_link.h"
 #include "esp_timer.h"
@@ -72,6 +73,7 @@ void input_cdc_handler(const char *line)
 {
     if (app_runtime_command(line)) return;
     if (robot_ui_command(line) || robot_command(line)) return;
+    if (beeper_command(line)) return;
     if (strncmp(line, "ssid:", 5) == 0) {
         config_set_wifi(line + 5, NULL);
         cdc_write("OK ssid set");
@@ -122,7 +124,7 @@ void input_cdc_handler(const char *line)
     } else if (strcmp(line, "help") == 0) {
         cdc_write("apps: short GPIO6 opens menu, triple-click returns menu | robot menu | robot game start/stop/status");
         cdc_write("robot help: tracking / servo calibration");
-        cdc_write("cmds: ssid:<s> pass:<p> daemon_host:<h> daemon_port:<p> daemon_secret:<64hex> connect status id reset");
+        cdc_write("cmds: ssid:<s> pass:<p> daemon_host:<h> daemon_port:<p> daemon_secret:<64hex> connect status id sound reset");
     } else if (line[0] != '\0') {
         cdc_write("ERR unknown command (try: help)");
     }

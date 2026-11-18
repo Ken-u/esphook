@@ -107,7 +107,7 @@ check net-check py tests/test_net_check.py
 check stock-pc py apps/stock/pc/test_stock_t.py
 check hook-pc py apps/hook/pc/test_hooks.py
 check device-link py apps/hook/pc/test_device_link.py
-c_tests robot basketball dino ski muyu haptic-steer aquarium fishing starship racing app-time app-util app-best app-screen \
+c_tests robot basketball dino ski muyu haptic-steer aquarium fishing starship racing app-time app-util app-best app-sound app-screen \
     fortune app-alarm alarm miner jump zombie stack mirror
 check mirror-pc mirror_pc
 c_tests hardware robot-ui app-games usb-cdc http-post

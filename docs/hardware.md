@@ -1,13 +1,13 @@
 # esphook 硬件与接线
 
-本页保留原屏幕/Hook 板接线。机器人扩展见 [机器人调试](robot-bringup.md)，通用固件下载与硬件配置见 [发布指南](release-kit.md)。默认 auto/screen 保留三按键且不初始化舵机 PWM；robot 配置重启后仅保留 GPIO6，将 GPIO10 交给舵机。通用构建不启用旧蜂鸣器，精简 legacy 构建保留。
+本页保留原屏幕/Hook 板接线。机器人扩展见 [机器人调试](robot-bringup.md)，通用固件下载与硬件配置见 [发布指南](release-kit.md)。默认 auto/screen 保留三按键且不初始化舵机 PWM；robot 配置重启后仅保留 GPIO6，将 GPIO10 交给舵机。蜂鸣器（GPIO7）在所有构建里都启用，和舵机 PWM 各用自己的 LEDC 定时器与通道。
 
 ## 硬件组成
 
 - 控制器：ESP32-C3 SuperMini，4 MB Flash，使用板载 USB Serial/JTAG CDC。
 - 显示：0.96 寸 ST7735 SPI，逻辑分辨率 160×80，3.3 V 逻辑。
 - 输入：三个按键，固件使用内部上拉，按下时把 GPIO 拉到 GND。
-- 声音：无源蜂鸣器，LEDC PWM 驱动。
+- 声音：无源蜂鸣器，GPIO7，LEDC PWM 驱动（timer 0 / channel 0；舵机用 timer 1 / channel 1，互不影响）。Hook 通知和闹钟响铃出声；USB 命令 `sound off|on|test`，`sound` 看状态。
 
 固件中的 GPIO 是芯片 GPIO 编号，不是排针的物理序号。请以开发板丝印上的 `GPIO0`、`GPIO3` 等名称对应；不同 SuperMini 厂家的排针排列可能不同。
 
