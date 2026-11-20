@@ -67,6 +67,17 @@ void robot_follow_init(robot_follow_t *f, const robot_config_t *c, uint64_t now)
     f->started_ms = f->step_ms = now;
     f->state = ROBOT_ACQUIRING;
 }
+static void update_goal(robot_follow_t *f)
+{
+    const float limit = fminf(f->config.limit_deg, FOLLOW_LIMIT_DEG) - FOLLOW_SWAY_DEG;
+    f->goal_deg = f->locked ? clamp(f->aim_deg + f->trim_deg, -limit, limit) : 0;
+}
+void robot_follow_set_trim(robot_follow_t *f, int degrees)
+{
+    if (f->trim_deg == degrees || !robot_follow_trim_valid(degrees)) return;
+    f->trim_deg = degrees;
+    update_goal(f);
+}
 static bool usable(const ld2450_target_t *t)
 {
     float range = hypotf(t->x_mm, t->y_mm);
@@ -142,20 +153,21 @@ void robot_follow_frame(robot_follow_t *f, const ld2450_frame_t *frame, uint64_t
     f->bearing_previous = f->bearing_last;
     f->bearing_last = bearing;
     /* Turn a fraction of the estimated bearing so a noisy or off-centre target gets a small glance. */
-    const float limit = fminf(f->config.limit_deg, FOLLOW_LIMIT_DEG) - FOLLOW_SWAY_DEG;
-    const float goal = clamp(median * FOLLOW_GAIN, -limit, limit);
+    const float aim = median * FOLLOW_GAIN;
     if (acquired) {
-        f->goal_deg = goal;
+        f->aim_deg = aim;
+        update_goal(f);
         f->turn_direction = 0;
         return;
     }
-    const float error = goal - f->goal_deg;
+    const float error = aim - f->aim_deg;
     const int direction = error >= FOLLOW_DEADBAND_DEG ? 1 : error <= -FOLLOW_DEADBAND_DEG ? -1 : 0;
     if (direction != f->turn_direction) {
         f->turn_direction = direction;
         f->turn_since_ms = now;
     } else if (direction && now - f->turn_since_ms >= FOLLOW_CONFIRM_MS) {
-        f->goal_deg = goal;
+        f->aim_deg = aim;
+        update_goal(f);
         f->turn_direction = 0;
     }
 }

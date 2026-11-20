@@ -31,6 +31,13 @@ typedef struct {
     bool save_ok;
 } app_servo_cal_t;
 typedef struct {
+    int saved_deg, active_deg;
+    float aim_deg; /* filtered follow angle before compensation, sway and travel limits */
+    uint32_t save_seq;
+    robot_state_t tracking;
+    bool available, online, preview, save_ok;
+} app_follow_trim_t;
+typedef struct {
     bool current, connected;
     unsigned clients, unread;
     int status;
@@ -56,6 +63,9 @@ void app_servo_cal_read(app_servo_cal_t *out);
  * neutral so the change can be watched) but never arms it, and it is refused (false) while another app holds the servo,
  * when there is no servo, for an invalid combination or when the motion service's queue is full. */
 bool app_servo_cal_apply(app_context_t *ctx, const robot_config_t *config, bool save);
+void app_follow_trim_read(app_follow_trim_t *out);
+/* A preview requires the app's armed servo lease and expires on scene exit. A save applies to follow mode only. */
+bool app_follow_trim_apply(app_context_t *ctx, int degrees, bool save);
 void app_display_read(robot_ui_t *out);
 bool app_display_update(const char *json, size_t length, char *error, size_t error_size);
 void app_hook_read(app_hook_t *out);

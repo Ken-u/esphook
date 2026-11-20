@@ -69,6 +69,21 @@ bool app_servo_cal_apply(app_context_t *ctx, const robot_config_t *config, bool 
     if (s_servo_owner[0] && strcmp(s_servo_owner, ctx->app->id)) return false;
     return robot_servo_calibrate(config, save);
 }
+void app_follow_trim_read(app_follow_trim_t *out)
+{
+    robot_status_t s; robot_get_status(&s);
+    *out = (app_follow_trim_t){
+        .saved_deg = s.trim_saved_deg, .active_deg = s.trim_active_deg, .aim_deg = s.trim_aim_deg,
+        .save_seq = s.trim_save_seq,
+        .tracking = s.state, .available = s.radar_ready && s.servo_ready, .online = s.radar_online,
+        .preview = s.trim_preview, .save_ok = s.trim_save_ok,
+    };
+}
+bool app_follow_trim_apply(app_context_t *ctx, int degrees, bool save)
+{
+    if ((!save || s_servo_owner[0]) && strcmp(s_servo_owner, ctx->app->id)) return false;
+    return robot_follow_trim_request(degrees, save);
+}
 bool app_servo_request(app_context_t *ctx, app_servo_action_t action, int value)
 {
     if (s_servo_owner[0] && strcmp(s_servo_owner, ctx->app->id)) return false;

@@ -227,6 +227,37 @@ static void motion_tests(void)
     assert(robot_slew(3, 3.1f, 35, 0.02f) == 3.1f);
     assert(robot_slew(0, 30, 35, -1) == 0);
 }
+static void trim_tests(void)
+{
+    robot_config_t c = robot_default_config();
+    c.limit_deg = 10;
+    robot_follow_t f;
+    robot_follow_init(&f, &c, 0);
+    robot_follow_set_trim(&f, 18);
+    robot_follow_tick(&f, 0);
+    assert(f.target_deg == 0 && robot_pulse_us(&c, 0) == c.center_us);
+
+    ld2450_frame_t right = frame(-300, 460);
+    acquire(&f, &right, 0);
+    assert(f.aim_deg < -17.0f && fabsf(f.goal_deg) < 1.0f); /* trim corrects the bearing before saturating the motor */
+    const float aim = f.aim_deg;
+    robot_follow_set_trim(&f, 0);
+    assert(f.goal_deg == -7.5f && f.aim_deg == aim);
+    robot_follow_set_trim(&f, 25);
+    assert(f.goal_deg > 6.0f && f.goal_deg <= 7.5f);
+    robot_follow_set_trim(&f, 26);
+    assert(f.trim_deg == 25);
+    right.targets[1] = frame(80, 180).targets[0];
+    robot_follow_frame(&f, &right, 300);
+    robot_follow_frame(&f, &right, 400);
+    robot_follow_tick(&f, 400);
+    assert(f.target_deg == -10.0f); /* the close-range dodge uses the calibrated stop */
+    const ld2450_frame_t empty = {0};
+    robot_follow_frame(&f, &empty, 1200);
+    robot_follow_tick(&f, 2200);
+    assert(!f.locked && f.target_deg == 0);
+    assert(robot_pulse_us(&c, 0) == c.center_us);
+}
 static void calibration_line_tests(void)
 {
     robot_config_t c = {0};
@@ -254,6 +285,6 @@ static void calibration_line_tests(void)
 }
 int main(void)
 {
-    parser_tests(); follow_tests(); quiet_follow_tests(); near_follow_tests(); motion_tests(); calibration_line_tests();
+    parser_tests(); follow_tests(); quiet_follow_tests(); near_follow_tests(); motion_tests(); trim_tests(); calibration_line_tests();
     puts("robot: parser, target association, loss/fault recovery, servo limits and calibration lines passed");
 }

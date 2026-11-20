@@ -15,6 +15,10 @@ typedef struct {
     bool config_stored; /* `config` is what NVS holds (or was stored this boot), not the built-in defaults */
     uint32_t cal_save_seq;
     bool cal_save_ok;
+    int trim_saved_deg, trim_active_deg;
+    float trim_aim_deg;
+    uint32_t trim_save_seq;
+    bool trim_save_ok, trim_preview;
 } robot_status_t;
 
 esp_err_t robot_start(void);
@@ -31,3 +35,4 @@ bool robot_servo_request(unsigned action, int value);
 /* Queues a calibration (robot_config_valid() must hold); with `save` it is also stored. Works while armed (the servo is
  * centred on the new neutral) and never arms. False when there is no servo or the queue is full. */
 bool robot_servo_calibrate(const robot_config_t *config, bool save);
+bool robot_follow_trim_request(int degrees, bool save);

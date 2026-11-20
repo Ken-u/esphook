@@ -149,6 +149,33 @@ bool app_servo_cal_apply(app_context_t *c,const robot_config_t *cfg,bool save)
     if(save && !cal_log.defer_save) { ++cal_log.saves;servo_cal.stored=true;++servo_cal.save_seq;servo_cal.save_ok=true; }
     return true;
 }
+#ifdef ESPHOOK_TEST_FOLLOWTRIM
+static app_follow_trim_t follow_trim;
+static bool follow_save_fails;
+void app_follow_trim_read(app_follow_trim_t *out) { *out = follow_trim; }
+bool app_follow_trim_apply(app_context_t *ctx, int degrees, bool save)
+{
+    assert(!strcmp(ctx->app->id, "followtrim") && robot_follow_trim_valid(degrees));
+    if (!save) {
+        assert(servo_state.armed);
+        follow_trim.preview = true;
+        follow_trim.active_deg = degrees;
+    } else {
+        ++follow_trim.save_seq;
+        follow_trim.save_ok = !follow_save_fails;
+        if (follow_trim.save_ok) follow_trim.saved_deg = degrees;
+    }
+    return true;
+}
+static void release_followtrim(const char *id, void *user)
+{
+    (void)user;
+    if (strcmp(id, "followtrim")) return;
+    follow_trim.preview = false;
+    follow_trim.active_deg = 0;
+    servo_state.armed = false;
+}
+#endif
 void app_hook_read(app_hook_t *h) { memset(h,0,sizeof *h);h->current=h->connected=true;h->clients=1;h->unread=2;strcpy(h->client,"Codex");strcpy(h->title,"任务已完成");strcpy(h->body,"长按回复继续"); }
 bool app_hook_reply(unsigned key) { return key<3; }
 void app_key_word(unsigned key,char *s,size_t n) { const char *words[]={"ok","continue","done"};snprintf(s,n,"%s",words[key%3]); }
@@ -250,6 +277,52 @@ static bool shows_text(lv_obj_t *obj,const char *text)
     for(uint32_t i=0;i<lv_obj_get_child_count(obj);++i) if(shows_text(lv_obj_get_child(obj,(int32_t)i),text)) return true;
     return false;
 }
+#ifdef ESPHOOK_TEST_FOLLOWTRIM
+static void open_followtrim(void)
+{
+    assert(app_open(&manager.context, "followtrim"));
+    app_manager_commit(&manager);
+    run(60);
+}
+static void play_followtrim(const char *out)
+{
+    follow_trim = (app_follow_trim_t){.available = true, .aim_deg = -17.6f};
+    open_followtrim();
+    const unsigned arms = servo_log.arm;
+    dump(out, "followtrim-setup");
+    assert(shows_text(lv_screen_active(), "正前取中") && shows_text(lv_screen_active(), "0°"));
+    assert(!hold_leaves("followtrim", 600));
+    assert(!follow_trim.preview && servo_log.arm == arms && shows_text(lv_screen_active(), "等待雷达目标"));
+
+    follow_trim.tracking = ROBOT_TRACKING;
+    follow_trim.online = true;
+    assert(!hold_leaves("followtrim", 600)); /* capture and preview, retaining the saved value */
+    assert(follow_trim.preview && follow_trim.active_deg == 18 && follow_trim.saved_deg == 0 && servo_log.arm == arms + 1);
+    assert(shows_text(lv_screen_active(), "左 18°") && shows_text(lv_screen_active(), "跟随预览"));
+    dump(out, "followtrim-preview");
+    k1(true); run(650);
+    assert(shows_text(lv_screen_active(), "松手保存") && follow_trim.save_seq == 0);
+    app_manager_cancel_key(&manager, 0, manager.context.now_ms); run(60);
+    assert(!left("followtrim") && follow_trim.save_seq == 0);
+    assert(hold_leaves("followtrim", 2100));
+    assert(!follow_trim.preview && !servo_state.armed && follow_trim.save_seq == 0);
+
+    open_followtrim();
+    event(APP_EVENT_SHORT);
+    assert(shows_text(lv_screen_active(), "向左调"));
+    assert(!hold_leaves("followtrim", 600));
+    for (unsigned i = 0; i < 3; ++i) { k1(true); run(35); k1(false); }
+    assert(!left("followtrim") && follow_trim.active_deg == 3 && follow_trim.saved_deg == 0);
+    follow_save_fails = true;
+    hold_leaves("followtrim", 600);
+    assert(!left("followtrim") && follow_trim.save_seq == 1 && follow_trim.saved_deg == 0);
+    assert(shows_text(lv_screen_active(), "保存失败 再试一次"));
+    follow_save_fails = false;
+    hold_leaves("followtrim", 600);
+    assert(!left(app_standby_id(&manager.context)) && manager.context.standby);
+    assert(!follow_trim.preview && follow_trim.save_seq == 2 && follow_trim.saved_deg == 3);
+}
+#endif
 /* The hint line of a game that switched the triple off alternates with the way out: either may be on screen. */
 static bool shows_hint(const char *hint) { return shows_text(lv_screen_active(),hint) || shows_text(lv_screen_active(),"按住2秒退出"); }
 static unsigned changed_pixels(const uint16_t *a,const uint16_t *b) { unsigned n=0;for(unsigned i=0;i<160*64;++i) n+=a[i]!=b[i];return n; }
@@ -1780,6 +1853,9 @@ int main(int argc,char **argv)
     lv_display_set_buffers(d,draw_buffer,NULL,sizeof draw_buffer,LV_DISPLAY_RENDER_MODE_PARTIAL);lv_display_set_flush_cb(d,flush);
     for(size_t i=0;i<esphook_app_count;++i) if(esphook_apps[i]->init) assert(esphook_apps[i]->init());
     app_platform_t p={.scene_create=scene,.scene_delete=destroy,.save_standby=save,.time_read=read_time};ui=robot_ui_default();
+#ifdef ESPHOOK_TEST_FOLLOWTRIM
+    p.release_services = release_followtrim;
+#endif
     assert(app_manager_init(&manager,esphook_apps,esphook_app_count,&p,app_manager_default_standby(esphook_apps,esphook_app_count,"face"),0));run(100);
 #ifdef ESPHOOK_TEST_STOCK
     stock_data();
@@ -1857,6 +1933,9 @@ int main(int argc,char **argv)
 #endif
 #ifdef ESPHOOK_TEST_SERVOCAL
     play_servocal(out);
+#endif
+#ifdef ESPHOOK_TEST_FOLLOWTRIM
+    play_followtrim(out);
 #endif
     assert(app_open(&manager.context,"settings"));app_manager_commit(&manager);run(20);
     event(APP_EVENT_SHORT);event(APP_EVENT_SHORT);event(APP_EVENT_SHORT);event(APP_EVENT_CONFIRM);

@@ -23,10 +23,12 @@ static bool s_app_motion_changed;
 static robot_app_motion_t s_app_motion;
 static bool s_servo_ready, s_radar_ready;
 static robot_config_t s_boot_config; /* read in robot_start(), before the app manager asks for it, then owned by the task */
+static int s_boot_trim;
 static bool s_boot_stored;
 static portMUX_TYPE s_status_lock = portMUX_INITIALIZER_UNLOCKED;
 static robot_status_t s_status = {.state = ROBOT_FAULT, .radar_age_ms = UINT32_MAX};
-typedef struct { char line[80]; } command_t;
+typedef enum { COMMAND_TEXT, COMMAND_TRIM_PREVIEW, COMMAND_TRIM_SAVE } command_kind_t;
+typedef struct { char line[80]; command_kind_t kind; int trim_deg; } command_t;
 
 static uint64_t now_ms(void) { return (uint64_t)esp_timer_get_time() / 1000; }
 void robot_get_status(robot_status_t *out)
@@ -44,9 +46,10 @@ void robot_set_app_motion(robot_app_motion_t mode)
 }
 /* True when a valid calibration was stored (robot save, or the calibration app): a robot that never had one is
  * offered the calibration at first boot. */
-static bool load_config(robot_config_t *c)
+static bool load_config(robot_config_t *c, int *trim)
 {
     *c = robot_default_config();
+    *trim = 0;
     nvs_handle_t h;
     if (nvs_open("robot", NVS_READONLY, &h) != ESP_OK) return false;
     robot_config_t v = *c;
@@ -57,6 +60,7 @@ static bool load_config(robot_config_t *c)
     if (nvs_get_i32(h, "limit", &value) == ESP_OK) v.limit_deg = value;
     if (nvs_get_i32(h, "speed", &value) == ESP_OK) v.speed_dps = value;
     if (nvs_get_u8(h, "reverse", &reverse) == ESP_OK) v.reverse = reverse != 0;
+    if (nvs_get_i32(h, "follow_trim", &value) == ESP_OK && robot_follow_trim_valid(value)) *trim = value;
     nvs_close(h);
     if (robot_config_valid(&v)) { *c = v; return stored; }
     ESP_LOGW(TAG, "invalid saved calibration; using defaults");
@@ -71,6 +75,16 @@ static esp_err_t save_config(const robot_config_t *c)
     if (err == ESP_OK) err = nvs_set_i32(h, "limit", c->limit_deg);
     if (err == ESP_OK) err = nvs_set_i32(h, "speed", c->speed_dps);
     if (err == ESP_OK) err = nvs_set_u8(h, "reverse", c->reverse);
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    return err;
+}
+static esp_err_t save_trim(int degrees)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open("robot", NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_set_i32(h, "follow_trim", degrees);
     if (err == ESP_OK) err = nvs_commit(h);
     nvs_close(h);
     return err;
@@ -113,6 +127,9 @@ static void robot_task(void *arg)
     bool auto_armed = false, auto_pending = false;
     uint32_t cal_save_seq = 0;
     bool cal_save_ok = false;
+    int saved_trim = s_boot_trim, preview_trim = 0;
+    bool trim_preview = false, trim_save_ok = false;
+    uint32_t trim_save_seq = 0;
     robot_app_motion_t app_motion = ROBOT_APP_MOTION_NONE;
     float angle = 0, manual_goal = 0, follow_velocity = 0;
     uint64_t last_step = now_ms();
@@ -122,7 +139,6 @@ static void robot_task(void *arg)
         else vTaskDelay(pdMS_TO_TICKS(20));
         raw = *radar_port_frame();
         uint64_t now = now_ms();
-        robot_follow_tick(&follow, now);
         command_t command;
         portENTER_CRITICAL(&s_status_lock);
         bool force_disarm = s_force_disarm; s_force_disarm = false;
@@ -130,17 +146,30 @@ static void robot_task(void *arg)
         if (motion_changed) app_motion = s_app_motion;
         s_app_motion_changed = false;
         portEXIT_CRITICAL(&s_status_lock);
-        if (force_disarm || (motion_changed && auto_armed)) {
+        if (force_disarm || (motion_changed && (auto_armed || trim_preview))) {
             hardware_fault = servo_port_write(0) != ESP_OK;
             armed = following = auto_armed = auto_pending = false;
+            trim_preview = false;
             follow_velocity = 0;
             last_pulse = 0;
         }
         if (motion_changed) auto_pending = app_motion != ROBOT_APP_MOTION_NONE;
-        /* On departure drain old commands without letting them move the servo. Keep calibration
-         * requests, including saves and the calibration screen's rollback. */
+        /* On departure skip queued movements. Keep settings saves and calibration rollback. */
         const unsigned work = force_disarm ? uxQueueMessagesWaiting(s_commands) : 4;
         for (unsigned k = 0; k < work && xQueueReceive(s_commands, &command, 0); ++k) {
+            if (command.kind == COMMAND_TRIM_SAVE) {
+                trim_save_ok = (saved_trim == command.trim_deg || save_trim(command.trim_deg) == ESP_OK);
+                if (trim_save_ok) saved_trim = command.trim_deg;
+                ++trim_save_seq;
+                continue;
+            }
+            if (command.kind == COMMAND_TRIM_PREVIEW) {
+                if (armed && !force_disarm) {
+                    trim_preview = following = true;
+                    preview_trim = command.trim_deg;
+                }
+                continue;
+            }
             const char *cmd = command.line;
             if (force_disarm && strncmp(cmd, "cal:", 4) && strcmp(cmd, "status") && strcmp(cmd, "disarm")) continue;
             if (!strcmp(cmd, "status")) {
@@ -150,6 +179,7 @@ static void robot_task(void *arg)
             if (!strcmp(cmd, "disarm")) {
                 esp_err_t err = servo_port_write(0);
                 armed = following = auto_armed = auto_pending = false;
+                trim_preview = false;
                 last_pulse = 0;
                 hardware_fault = err != ESP_OK;
                 cdc_write(err == ESP_OK ? "OK robot disarmed" : "ERR servo disable failed");
@@ -168,6 +198,7 @@ static void robot_task(void *arg)
                 }
                 armed = true;
                 following = false;
+                trim_preview = false;
                 auto_pending = false;
                 hardware_fault = false;
                 angle = manual_goal = 0;
@@ -185,6 +216,7 @@ static void robot_task(void *arg)
                 if (!armed) { cdc_write("ERR robot is disarmed; use robot arm"); continue; }
                 if(!strcmp(cmd,"follow") && (!s_radar_ready || !follow.have_frame || now-follow.frame_ms>800)) { cdc_write("ERR no detected online radar; manual servo mode remains available"); continue; }
                 following = !strcmp(cmd, "follow");
+                trim_preview = false;
                 manual_goal = requested;
                 cdc_write("OK robot motion mode set");
                 continue;
@@ -195,9 +227,10 @@ static void robot_task(void *arg)
                 robot_config_t next;
                 bool store;
                 if (!robot_cal_parse(cmd, &next, &store)) { ESP_LOGW(TAG, "calibration request rejected"); continue; }
-                robot_follow_init(&follow, &next, now_ms());
+                robot_follow_init(&follow, &next, now);
                 angle = manual_goal = 0;
                 following = false;
+                trim_preview = false;
                 if (armed) {
                     const esp_err_t err = servo_port_write(next.center_us);
                     if (err == ESP_OK) last_pulse = next.center_us;
@@ -233,10 +266,12 @@ static void robot_task(void *arg)
                 cdc_write("ERR invalid calibration: keep full pulse range inside 1000..2000us"); continue;
             }
             /* Expire old target/filter state after coordinate/limit changes. */
-            robot_follow_init(&follow, &next, now_ms());
+            robot_follow_init(&follow, &next, now);
             angle = manual_goal = 0;
             cdc_write("OK robot calibration set (robot save to persist)");
         }
+        robot_follow_set_trim(&follow, trim_preview ? preview_trim : saved_trim);
+        robot_follow_tick(&follow, now);
         /* A scene default can wait for radar lock, independent of the manual request queue. Only a saved
          * calibration enables automatic output. An explicit disarm cancels this scene's pending default. */
         if (auto_pending && config_stored && s_servo_ready && !hardware_fault &&
@@ -271,6 +306,7 @@ static void robot_task(void *arg)
                 else {
                     (void)servo_port_write(0);
                     armed = following = auto_armed = false;
+                    trim_preview = false;
                     hardware_fault = true;
                     ESP_LOGE(TAG, "servo update failed: %s", esp_err_to_name(err));
                 }
@@ -281,6 +317,9 @@ static void robot_task(void *arg)
             .armed = armed, .following = following, .hardware_fault = hardware_fault,
             .servo_ready=s_servo_ready,.radar_ready=s_radar_ready,
             .config_stored = config_stored, .cal_save_seq = cal_save_seq, .cal_save_ok = cal_save_ok,
+            .trim_saved_deg = saved_trim, .trim_active_deg = following ? follow.trim_deg : 0,
+            .trim_aim_deg = follow.aim_deg, .trim_save_seq = trim_save_seq,
+            .trim_save_ok = trim_save_ok, .trim_preview = trim_preview,
             .angle_deg = angle, .target_deg = follow.target_deg,
             .x_mm = (int)follow.x_mm, .y_mm = (int)follow.y_mm,
             .frames = radar_port_parser()->frames, .rejected = radar_port_parser()->rejected, .config = follow.config,
@@ -328,10 +367,11 @@ esp_err_t robot_start(void)
         s_radar_ready=err==ESP_OK;
         if(err!=ESP_OK) ESP_LOGW(TAG,"optional radar driver unavailable: %s",esp_err_to_name(err));
     }
-    s_boot_stored = load_config(&s_boot_config);
+    s_boot_stored = load_config(&s_boot_config, &s_boot_trim);
     portENTER_CRITICAL(&s_status_lock);
     s_status.radar_ready=s_radar_ready;s_status.servo_ready=s_servo_ready;
     s_status.config=s_boot_config;s_status.config_stored=s_boot_stored;
+    s_status.trim_saved_deg = s_boot_trim;
     portEXIT_CRITICAL(&s_status_lock);
     s_commands = xQueueCreate(8, sizeof(command_t));
     if (!s_commands) { if(s_radar_ready) radar_port_close(); return ESP_ERR_NO_MEM; }
@@ -368,6 +408,12 @@ bool robot_servo_calibrate(const robot_config_t *config, bool save)
     if (robot_cal_format(c.line, sizeof c.line, config, save) >= (int)sizeof c.line) return false;
     return xQueueSend(s_commands, &c, 0) == pdTRUE;
 }
+bool robot_follow_trim_request(int degrees, bool save)
+{
+    if (!s_commands || !s_servo_ready || !s_radar_ready || !robot_follow_trim_valid(degrees)) return false;
+    const command_t c = {.kind = save ? COMMAND_TRIM_SAVE : COMMAND_TRIM_PREVIEW, .trim_deg = degrees};
+    return xQueueSend(s_commands, &c, 0) == pdTRUE;
+}
 bool robot_command(const char *line)
 {
     if (strncmp(line, "robot", 5) || (line[5] && line[5] != ' ')) return false;
@@ -391,5 +437,6 @@ void robot_get_status(robot_status_t *s) { memset(s, 0, sizeof *s); }
 void robot_set_app_motion(robot_app_motion_t mode) { (void)mode; }
 bool robot_servo_request(unsigned a, int v) { (void)a; (void)v; return false; }
 bool robot_servo_calibrate(const robot_config_t *c, bool save) { (void)c; (void)save; return false; }
+bool robot_follow_trim_request(int degrees, bool save) { (void)degrees; (void)save; return false; }
 bool robot_command(const char *line) { (void)line; return false; }
 #endif
