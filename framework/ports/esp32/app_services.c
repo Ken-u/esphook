@@ -48,6 +48,7 @@ void app_radar_read(app_radar_t *out)
     out->rejected = s.rejected; out->frame = s.raw;
     robot_ui_t v; robot_ui_get(&v); out->range_mm = v.range_mm;
 }
+bool app_radar_set_view_range(unsigned range_mm) { return robot_ui_set_radar_range(range_mm); }
 void app_servo_read(app_servo_t *out)
 {
     robot_status_t s; robot_get_status(&s); memset(out, 0, sizeof *out);

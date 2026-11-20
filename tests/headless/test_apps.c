@@ -120,7 +120,8 @@ bool app_command_menu(void) { app_menu(&manager.context);return true; }
 /* The radar sees one person and the servo is a plain recorder: a game can be steered and its servo requests inspected. */
 static ld2450_target_t radar_target={.valid=true,.x_mm=1000,.y_mm=1500};
 static bool radar_online=true;
-void app_radar_read(app_radar_t *r) { memset(r,0,sizeof *r);r->available=true;r->online=radar_online;r->range_mm=6000;r->frame.targets[0]=radar_target;r->frame.targets[0].x_mm=(int16_t)-radar_target.x_mm; }
+void app_radar_read(app_radar_t *r) { memset(r,0,sizeof *r);r->available=true;r->online=radar_online;r->range_mm=ui.range_mm;r->frame.targets[0]=radar_target;r->frame.targets[0].x_mm=(int16_t)-radar_target.x_mm; }
+bool app_radar_set_view_range(unsigned range_mm) { ui.range_mm = range_mm; return true; }
 /* radar_target.x_mm is where the player stands to their own right; the sensor's +X is the player's left, so the frame is mirrored. */
 static app_servo_t servo_state={.available=true,.tracking=ROBOT_IDLE,.limit_deg=30,.speed_dps=35};
 static struct { unsigned arm,disarm,angle; int last,lo,hi; } servo_log;
@@ -249,6 +250,51 @@ static bool shows_text(lv_obj_t *obj,const char *text)
 /* The hint line of a game that switched the triple off alternates with the way out: either may be on screen. */
 static bool shows_hint(const char *hint) { return shows_text(lv_screen_active(),hint) || shows_text(lv_screen_active(),"按住2秒退出"); }
 static unsigned changed_pixels(const uint16_t *a,const uint16_t *b) { unsigned n=0;for(unsigned i=0;i<160*64;++i) n+=a[i]!=b[i];return n; }
+#ifdef ESPHOOK_TEST_RADAR
+static void check_radar(const char *out)
+{
+    const ld2450_target_t saved_target = radar_target;
+    const robot_ui_t saved_ui = ui;
+    ui = robot_ui_default();
+    radar_target.x_mm = 107;
+    radar_target.y_mm = 1549;
+    assert(app_open(&manager.context, "radar"));
+    app_manager_commit(&manager);
+    run(100);
+    lv_obj_t *screen = lv_screen_active();
+    assert(shows_text(screen, "R1 6000 X/Y mm") && shows_text(screen, "1+107\nY1549"));
+    radar_target.y_mm = 1548;
+    run(100);
+    assert(shows_text(screen, "1+107\nY1548"));
+
+    k1(true);
+    run(1200);
+    assert(ui.range_mm == 3000 && shows_text(screen, "R1 3000 X/Y mm"));
+    k1(false);
+    run(100);
+    assert(!left("radar") && ui.range_mm == 3000);
+    assert(!hold_leaves("radar", 650));
+    run(100);
+    assert(ui.range_mm == 1500 && shows_text(screen, "R1 1500 X/Y mm"));
+    assert(shows_text(screen, "1+107\nY1548"));
+    dump(out, "radar-mm");
+    assert(!hold_leaves("radar", 650));
+    assert(ui.range_mm == 6000);
+
+    radar_target.x_mm = -32767;
+    radar_target.y_mm = -32767;
+    run(100);
+    assert(shows_text(screen, "1-32767\nY-32767"));
+    dump(out, "radar-mm-edge");
+    k1(true);
+    run(80);
+    k1(false);
+    run(850);
+    assert(!strcmp(app_active_id(&manager.context), "launcher"));
+    radar_target = saved_target;
+    ui = saved_ui;
+}
+#endif
 #ifdef ESPHOOK_TEST_BASKETBALL
 /* Shoots until it has seen a make and a miss, then lets the clock run out. Frames are for eyes only. */
 static void play_basketball(const char *out)
@@ -1683,6 +1729,9 @@ int main(int argc,char **argv)
             }
         }
     }
+#ifdef ESPHOOK_TEST_RADAR
+    check_radar(out);
+#endif
 #ifdef ESPHOOK_TEST_BASKETBALL
     play_basketball(out);
 #endif

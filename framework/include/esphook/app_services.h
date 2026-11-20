@@ -41,6 +41,8 @@ typedef struct {
 } app_device_info_t;
 
 void app_radar_read(app_radar_t *out);
+/* Set the screen's radar radius in RAM, keeping the current display mode and expiry. */
+bool app_radar_set_view_range(unsigned range_mm);
 void app_servo_read(app_servo_t *out);
 /* Queued, bounded and rate-limited by the motion service. Never auto-arms.
  * The first request leases the servo to this app; leaving disarms its lease. */

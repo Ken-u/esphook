@@ -8,7 +8,7 @@ robot_ui_t robot_ui_default(void)
 {
     return (robot_ui_t){.mode = UI_AUTO, .expression = FACE_AUTO,
         .eye_color = 0xC178FF, .mouth_color = 0xFDB927, .text_color = 0xFFFFFF,
-        .range_mm = 6000, .blink = true};
+        .range_mm = RADAR_VIEW_MAX_RANGE_MM, .blink = true};
 }
 const char *robot_ui_mode_name(robot_ui_mode_t mode)
 {
@@ -173,7 +173,8 @@ bool robot_ui_parse(const char *json, size_t len, robot_ui_t *out, char *error, 
     const cJSON *ttl = cJSON_GetObjectItemCaseSensitive(root, "ttl_ms");
     if (ttl && !integer(ttl, 600000, &next.ttl_ms)) { message = "ttl_ms must be 0..600000"; goto bad; }
     const cJSON *range = cJSON_GetObjectItemCaseSensitive(root, "range_mm");
-    if (range && (!integer(range, 6000, &next.range_mm) || next.range_mm < 1000)) {
+    if (range && (!integer(range, RADAR_VIEW_MAX_RANGE_MM, &next.range_mm) ||
+                  next.range_mm < RADAR_VIEW_MIN_RANGE_MM)) {
         message = "range_mm must be 1000..6000"; goto bad;
     }
     *out = next;

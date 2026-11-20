@@ -11,6 +11,11 @@ static robot_ui_t s_view;
 static bool s_set;
 static uint64_t s_deadline;
 
+static bool view_is_current(uint64_t now)
+{
+    return s_set && (!s_deadline || now < s_deadline);
+}
+
 esp_err_t robot_ui_submit(const char *json, size_t len, char *error, size_t error_len)
 {
     robot_ui_t next;
@@ -27,9 +32,23 @@ void robot_ui_get(robot_ui_t *view)
 {
     uint64_t now = (uint64_t)esp_timer_get_time() / 1000;
     portENTER_CRITICAL(&s_lock);
-    if (s_set && s_deadline && now >= s_deadline) s_set = false;
+    s_set = view_is_current(now);
     *view = s_set ? s_view : robot_ui_default();
     portEXIT_CRITICAL(&s_lock);
+}
+bool robot_ui_set_radar_range(unsigned range_mm)
+{
+    if (range_mm < RADAR_VIEW_MIN_RANGE_MM || range_mm > RADAR_VIEW_MAX_RANGE_MM) return false;
+    uint64_t now = (uint64_t)esp_timer_get_time() / 1000;
+    portENTER_CRITICAL(&s_lock);
+    if (!view_is_current(now)) {
+        s_view = robot_ui_default();
+        s_deadline = 0;
+        s_set = true;
+    }
+    s_view.range_mm = range_mm;
+    portEXIT_CRITICAL(&s_lock);
+    return true;
 }
 bool robot_ui_command(const char *line)
 {
