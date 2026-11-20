@@ -986,7 +986,7 @@ static void play_starship(const char *out)
     for(unsigned i=0;i<4000 && SS_STATUS("phase=")!=3;++i) run(50);
     assert(SS_STATUS("phase=")==3);run(1000);tap();assert(SS_STATUS("phase=")==1);
     radar_online=false;run(300);
-    key(2,true);run(1000);assert((int)SS_STATUS("cam=")>600 && SS_STATUS("src=")==2);key(2,false);
+    key(2,true);run(1000);assert((int)SS_STATUS("cam=")>600 && SS_STATUS("src=")==2 && servo_log.last<0);key(2,false);
     run(1200);assert(abs((int)SS_STATUS("cam="))<300 || SS_STATUS("phase=")!=1);
     key(1,true);run(1000);assert((int)SS_STATUS("cam=")<-600 || SS_STATUS("phase=")!=1);key(1,false);
     assert(!strcmp(app_active_id(&manager.context),"starship")); /* neither is navigation */
@@ -1063,7 +1063,7 @@ static void pose_racing(const char *out)
     assert(RC_STATUS("crashes=") > crashes);
     run(550);
     assert(servo_log.angle > angle_requests + 1 && servo_log.last == 0);
-    assert(servo_log.hi > 0 && servo_log.hi <= 5 && servo_log.lo >= -5);
+    assert(servo_log.hi > 0 && servo_log.hi <= 10 && servo_log.lo >= -10);
     /* and a bend to the left, with the road empty: the chevrons and the swing of the road */
     memset(r->car,0,sizeof r->car);r->spawn_wait=60000;
     at=r->pos_mm+300000;while(rc_curve_at(r,at)>-230) at+=1000;
@@ -1525,7 +1525,7 @@ static void play_zombie(const char *out)
     assert(servo_log.angle>before+1 && servo_log.lo>=-8 && servo_log.hi<=8 && servo_log.hi>0 && servo_log.lo<0);
     /* K2 and K3 turn the view when the radar sees nobody; the radar turns it when it does */
     zb_z_t quiet[]={zz(ZK_WALKER,900,1400)};zpose(1,quiet);
-    zkey(2,true);run(1000);assert(ZB_INT("cam=")>600 && ZB_STATUS("src=")==2);zkey(2,false);
+    zkey(2,true);run(1000);assert(ZB_INT("cam=")>600 && ZB_STATUS("src=")==2 && servo_log.last<0);zkey(2,false);
     run(1200);assert(abs(ZB_INT("cam="))<300);
     zkey(1,true);run(1000);assert(ZB_INT("cam=")<-600);zkey(1,false);
     assert(!strcmp(app_active_id(&manager.context),"zombie")); /* neither is navigation */

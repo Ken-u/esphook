@@ -204,6 +204,7 @@ static void double_fire(app_manager_t *m, uint64_t ms)
     if (m->active == m->dbl_origin && m->context.app->on_back) {
         if (m->active == m->launcher) m->selected = m->dbl_selected;
         if (handle_local_back(&m->context)) {
+            app_input_consume(&m->input[0]); /* the completed pair no longer counts towards a triple */
             m->activity_ms = ms; m->dirty = true;
             app_manager_commit(m);
             return;

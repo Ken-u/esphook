@@ -14,7 +14,7 @@
 ## 实现
 
 - `apps/fortune/firmware/fortune_core.{h,c}`：纯 C，只依赖时间戳；`ft_pick()` 用线性同余发生器按 25/40/35 抽等级、均匀抽方面，每个（方面，等级）有 3 条祝福；`ft_press/ft_release/ft_advance` 驱动摇签 → 跳签 → 展开 → 签面的状态机。
-- `apps/fortune/firmware/app.c`：共享画布画签筒、竹签、跳出的签和展开的签面，LVGL 只放文字；会话状态远小于 2048 字节；不用雷达和舵机，不请求任何硬件。
+- `apps/fortune/firmware/app.c` 使用共享画布绘制签筒和签面。保存过校准的机器人随签筒左右摇动，出签时回中。
 
 ## USB 调试命令
 
