@@ -9,10 +9,36 @@
 | 开机后怎么用、有哪些应用 | [3. 第一次开机与操作](#3-第一次开机与操作)、[4. 内置应用](#4-内置应用) |
 | 用电脑玩 / 控制板子 | [5. 连接电脑](#5-连接电脑) |
 | 当 Agent 提醒屏 | [6. Agent Hook](#6-agent-hook) |
+| 让 AI Agent 帮我刷机、配置、写应用 | [用 AI Agent 上手](#用-ai-agent-上手)、[Agent 上手指南](docs/ai-agent-guide.md) |
 | 写应用、构建、测试 | [7. 开发](#7-开发) |
 | 查所有文档 | [8. 文档索引](#8-文档索引) |
 
 **需要的硬件**：ESP32-C3 SuperMini（4 MB Flash）、0.96 寸 160×80 ST7735 SPI 屏、一个按键（K1，建议三个）、USB-C 数据线。雷达（LD2450）和舵机（NHY009）是可选的，没有它们所有应用照样能玩。
+
+---
+
+## 用 AI Agent 上手
+
+仓库自带给 AI Agent 的说明（[AGENTS.md](AGENTS.md)、`CLAUDE.md`）和五个项目 skill，Claude Code、Codex、Cursor 等能自己读懂项目、刷机、配置、写应用和跑测试，你只要说想做什么：
+
+1. 拿到代码：`gh release download -R Ken-u/esphook -p esphook-kit.zip -p SHA256SUMS` 后解压（已经带固件，可以直接刷），或者 `git clone` / fork 本仓库。
+2. 用 USB-C 数据线接上板子，在这个目录里启动你的 Agent（Claude Code、Codex、Cursor 都行）。
+3. 对它说，例如：
+   - “帮我把固件刷到板子上，再把时间校准一下。”
+   - “我接了舵机但没反应，帮我看看怎么回事。”（它会指导你切到机器人配置，**但不会自己让舵机转动**。）
+   - “屏幕颜色反了，帮我调一下。”
+   - “做一个贪吃蛇小游戏，K1 转向，要有最高分。”
+   - “把我的 Claude Code 完成提醒接到这块屏上。”
+
+| skill | 管什么 |
+| --- | --- |
+| `esphook-device` | 刷固件、读状态、打开应用、硬件/时间/屏幕/舵机配置 |
+| `esphook-hook` | Wi-Fi、daemon、配对、Agent Hook |
+| `esphook-app` | 写设备应用和小游戏 |
+| `esphook-pc` | PC 配套、USB SDK |
+| `esphook-check` | 测试、CI、实机验证 |
+
+Agent 安全默认值：不会擦除闪存、不会恢复出厂、不会让舵机通电，Wi-Fi 密码只从你这里拿。它也看不到声音和舵机的实际动作，这些会明确留给你确认。更多用法、提示词和边界见 [Agent 上手指南](docs/ai-agent-guide.md)。
 
 ---
 
@@ -214,6 +240,7 @@ Windows 用 `--port COM4`。电脑上只有一个 Espressif 串口时可以省�
 | `python run.py doctor` | 检查环境和串口 |
 | `python run.py flash` | 烧录（见上） |
 | `python run.py monitor` | 串口日志，输入一行回车可发 USB 命令 |
+| `python run.py device status\|apps\|open <id>\|menu\|cmd "<命令>"` | 一次一条地查看/操作板子：当前应用、应用目录、切应用、发文本命令（给脚本和 Agent 用，`--dry-run` 不连串口；会让舵机动或恢复出厂的命令要 `--force`） |
 | `python run.py hardware [--set auto\|screen\|robot --reboot]` | 查看 / 切换硬件配置 |
 | `python run.py input tap\|hold\|triple\|keymap` | 模拟按键、读写按键映射 |
 | `python run.py bridge` | **实时键盘转发**（见下） |
@@ -256,7 +283,8 @@ main/                 ESP-IDF 入口、任务、USB 和 Hook 的 ESP32 适配
 host/  bin/           主机 daemon、Hook 适配器、esphook 命令
 scripts/  tests/      生成器、检查、各类主机测试和无屏 LVGL 渲染测试
 tools/  run.py        打包、烧录、USB 工具
-docs/                 文档；.agents/skills 是项目内的 Agent skills
+docs/                 文档
+.agents/skills/       项目内的 Agent skills（device、hook、app、pc、check）；AGENTS.md / CLAUDE.md 是 Agent 入口
 ```
 
 ### 7.2 新建一个应用
@@ -272,11 +300,11 @@ python3 scripts/check-apps.py                             # 检查 manifest 与 
 - LVGL 和应用状态归 UI 任务所有；USB 命令回调只校验、答复、请求切换；跨任务数据用 `app_sync.h`。状态放框架 arena，控件建在 `ctx->root` 下，退出时释放。
 - 待机、菜单、500 ms 确认、三击回菜单、双击回上一个应用由框架处理。舵机上电默认 disarm。
 - PC 的大数据和复杂计算放 `apps/<id>/pc`，不编进固件；PC 协议见 [app-pc-protocol.md](docs/app-pc-protocol.md)。
-- 支持项目 skills 的 Agent 可直接用 `$esphook-app`（设备应用）、`$esphook-pc`（PC 配套）、`$esphook-check`（验证）；其他工具读 [AGENTS.md](AGENTS.md) 里列出的 SKILL.md。
+- 支持项目 skills 的 Agent 可直接用 `$esphook-app`（设备应用）、`$esphook-pc`（PC 配套）、`$esphook-check`（验证）、`$esphook-device`（刷机与设备配置）、`$esphook-hook`（Hook 配置）；其他工具读 [AGENTS.md](AGENTS.md) 里列出的 SKILL.md。
 
 ### 7.3 构建
 
-固件**以 GitHub Actions 为准**：`.github/workflows/ci.yml` 在每次 push 和 PR 时跑全部主机测试，并用 ESP-IDF v5.5.4 构建 ESP32-C3 固件（通用配置，以及禁用机器人驱动的旧 Hook 配置），检查应用能放进 1600 KiB 的 OTA 槽；默认分支成功后自动发布 `v<version.txt>-<run number>` Release（版本号在 `version.txt`）。
+固件**以 GitHub Actions 为准**：`.github/workflows/ci.yml` 在每次 push 和 PR 时跑全部主机测试，并用 ESP-IDF v5.5.4 构建唯一的通用固件（雷达和舵机驱动始终编入，运行时按硬件配置启用），检查应用能放进 1600 KiB 的 OTA 槽；默认分支成功后自动发布 `v<version.txt>-<run number>` Release（版本号在 `version.txt`）。
 
 本地构建需要自己装 ESP-IDF 5.5.4：
 
@@ -307,7 +335,7 @@ git clone --depth 1 --branch v9.5.0 https://github.com/lvgl/lvgl.git /tmp/esphoo
 
 ## 8. 文档索引
 
-**上手与硬件**：[硬件与接线](docs/hardware.md) · [发布指南](docs/release-kit.md) · [USB 工具环境](docs/usb-environment.md) · [快速安装](docs/quick-install.md) · [OTA](docs/ota.md) · [机器人调试](docs/robot-bringup.md) · [舵机校准](docs/robot-servocal.md) · [桌面跟随机器人方案](docs/desktop-follow-robot.md)
+**上手与硬件**：[Agent 上手指南](docs/ai-agent-guide.md) · [硬件与接线](docs/hardware.md) · [发布指南](docs/release-kit.md) · [USB 工具环境](docs/usb-environment.md) · [快速安装](docs/quick-install.md) · [OTA](docs/ota.md) · [机器人调试](docs/robot-bringup.md) · [舵机校准](docs/robot-servocal.md) · [桌面跟随机器人方案](docs/desktop-follow-robot.md)
 
 **框架与协议**：[应用框架](docs/app-framework.md) · [PC SDK 与协议](docs/app-pc-protocol.md) · [切片堆叠渲染](docs/stack-render.md) · [启动器与全局输入](docs/robot-launcher.md) · [表情/文字/雷达协议](docs/robot-display-protocol.md)
 

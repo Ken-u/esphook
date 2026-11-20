@@ -10,7 +10,7 @@ ROOT=Path(__file__).resolve().parent
 def main(argv=None):
     argv=sys.argv[1:] if argv is None else argv
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument("command",choices=("flash","input","keys","bridge","demo","stock","hook","key-report","mirror","time","monitor","hardware","doctor"))
+    p.add_argument("command",choices=("flash","input","keys","bridge","demo","stock","hook","key-report","mirror","time","monitor","hardware","device","doctor"))
     if not argv or argv[0] in ("--help","-h"):
         p.print_help();return 0
     args=p.parse_args(argv[:1]);rest=argv[1:]
@@ -37,6 +37,9 @@ def main(argv=None):
     if args.command=="hardware":
         from tools.hardware import main as hardware
         return hardware(rest)
+    if args.command=="device":
+        from tools.device import main as device
+        return device(rest)
     scripts={"keys":"apps/key_report/pc/controller.py","bridge":"apps/key_report/pc/bridge.py","demo":"apps/demo/pc/main.py","stock":"apps/stock/pc/stock_t.py",
              "hook":"apps/hook/pc/esphookd.py","key-report":"apps/key_report/pc/main.py","mirror":"apps/mirror/pc/main.py","time":"apps/alarm/pc/main.py"}
     script=ROOT/scripts[args.command]

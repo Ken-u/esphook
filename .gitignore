@@ -7,3 +7,4 @@ __pycache__/
 .esphook-venv/
 dist/
 release-input/
+.DS_Store

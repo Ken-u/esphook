@@ -1,6 +1,4 @@
 #include "motion_ports.h"
-#include "sdkconfig.h"
-#ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
 #include "driver/uart.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -46,4 +44,3 @@ void radar_port_poll(void (*receive)(const ld2450_frame_t *, uint64_t, void *), 
         uart_flush_input(RADAR_UART); xQueueReset(s_events); s_parser.used = 0; ++s_parser.rejected;
     }
 }
-#endif

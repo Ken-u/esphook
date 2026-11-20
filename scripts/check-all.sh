@@ -97,6 +97,8 @@ hooks_dry_run() {
 
 check compileall "$PYTHON" -m compileall -q apps framework/pc host scripts tests
 check check-apps py scripts/check-apps.py
+check check-docs py scripts/check-docs.py
+check check-docs-test py tests/test_check_docs.py
 check scaffold py tests/test_scaffold.py
 check app-sdk py tests/test_app_sdk.py
 check cmake-scan cmake -P tests/test_cmake_scan.cmake
@@ -104,6 +106,8 @@ check release-package py tests/test_release_package.py
 check size-report py tests/test_size_report.py
 check fontdata py tests/test_fontdata.py
 check net-check py tests/test_net_check.py
+check device-tool py tests/test_device_tool.py
+check device-tool-dry py tools/device.py status --dry-run
 check stock-pc py apps/stock/pc/test_stock_t.py
 check hook-pc py apps/hook/pc/test_hooks.py
 check device-link py apps/hook/pc/test_device_link.py

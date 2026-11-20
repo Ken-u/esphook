@@ -1,53 +1,21 @@
-# TODO — SuperMini AI-Hook
+# TODO
 
-## 实机验证(插板后)
+已知的待办和限制。做完的从这里删掉；功能和用法的说明放 `docs/`，不要放在这里。
 
-- [ ] 烧录 `idf.py -p /dev/ttyACM0 flash monitor`,看启动日志 + 屏显"no wifi cfg"
-- [ ] `esphook provision <ssid> <pass>` 配网,屏切"connected + IP"
-- [ ] `esphook status` / `esphook test` 验证 HTTP 通路 + 屏弹通知 + 蜂鸣
-- [ ] 浏览器开设备 IP,配按键词 + 客户端/会话显示名,验证即时生效
-- [ ] 两台机器同时 `esphook notify`,屏上红点分别计数不混
-- [ ] 断线重连:拔路由器 → 屏离线 + LED 慢闪 → 恢复自动回连
-- [ ] 串口直接发 `status`/`reset`/`help` 验证回显
-- [ ] 批量发 33+ 不同 session,验证最旧被丢、不崩溃
+## 只能人来确认（Agent 和 CI 都看不到）
 
-### 实机已知风险点(代码没法验,插板才知)
+- 蜂鸣器音调和时长的听感：用菜单里的“蜂鸣测试”（扫频找谐振点、单音对比）在设备上试，再改 `framework/core/app_sound.c` 的音型表。
+- 舵机的实际动作、方向和限位：只在用户确认并断开舵盘后，用“舵机校准”在设备上看，见 `docs/robot-servocal.md`。
+- 标题/正文滚动（LVGL `SCROLL_CIRCULAR`）的速度和停顿、屏幕模组的偏色与偏移（`apps/screentest`）：看实际屏幕。
+- 电源：用 USB 口带舵机时的掉压和复位，要用示波器或换供电来确认。
 
-- **ST7735 MADCTL(0x60) + RGB565 字节序**:颜色/方向错了调这两个(见 `display_view.c` st7735_init)。本板 160×80 的行地址偏移 `cy={0,26,0,154}` 按 MINI160x80 写的,可能要调
-- **GPIO0 是 strapping**,屏 CS 接它,某些启动时序可能干扰下载——若下载异常复测
-- 按键 GPIO6/10/11 消抖时序
+## Agent Hook / daemon
 
-## host 端
+- `esphook setup daemon` 只提示“从用户服务或桌面自启动里运行 `esphook daemon`”；做 systemd user unit、launchd plist 或桌面自启动。
+- 按键回传的词注入依赖主机工具（macOS `osascript`、Linux `ydotool`/`xdotool`/`wtype`）。Wayland 下要确认 `ydotoold` 常驻。
+- `http_server.c` 的 `/notify` 对 `display_q` 使用非阻塞发送并忽略返回值：批量通知时队列满会返回成功但丢事件。需要时改成满了回 503。
 
-- [ ] **按键注入工具未装**:`ydotool`/`xdotool`/`wtype` 全无。`socat` 有(daemon 监听 OK),但收到 /keyevent 后词注入不进窗口。需先确定本机 **X11 还是 Wayland**:
-  - X11 → `sudo apt install xdotool`
-  - Wayland → `wtype` 或 `ydotool`(+ `ydotoold` 常驻)
-- [ ] `esphook daemon` 实跑验证(socat 监听 + 注入闭环)
-- [ ] daemon 开机自启(systemd user unit / desktop autostart)
-- [x] **CC hooks 自动接入**:`esphook setup claude` / `scripts/install-hooks.sh` 幂等写入 `~/.claude/settings.json`
-- [x] **Codex hook 体系调研**:使用 `~/.codex/hooks.json` 的 `Stop` / `PermissionRequest` command hooks
-- [x] **session_id 来源**:Hook stdin 使用原生 `session_id`；Cursor 使用 `conversation_id`；直接 Codex CLI 使用 `CODEX_THREAD_ID`
+## 构建与测试
 
-## 暂缓问题
-
-- [x] **蜂鸣器队列无人消费**:已补 `beeper` 任务消费 `beeper_q`(`main/beeper.c`),所有构建启用;device link 通知也不再因为蜂鸣器队列满而被拒绝
-- [ ] **daemon 注入命令错误**:`esphook daemon` 的 socat 路径调用不存在的 `esphook-inject`
-- [ ] **daemon setup**:`setup daemon` 仍只提示，需要另做 systemd user unit / desktop autostart
-- [ ] **HTTP body 可能被截断**:`http_server.c` 的路由只调用一次 `httpd_req_recv`,需循环读满 content length
-- [ ] **队列满时静默丢事件**:`display_q`/`beeper_q` 使用非阻塞发送且忽略返回值,批量通知时可能返回成功但实际丢失
-- [ ] **Unity 单测未接入 release build**:测试源在 `main/CMakeLists.txt` 中被注释,需补独立 test 配置
-
-## 调参
-
-- [ ] 标题/正文滚动节奏(LVGL `SCROLL_CIRCULAR`):实机调速度和停顿
-- [ ] 蜂鸣器音调/时长(`framework/core/app_sound.c` 的音型表):实机听感调;可以用菜单里的“蜂鸣测试”(扫频找谐振点、单音对比)直接在设备上试
-- [x] **屏幕布局重做**(`display_view.c`):LVGL 大字号状态/标题/正文布局已落地,剩余只做实机微调
-- [x] **中文通知显示**:字库位图、字形表和字符映射都在 `fontdata` 固定分区（`tools/make_fontdata.py` 生成，`main/aihook_font.c` 校验后原地使用）
-
-## 已完成
-
-- [x] 固件:USB Serial/JTAG CDC / config_store(NVS) / display_model(红点状态机) / display_view(ST7735) / net_wifi / beeper / http_server / input_task / display_task
-- [x] 19 个 unity 单测(config_store 8 + display_model 11)开发期通过,release 构建禁用省 flash
-- [x] host `bin/esphook` 单脚本(provision/status/notify/dismiss/setup/daemon/test)
-- [x] 设计文档 + 实施计划(`docs/` 仓库)
-- [x] 根 README / projects/README 索引
+- Unity 固件单测没有接入 release 构建：测试源在 `main/CMakeLists.txt` 里被注释掉，需要一个独立的 test 配置。目前的覆盖靠 `scripts/check-all.sh` 里的主机测试和无屏 LVGL 渲染。
+- CI 没有实机：Wi-Fi、OTA 和 Hook 回键只能在板子所在网段用 `python3 tools/net_check.py` 手动验证。

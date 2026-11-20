@@ -64,10 +64,8 @@ esp_err_t cdc_init(cdc_rx_line_cb_t cb)
     usb_serial_jtag_driver_config_t cfg = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
     /* Every build answers `app` requests, so the TX ring is not robot-only. */
     cfg.tx_buffer_size = CDC_TX_BUFFER_BYTES;
-#ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
     /* A complete 1024-byte JSON frame must fit while other tasks render. */
     cfg.rx_buffer_size = 2048;
-#endif
     esp_err_t err = usb_serial_jtag_driver_install(&cfg);
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
         ESP_LOGE(TAG, "usb_serial_jtag_driver_install: %s", esp_err_to_name(err));

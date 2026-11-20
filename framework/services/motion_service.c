@@ -15,7 +15,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
 static const char *TAG = "robot";
 static QueueHandle_t s_commands;
 static bool s_force_disarm;
@@ -431,12 +430,3 @@ bool robot_command(const char *line)
     if (xQueueSend(s_commands, &cmd, 0) != pdTRUE) cdc_write("ERR robot command queue full; retry");
     return true;
 }
-#else
-esp_err_t robot_start(void) { return ESP_ERR_NOT_SUPPORTED; }
-void robot_get_status(robot_status_t *s) { memset(s, 0, sizeof *s); }
-void robot_set_app_motion(robot_app_motion_t mode) { (void)mode; }
-bool robot_servo_request(unsigned a, int v) { (void)a; (void)v; return false; }
-bool robot_servo_calibrate(const robot_config_t *c, bool save) { (void)c; (void)save; return false; }
-bool robot_follow_trim_request(int degrees, bool save) { (void)degrees; (void)save; return false; }
-bool robot_command(const char *line) { (void)line; return false; }
-#endif

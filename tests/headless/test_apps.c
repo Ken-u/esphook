@@ -181,9 +181,9 @@ bool app_hook_reply(unsigned key) { return key<3; }
 void app_key_word(unsigned key,char *s,size_t n) { const char *words[]={"ok","continue","done"};snprintf(s,n,"%s",words[key%3]); }
 static unsigned restarts;
 static app_hardware_profile_t hardware_profile=APP_PROFILE_ROBOT,hardware_active=APP_PROFILE_ROBOT;
-static bool hardware_drivers=true,hardware_save_ok=true;
+static bool hardware_save_ok=true;
 app_hardware_profile_t app_hardware_active(void) { return hardware_active; }
-void app_hardware_info(app_hardware_info_t *h) { memset(h,0,sizeof *h);h->active=hardware_active;h->configured=hardware_profile;h->drivers_compiled=hardware_drivers;h->restart_required=h->active!=h->configured;h->screen=APP_HW_INITIALIZED;h->radar=APP_HW_DETECTED;h->servo=APP_HW_INITIALIZED;h->physical_keys=1; }
+void app_hardware_info(app_hardware_info_t *h) { memset(h,0,sizeof *h);h->active=hardware_active;h->configured=hardware_profile;h->drivers_compiled=true;h->restart_required=h->active!=h->configured;h->screen=APP_HW_INITIALIZED;h->radar=APP_HW_DETECTED;h->servo=APP_HW_INITIALIZED;h->physical_keys=1; }
 bool app_hardware_set_profile(app_hardware_profile_t p) { if(!hardware_save_ok) return false;hardware_profile=p;return true; }
 void app_device_restart(void) { ++restarts; }
 void app_device_info(app_device_info_t *d) { memset(d,0,sizeof *d);strcpy(d->version,"0.3.0");strcpy(d->build,"2026-11-16");strcpy(d->daemon_host,"192.168.1.10");strcpy(d->ip,"192.168.1.24");d->daemon_port=18765;d->robot_hardware=true; }
@@ -648,11 +648,11 @@ static void play_servocal(const char *out)
     assert(shows_text(lv_screen_active(),"舵机待重启") && shows_text(lv_screen_active(),"长按 重启生效"));
     event(APP_EVENT_CONFIRM);assert(restarts==1 && hardware_profile==APP_PROFILE_ROBOT);
     assert(app_open(&manager.context,"launcher"));app_manager_commit(&manager);run(20);
-    /* A screen-only firmware has no servo driver at all. */
-    hardware_active=APP_PROFILE_SCREEN;hardware_profile=APP_PROFILE_SCREEN;hardware_drivers=false;restarts=0;servo_open();
-    assert(shows_text(lv_screen_active(),"没有舵机") && shows_text(lv_screen_active(),"本固件不含舵机驱动"));
-    event(APP_EVENT_CONFIRM);assert(!strcmp(app_active_id(&manager.context),"launcher") && restarts==0 && hardware_profile==APP_PROFILE_SCREEN);
-    hardware_active=hardware_profile=APP_PROFILE_ROBOT;hardware_drivers=true;restarts=0;
+    /* The `screen` profile has no servo either and offers the same way on. */
+    hardware_active=hardware_profile=APP_PROFILE_SCREEN;restarts=0;servo_open();
+    assert(shows_text(lv_screen_active(),"舵机未启用") && shows_text(lv_screen_active(),"长按 切到机器人配置"));
+    event(APP_EVENT_SHORT);assert(!strcmp(app_active_id(&manager.context),"launcher") && restarts==0 && hardware_profile==APP_PROFILE_SCREEN);
+    hardware_active=hardware_profile=APP_PROFILE_ROBOT;restarts=0;
     servo_fresh();
     /* A robot whose calibration is stored does not ask at boot; the first page waits for the go-ahead and arms nothing. */
     assert(!has_servocal_first_run());

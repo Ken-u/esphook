@@ -1,6 +1,6 @@
 # 桌面跟随机器人首版调试
 
-通用构建默认编入 `CONFIG_DESKTOP_FOLLOW_ROBOT` 可选驱动，但运行配置默认 auto，保留旧三按键且不初始化 PWM。先运行 `python run.py hardware --set robot --reboot`（或设置应用配置页保存并重启），再执行下面的机器人调试。配置/检测状态详见 [发布指南](release-kit.md)。硬件为 ESP32-C3 SuperMini（4MB）、原 ST7735 160×80 SPI 屏、LD2450 和 NHY009，新增 GPIO6 游戏按键。电脑 USB 经同一个 Type-C 入口给整机供电。
+通用固件始终编入雷达和舵机驱动，但运行配置默认 auto，保留三个按键且不初始化 PWM。先运行 `python run.py hardware --set robot --reboot`（或设置应用配置页保存并重启），再执行下面的机器人调试。配置/检测状态详见 [发布指南](release-kit.md)。硬件为 ESP32-C3 SuperMini（4MB）、原 ST7735 160×80 SPI 屏、LD2450 和 NHY009，新增 GPIO6 游戏按键。电脑 USB 经同一个 Type-C 入口给整机供电。
 
 ## 默认接线
 
@@ -18,7 +18,7 @@
 
 所有模块共地，舵机不从 3V3 稳压输出取电。须核对 SuperMini 5V 排针和 Type-C VBUS 的实际连接。电脑 USB 口能否承受整机峰值电流尚待实测；本方案不引入额外电源。
 
-机器人模式只扫描 GPIO6 单按键；GPIO10/11 的旧按键扫描不启动；GPIO7 的蜂鸣器照常工作（LEDC timer 0 / channel 0，不动舵机的 timer 1 / channel 1；两者都显式用 APB 时钟，见 `hw_pwm.h`），USB `sound` 命令会同时打印蜂鸣器和舵机定时器的实际频率，播放前后舵机应保持 50 Hz。LEDC timer 1 / channel 1 用于舵机。应用日志改走 USB，避免 UART0 日志混入 GPIO21；ROM 启动日志仍可能在 GPIO21 出现，因此该脚只接雷达 RX，不能改接舵机信号。
+机器人模式只扫描 GPIO6 单按键；GPIO10/11 的按键扫描不启动；GPIO7 的蜂鸣器照常工作（LEDC timer 0 / channel 0，不动舵机的 timer 1 / channel 1；两者都显式用 APB 时钟，见 `hw_pwm.h`），USB `sound` 命令会同时打印蜂鸣器和舵机定时器的实际频率，播放前后舵机应保持 50 Hz。LEDC timer 1 / channel 1 用于舵机。应用日志改走 USB，避免 UART0 日志混入 GPIO21；ROM 启动日志仍可能在 GPIO21 出现，因此该脚只接雷达 RX，不能改接舵机信号。
 
 ## 构建与刷写
 
@@ -31,7 +31,7 @@ idf.py build
 idf.py -p <串口> flash monitor
 ```
 
-完整烧录包括固定字库分区。已有工程缓存需要删除旧 sdkconfig 或通过 `idf.py menuconfig` 显式开启 Desktop follow robot；IDF defaults 不覆盖已有配置。menuconfig 可配置 UART 引脚、波特率、舵机引脚和 PWM 频率。
+完整烧录包括固定字库分区。`idf.py menuconfig` 的 “Desktop follow robot” 菜单可配置 UART 引脚、波特率、舵机引脚和 PWM 频率；已有的 `sdkconfig` 不会被 `sdkconfig.defaults` 覆盖，要取新的默认值先删掉它。不想装 ESP-IDF 时用 CI 构建（见 [README 的“开发”](../README.md#7-开发)）。
 
 默认 UART1 为 256000、8N1。固件只接收标准 30 字节上报，不修改雷达的模式、波特率或固件。雷达若已被改过参数，先用厂商工具恢复标准坐标上报；透明传输固件未验证。模块最多上报三个目标，槽位不当成人员 ID。
 

@@ -2,12 +2,10 @@
 
 状态：首版代码已实现雷达接收、位置关联、跟随状态机、PWM 输出、USB 校准与像素表情。构建和首次上机步骤见 [robot-bringup.md](robot-bringup.md)，硬件实测尚未完成。
 
-## 分支与复用基础
+## 复用基础
 
-- 开发分支：`feat/desktop-follow-robot`
-- 起点：创建分支时的默认分支 `agent/install-agent-hooks`。
 - 可复用：ESP-IDF 工程、ST7735 初始化与显示任务、USB Serial/JTAG CDC、配置存储、Wi-Fi、OTA。
-- 此分支默认启用机器人模式；在 menuconfig 中关闭 `DESKTOP_FOLLOW_ROBOT` 可构建原 Hook 模式。
+- 只有一个通用固件：雷达和舵机驱动始终编入，运行配置（`auto` / `screen` / `robot`，见 [robot-bringup.md](robot-bringup.md)）决定哪些外设启动；没有单独的“原 Hook”构建。
 - 表情、投篮、雷达与跟随本地运行；USB 配网、HTTP OTA 和可选 device link 保留。Hook 可接主机 daemon，做 T 使用 PC 配套。
 
 ## 用户已确定的硬件与约束

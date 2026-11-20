@@ -1,0 +1,4 @@
+interface:
+  display_name: "esphook 设备"
+  short_description: "Flash, configure and operate an esphook board over USB"
+  default_prompt: "Use $esphook-device to check the connected board, flash the firmware, and configure or operate it safely."

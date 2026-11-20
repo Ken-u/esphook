@@ -55,13 +55,12 @@ typedef struct {
 _Static_assert(sizeof(state_t) <= APP_STATE_CAPACITY, "servocal state too large");
 
 /* Why there is no servo to calibrate, and so what a press can do about it. */
-typedef enum { M_NO_DRIVER, M_ENABLE, M_RESTART, M_FAULT } missing_t;
+typedef enum { M_ENABLE, M_RESTART, M_FAULT } missing_t;
 
 static missing_t missing(void)
 {
     app_hardware_info_t h;
     app_hardware_info(&h);
-    if (!h.drivers_compiled) return M_NO_DRIVER;
     if (h.configured != APP_PROFILE_ROBOT) return M_ENABLE;
     if (h.active != APP_PROFILE_ROBOT) return M_RESTART;
     return M_FAULT;
@@ -250,10 +249,6 @@ static void render(app_context_t *ctx)
         if (!cal.available) {
             snprintf(hint, sizeof hint, "短按 返回");
             switch (missing()) {
-            case M_NO_DRIVER:
-                snprintf(value, sizeof value, "没有舵机");
-                snprintf(desc, sizeof desc, "本固件不含舵机驱动");
-                break;
             case M_ENABLE:
                 snprintf(value, sizeof value, "舵机未启用");
                 snprintf(desc, sizeof desc, "%s", s->save_failed ? "保存失败 再试一次" : "长按 切到机器人配置");
