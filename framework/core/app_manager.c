@@ -115,6 +115,7 @@ void app_manager_commit(app_manager_t *m)
     m->context.root = m->platform.scene_create ? m->platform.scene_create(m->platform.user) : NULL;
     for (unsigned key = 0; key < 3; ++key) app_input_consume(&m->input[key]);
     m->ready = true; m->dirty = true; m->activity_ms = m->context.now_ms;
+    if (m->platform.activate_services) m->platform.activate_services(&m->context, m->platform.user);
     if (m->context.app->on_enter) m->context.app->on_enter(&m->context);
 }
 const char *app_manager_default_standby(const app_descriptor_t *const *catalog, size_t count, const char *fallback)

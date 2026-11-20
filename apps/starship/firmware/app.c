@@ -557,5 +557,6 @@ static void icon(void *parent, int x, int y, bool selected)
     app_ui_rect(parent, x + 13, y + 24, 1, 2, 0xFFC040, 0);                               /* engine glow */
 }
 const app_descriptor_t esphook_app_starship = {.api_version = APP_API_VERSION, .id = "starship", .title = "星际战机",
+    .flags = APP_SERVO_DEFAULT_HAPTIC,
     .refresh_ms = 33, .state_size = sizeof(state_t), .on_enter = enter, .on_leave = leave, .on_event = event,
     .on_tick = tick, .render = render, .icon = icon, .command = command};

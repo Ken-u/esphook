@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 static unsigned enters,leaves,scenes,releases,renders,shorts,confirms,ups,first_runs,setup_asked;
+static unsigned activations;
 static bool setup_wanted;
 static bool save_ok=true;
 static char saved[24];
@@ -13,6 +14,14 @@ static void destroy(void *root,void *u) { (void)u; assert(root==&scenes && scene
 static void *scene2(void *u) { (void)u; return &saved; }
 static void destroy2(void *root,void *u) { (void)u; assert(root==&saved); }
 static void release(const char *id,void *u) { (void)id;(void)u;++releases; }
+static void activate(const app_context_t *ctx,void *u)
+{
+    (void)u;
+    assert(ctx->root == &scenes && *(unsigned *)ctx->state == 0);
+    assert(strcmp(ctx->app->id, app_active_id(ctx)) == 0);
+    assert(releases == activations);
+    ++activations;
+}
 static bool save(const char *id,void *u) { (void)u;if(save_ok) strcpy(saved,id);return save_ok; }
 static void enter(app_context_t *c) { assert(*(unsigned *)c->state==0);*(unsigned *)c->state=24;++enters;if(c->first_run) ++first_runs; }
 static void leave(app_context_t *c) { assert(*(unsigned *)c->state==24);++leaves; }
@@ -299,7 +308,8 @@ static void first_run_hook(void)
 }
 int main(void)
 {
-    app_manager_t m;app_platform_t p={.scene_create=scene,.scene_delete=destroy,.release_services=release,.save_standby=save};
+    app_manager_t m;app_platform_t p={.scene_create=scene,.scene_delete=destroy,.release_services=release,
+        .activate_services=activate,.save_standby=save};
     assert(app_manager_init(&m,apps,4,&p,"face",0));active(&m,"face");assert(m.idle && app_count(&m.context)==3);
     assert(!app_set_standby(&m.context,"game") && !app_open(&m.context,"missing"));
     app_manager_render(&m);assert(renders==1);app_manager_tick(&m,10);app_manager_render(&m);assert(renders==1);

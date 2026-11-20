@@ -19,6 +19,8 @@
 static const char *TAG = "robot";
 static QueueHandle_t s_commands;
 static bool s_force_disarm;
+static bool s_app_motion_changed;
+static robot_app_motion_t s_app_motion;
 static bool s_servo_ready, s_radar_ready;
 static robot_config_t s_boot_config; /* read in robot_start(), before the app manager asks for it, then owned by the task */
 static bool s_boot_stored;
@@ -31,6 +33,13 @@ void robot_get_status(robot_status_t *out)
 {
     portENTER_CRITICAL(&s_status_lock);
     *out = s_status;
+    portEXIT_CRITICAL(&s_status_lock);
+}
+void robot_set_app_motion(robot_app_motion_t mode)
+{
+    portENTER_CRITICAL(&s_status_lock);
+    s_app_motion = mode;
+    s_app_motion_changed = true;
     portEXIT_CRITICAL(&s_status_lock);
 }
 /* True when a valid calibration was stored (robot save, or the calibration app): a robot that never had one is
@@ -100,6 +109,8 @@ static void robot_task(void *arg)
     robot_follow_init(&follow, &config, now_ms());
     ld2450_frame_t raw = {0};
     bool armed = false, following = false, hardware_fault = false;
+    bool auto_armed = false, auto_pending = false;
+    robot_app_motion_t app_motion = ROBOT_APP_MOTION_NONE;
     float angle = 0, manual_goal = 0;
     uint64_t last_step = now_ms();
     int last_pulse = 0;
@@ -112,10 +123,17 @@ static void robot_task(void *arg)
         command_t command;
         portENTER_CRITICAL(&s_status_lock);
         bool force_disarm = s_force_disarm; s_force_disarm = false;
+        bool motion_changed = s_app_motion_changed;
+        if (motion_changed) app_motion = s_app_motion;
+        s_app_motion_changed = false;
         portEXIT_CRITICAL(&s_status_lock);
-        if (force_disarm) {
+        if (force_disarm || (motion_changed && auto_armed)) {
             hardware_fault = servo_port_write(0) != ESP_OK;
-            armed = following = false; last_pulse = 0;
+            armed = following = auto_armed = auto_pending = false;
+            last_pulse = 0;
+        }
+        if (motion_changed) auto_pending = app_motion != ROBOT_APP_MOTION_NONE;
+        if (force_disarm) {
             /* Discard queued motion so app departure cannot re-arm later. */
             xQueueReset(s_commands);
         }
@@ -128,7 +146,7 @@ static void robot_task(void *arg)
             }
             if (!strcmp(cmd, "disarm")) {
                 esp_err_t err = servo_port_write(0);
-                armed = following = false;
+                armed = following = auto_armed = auto_pending = false;
                 last_pulse = 0;
                 hardware_fault = err != ESP_OK;
                 cdc_write(err == ESP_OK ? "OK robot disarmed" : "ERR servo disable failed");
@@ -147,6 +165,7 @@ static void robot_task(void *arg)
                 }
                 armed = true;
                 following = false;
+                auto_pending = false;
                 hardware_fault = false;
                 angle = manual_goal = 0;
                 last_pulse = follow.config.center_us;
@@ -213,6 +232,22 @@ static void robot_task(void *arg)
             angle = manual_goal = 0;
             cdc_write("OK robot calibration set (robot save to persist)");
         }
+        /* A scene default can wait for radar lock, independent of the manual request queue. Only a saved
+         * calibration enables automatic output. An explicit disarm cancels this scene's pending default. */
+        if (auto_pending && config_stored && s_servo_ready && !hardware_fault &&
+            (app_motion == ROBOT_APP_MOTION_HAPTIC || follow.state == ROBOT_TRACKING)) {
+            auto_pending = false;
+            if (!armed) {
+                hardware_fault = servo_port_write(follow.config.center_us) != ESP_OK;
+                armed = !hardware_fault;
+                angle = 0;
+                last_pulse = armed ? follow.config.center_us : 0;
+            }
+            auto_armed = armed;
+            following = armed && app_motion == ROBOT_APP_MOTION_FOLLOW;
+            manual_goal = 0;
+            last_step = now;
+        }
         angle = robot_slew(angle, following ? follow.goal_deg : manual_goal,
                            following ? robot_follow_speed_dps(&follow.config) : follow.config.speed_dps,
                            (now - last_step) / 1000.0f);
@@ -224,7 +259,7 @@ static void robot_task(void *arg)
                 if (err == ESP_OK) last_pulse = pulse;
                 else {
                     (void)servo_port_write(0);
-                    armed = following = false;
+                    armed = following = auto_armed = false;
                     hardware_fault = true;
                     ESP_LOGE(TAG, "servo update failed: %s", esp_err_to_name(err));
                 }
@@ -341,6 +376,7 @@ bool robot_command(const char *line)
 #else
 esp_err_t robot_start(void) { return ESP_ERR_NOT_SUPPORTED; }
 void robot_get_status(robot_status_t *s) { memset(s, 0, sizeof *s); }
+void robot_set_app_motion(robot_app_motion_t mode) { (void)mode; }
 bool robot_servo_request(unsigned a, int v) { (void)a; (void)v; return false; }
 bool robot_servo_calibrate(const robot_config_t *c, bool save) { (void)c; (void)save; return false; }
 bool robot_command(const char *line) { (void)line; return false; }

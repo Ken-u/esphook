@@ -94,7 +94,7 @@ static void follow_tests(void)
     robot_follow_frame(&f, &v, 200);
     robot_follow_tick(&f, 200);
     assert(f.locked && f.state == ROBOT_TRACKING);
-    assert(f.goal_deg == 8.0f);
+    assert(f.goal_deg == 12.0f);
     assert(f.angle_deg == 1.0f); /* follow caps speed to 10 degrees/s and elapsed tick to 100ms */
     /* Slot order changes and a closer bystander must preserve spatial lock. */
     v.targets[2] = v.targets[0];
@@ -161,7 +161,7 @@ static void quiet_follow_tests(void)
         assert(f.goal_deg == 0);
     }
     robot_follow_frame(&f, &right, 1400);
-    assert(f.goal_deg > 6 && f.goal_deg <= 8);
+    assert(f.goal_deg > 8 && f.goal_deg <= 12);
     const float goal = f.goal_deg;
     for (uint64_t now = 1500; now <= 3000; now += 100) {
         ld2450_frame_t jitter = frame(now % 200 ? 540 : 460, 500);

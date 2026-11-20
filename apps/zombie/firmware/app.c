@@ -496,5 +496,6 @@ static void icon(void *parent, int x, int y, bool selected)
     app_ui_rect(parent, x + 8, y + 12, 12, 2, 0xFF4A3A, 0);
 }
 const app_descriptor_t esphook_app_zombie = {.api_version = APP_API_VERSION, .id = "zombie", .title = "僵尸围城",
+    .flags = APP_SERVO_DEFAULT_HAPTIC,
     .refresh_ms = 33, .state_size = sizeof(state_t), .on_enter = enter, .on_leave = leave, .on_event = event,
     .on_tick = tick, .render = render, .icon = icon, .command = command};

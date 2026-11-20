@@ -20,6 +20,10 @@ void robot_get_status(robot_status_t *status);
 /* True if this is a robot command (including an invalid robot command). */
 bool robot_command(const char *line);
 
+typedef enum { ROBOT_APP_MOTION_NONE, ROBOT_APP_MOTION_FOLLOW, ROBOT_APP_MOTION_HAPTIC } robot_app_motion_t;
+/* Publish the foreground scene's default motion mode. It is applied by the motion task. */
+void robot_set_app_motion(robot_app_motion_t mode);
+
 /* Port adapter: action values are app_servo_action_t; enqueue only. */
 bool robot_servo_request(unsigned action, int value);
 /* Queues a calibration (robot_config_valid() must hold); with `save` it is also stored. Works while armed (the servo is

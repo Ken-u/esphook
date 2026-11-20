@@ -9,10 +9,10 @@
 #define STALE_MS 800
 #define HOLD_MS 1500
 #define MATCH_MM 700.0f
-#define FOLLOW_GAIN 0.20f
-#define FOLLOW_LIMIT_DEG 8.0f
+#define FOLLOW_GAIN 0.28f
+#define FOLLOW_LIMIT_DEG 12.0f
 #define FOLLOW_SPEED_DPS 10.0f
-#define FOLLOW_DEADBAND_DEG 2.0f
+#define FOLLOW_DEADBAND_DEG 2.5f
 #define FOLLOW_CONFIRM_MS 350
 
 static float clamp(float v, float lo, float hi) { return fminf(hi, fmaxf(lo, v)); }

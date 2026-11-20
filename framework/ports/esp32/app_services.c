@@ -79,6 +79,14 @@ void app_services_release(const char *id, void *user)
     (void)user;
     if (!strcmp(s_servo_owner, id)) { (void)robot_servo_request(APP_SERVO_DISARM, 0); s_servo_owner[0] = '\0'; }
 }
+void app_services_activate(const app_context_t *ctx, void *user)
+{
+    (void)user;
+    robot_app_motion_t mode = ROBOT_APP_MOTION_NONE;
+    if (ctx->app->flags & APP_SERVO_DEFAULT_HAPTIC) mode = ROBOT_APP_MOTION_HAPTIC;
+    else if (ctx->standby || (ctx->app->flags & APP_SERVO_DEFAULT_FOLLOW)) mode = ROBOT_APP_MOTION_FOLLOW;
+    robot_set_app_motion(mode);
+}
 void app_display_read(robot_ui_t *out) { robot_ui_get(out); }
 bool app_display_update(const char *json, size_t length, char *error, size_t size)
 { return robot_ui_submit(json, length, error, size) == ESP_OK; }

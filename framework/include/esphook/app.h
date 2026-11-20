@@ -27,7 +27,8 @@ typedef struct {
 } app_event_t;
 /* APP_DEFAULT_STANDBY (together with APP_STANDBY) makes an app the standby used when none is saved in NVS or the
  * saved one is gone; at most one app may set it, and `face` stays the fallback when none does. */
-enum { APP_HIDDEN = 1U, APP_STANDBY = 2U, APP_NOTIFICATIONS = 4U, APP_DEFAULT_STANDBY = 8U };
+enum { APP_HIDDEN = 1U, APP_STANDBY = 2U, APP_NOTIFICATIONS = 4U, APP_DEFAULT_STANDBY = 8U,
+       APP_SERVO_DEFAULT_FOLLOW = 16U, APP_SERVO_DEFAULT_HAPTIC = 32U };
 
 /* All lifecycle/event/tick/render callbacks run on the UI task. command is the
  * only exception: called by the USB task; it must enqueue/copy and never use UI. */
@@ -66,6 +67,7 @@ typedef struct {
     void *(*scene_create)(void *user);
     void (*scene_delete)(void *root, void *user);
     void (*release_services)(const char *id, void *user);
+    void (*activate_services)(const app_context_t *ctx, void *user);
     bool (*save_standby)(const char *id, void *user);
     /* The wall clock for the alarm registry; without it only "in N seconds" entries can fire. */
     void (*time_read)(app_time_t *out, void *user);

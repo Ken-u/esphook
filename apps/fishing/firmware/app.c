@@ -478,7 +478,7 @@ static void event(app_context_t *ctx, const app_event_t *e)
     }
     else if (e->kind == APP_EVENT_UP) fs_release(&s->core, now);
     else if (e->kind == APP_EVENT_CONFIRM && s->core.phase != FS_FIGHT && s->core.phase != FS_BITE)
-        (void)haptic_arm(ctx, &s->haptic); /* a deliberate half-second hold is the only thing that enables the servo */
+        (void)haptic_arm(ctx, &s->haptic); /* manual enable from a quiet screen */
     drain_shakes(s, e->ms);
     sync_exit(ctx, s);
     publish(s, true, false);
@@ -570,5 +570,6 @@ static void icon(void *parent, int x, int y, bool selected)
     app_ui_rect(parent, x + 10, y + 18, 2, 2, 0x101820, 1);
 }
 const app_descriptor_t esphook_app_fishing = {.api_version = APP_API_VERSION, .id = "fishing", .title = "钓鱼",
+    .flags = APP_SERVO_DEFAULT_HAPTIC,
     .refresh_ms = 33, .state_size = sizeof(state_t), .on_enter = enter, .on_leave = leave, .on_event = event,
     .on_tick = tick, .render = render, .icon = icon, .command = command};
