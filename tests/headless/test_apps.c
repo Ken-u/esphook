@@ -310,7 +310,6 @@ static void play_basketball(const char *out)
     servo_state.armed = true; /* a calibrated unit enters this game with haptics enabled */
     assert(app_open(&manager.context,"basketball"));app_manager_commit(&manager);run(100);
     assert(game_status("basketball","robot game status","phase=")==1);dump(out,"basketball-idle");
-    run(350);
     assert(servo_log.angle > previous_angles && abs(servo_log.last) <= 8);
     unsigned made=0;bool saw_hit=false,saw_miss=false;
     for(unsigned shot=0;shot<60 && !(saw_hit && saw_miss);++shot) {
