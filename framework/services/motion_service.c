@@ -91,11 +91,12 @@ static void print_status(const robot_follow_t *f, bool armed, bool following,
     char buf[300];
     snprintf(buf, sizeof buf,
              "robot state=%s armed=%d mode=%s fault=%d angle=%.1f target=%.1f "
-             "xy=%.0f,%.0f frames=%lu bad=%lu center_us=%d limit=%d reverse=%d speed=%d",
+             "xy=%.0f,%.0f frames=%lu bad=%lu center_us=%d limit=%d reverse=%d speed=%d dodge=%d",
              robot_state_name(f->state), armed, following ? "follow" : "manual", fault,
-             (double)angle, (double)f->goal_deg, (double)f->x_mm, (double)f->y_mm,
+             (double)angle, (double)f->target_deg, (double)f->x_mm, (double)f->y_mm,
              (unsigned long)p->frames, (unsigned long)p->rejected,
-             f->config.center_us, f->config.limit_deg, f->config.reverse, f->config.speed_dps);
+             f->config.center_us, f->config.limit_deg, f->config.reverse, f->config.speed_dps,
+             now_ms() < f->dodge_until_ms);
     cdc_write(buf);
 }
 static void receive_frame(const ld2450_frame_t *frame, uint64_t ms, void *user)
@@ -110,8 +111,10 @@ static void robot_task(void *arg)
     ld2450_frame_t raw = {0};
     bool armed = false, following = false, hardware_fault = false;
     bool auto_armed = false, auto_pending = false;
+    uint32_t cal_save_seq = 0;
+    bool cal_save_ok = false;
     robot_app_motion_t app_motion = ROBOT_APP_MOTION_NONE;
-    float angle = 0, manual_goal = 0;
+    float angle = 0, manual_goal = 0, follow_velocity = 0;
     uint64_t last_step = now_ms();
     int last_pulse = 0;
     while (1) {
@@ -130,16 +133,16 @@ static void robot_task(void *arg)
         if (force_disarm || (motion_changed && auto_armed)) {
             hardware_fault = servo_port_write(0) != ESP_OK;
             armed = following = auto_armed = auto_pending = false;
+            follow_velocity = 0;
             last_pulse = 0;
         }
         if (motion_changed) auto_pending = app_motion != ROBOT_APP_MOTION_NONE;
-        if (force_disarm) {
-            /* Discard queued motion so app departure cannot re-arm later. */
-            xQueueReset(s_commands);
-        }
-        /* Bound command work so a busy CDC client cannot starve motion/UART. */
-        for (int k = 0; k < 4 && xQueueReceive(s_commands, &command, 0); ++k) {
+        /* On departure drain old commands without letting them move the servo. Keep calibration
+         * requests, including saves and the calibration screen's rollback. */
+        const unsigned work = force_disarm ? uxQueueMessagesWaiting(s_commands) : 4;
+        for (unsigned k = 0; k < work && xQueueReceive(s_commands, &command, 0); ++k) {
             const char *cmd = command.line;
+            if (force_disarm && strncmp(cmd, "cal:", 4) && strcmp(cmd, "status") && strcmp(cmd, "disarm")) continue;
             if (!strcmp(cmd, "status")) {
                 print_status(&follow, armed, following, hardware_fault, radar_port_parser(), angle);
                 continue;
@@ -201,7 +204,9 @@ static void robot_task(void *arg)
                     else { (void)servo_port_write(0); armed = false; last_pulse = 0; hardware_fault = true; }
                 }
                 if (store) {
-                    if (save_config(&next) == ESP_OK) config_stored = true;
+                    cal_save_ok = save_config(&next) == ESP_OK;
+                    ++cal_save_seq;
+                    if (cal_save_ok) config_stored = true;
                     else ESP_LOGW(TAG, "calibration not saved");
                 }
                 continue;
@@ -235,12 +240,14 @@ static void robot_task(void *arg)
         /* A scene default can wait for radar lock, independent of the manual request queue. Only a saved
          * calibration enables automatic output. An explicit disarm cancels this scene's pending default. */
         if (auto_pending && config_stored && s_servo_ready && !hardware_fault &&
-            (app_motion == ROBOT_APP_MOTION_HAPTIC || follow.state == ROBOT_TRACKING)) {
+            (app_motion == ROBOT_APP_MOTION_HAPTIC || follow.state == ROBOT_TRACKING ||
+             now < follow.dodge_until_ms)) {
             auto_pending = false;
             if (!armed) {
                 hardware_fault = servo_port_write(follow.config.center_us) != ESP_OK;
                 armed = !hardware_fault;
                 angle = 0;
+                follow_velocity = 0;
                 last_pulse = armed ? follow.config.center_us : 0;
             }
             auto_armed = armed;
@@ -248,13 +255,17 @@ static void robot_task(void *arg)
             manual_goal = 0;
             last_step = now;
         }
-        angle = robot_slew(angle, following ? follow.goal_deg : manual_goal,
-                           following ? robot_follow_speed_dps(&follow.config) : follow.config.speed_dps,
-                           (now - last_step) / 1000.0f);
+        const float elapsed = (now - last_step) / 1000.0f;
+        if (following) {
+            angle = robot_follow_slew(&follow.config, angle, &follow_velocity, follow.target_deg, elapsed);
+        } else {
+            follow_velocity = 0;
+            angle = robot_slew(angle, manual_goal, follow.config.speed_dps, elapsed);
+        }
         last_step = now;
         if (armed) {
             int pulse = robot_pulse_us(&follow.config, angle);
-            if (abs(pulse - last_pulse) >= 3) {
+            if (abs(pulse - last_pulse) >= (following ? 1 : 3)) {
                 esp_err_t err = servo_port_write(pulse);
                 if (err == ESP_OK) last_pulse = pulse;
                 else {
@@ -269,7 +280,8 @@ static void robot_task(void *arg)
             .state = hardware_fault ? ROBOT_FAULT : follow.state,
             .armed = armed, .following = following, .hardware_fault = hardware_fault,
             .servo_ready=s_servo_ready,.radar_ready=s_radar_ready,
-            .config_stored = config_stored, .angle_deg = angle, .target_deg = follow.goal_deg,
+            .config_stored = config_stored, .cal_save_seq = cal_save_seq, .cal_save_ok = cal_save_ok,
+            .angle_deg = angle, .target_deg = follow.target_deg,
             .x_mm = (int)follow.x_mm, .y_mm = (int)follow.y_mm,
             .frames = radar_port_parser()->frames, .rejected = radar_port_parser()->rejected, .config = follow.config,
             .raw = raw,

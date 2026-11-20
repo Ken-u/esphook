@@ -61,6 +61,7 @@ void app_servo_cal_read(app_servo_cal_t *out)
 {
     robot_status_t s; robot_get_status(&s); memset(out, 0, sizeof *out);
     out->available = s.servo_ready; out->stored = s.config_stored;
+    out->save_seq = s.cal_save_seq; out->save_ok = s.cal_save_ok;
     out->config = s.servo_ready ? s.config : robot_default_config();
 }
 bool app_servo_cal_apply(app_context_t *ctx, const robot_config_t *config, bool save)

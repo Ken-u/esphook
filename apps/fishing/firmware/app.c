@@ -458,6 +458,10 @@ static void tick(app_context_t *ctx)
         if (s->core.nibbles > s->seen_nibbles) s->nibble_ms = (uint32_t)ctx->now_ms;
         s->seen_nibbles = s->core.nibbles;
     }
+    const int middle = (FS_FISH_X_MIN + FS_FISH_X_MAX) / 2;
+    const int span = FS_FISH_X_MAX - middle;
+    const int fish_angle_x10 = s->core.phase == FS_FIGHT ? (middle - fs_fish_x(&s->core)) * 80 / span : 0;
+    haptic_base(&s->haptic, fish_angle_x10); /* positive servo angle points to the viewer's left */
     drain_shakes(s, ctx->now_ms);
     haptic_pump(ctx, &s->haptic);
 }

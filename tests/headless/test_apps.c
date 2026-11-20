@@ -15,6 +15,9 @@
 #ifdef ESPHOOK_TEST_RACING
 #include "racing_core.h"
 #endif
+#ifdef ESPHOOK_TEST_FISHING
+#include "fishing_core.h"
+#endif
 #ifdef ESPHOOK_TEST_FORTUNE
 #include "fortune_core.h"
 #endif
@@ -136,14 +139,14 @@ bool app_servo_request(app_context_t *c,app_servo_action_t a,int v)
 }
 /* The calibration service is a record too: what the servo uses, what was stored, and every request. */
 static app_servo_cal_t servo_cal={.config={.center_us=1500,.limit_deg=30,.speed_dps=35},.available=true,.stored=true};
-static struct { unsigned applies,saves;bool busy; } cal_log;
+static struct { unsigned applies,saves;bool busy,defer_save; } cal_log;
 void app_servo_cal_read(app_servo_cal_t *c) { *c=servo_cal; }
 bool app_servo_cal_apply(app_context_t *c,const robot_config_t *cfg,bool save)
 {
     (void)c;
     if(cal_log.busy || !servo_cal.available || !app_servo_cal_valid(cfg)) return false;
     ++cal_log.applies;servo_cal.config=*cfg;servo_state.limit_deg=cfg->limit_deg;servo_state.speed_dps=cfg->speed_dps;
-    if(save) { ++cal_log.saves;servo_cal.stored=true; }
+    if(save && !cal_log.defer_save) { ++cal_log.saves;servo_cal.stored=true;++servo_cal.save_seq;servo_cal.save_ok=true; }
     return true;
 }
 void app_hook_read(app_hook_t *h) { memset(h,0,sizeof *h);h->current=h->connected=true;h->clients=1;h->unread=2;strcpy(h->client,"Codex");strcpy(h->title,"任务已完成");strcpy(h->body,"长按回复继续"); }
@@ -583,7 +586,11 @@ static void play_servocal(const char *out)
     /* A busy motion service keeps the final hold from leaving; the next one stores, disarms and goes back to the menu. */
     event(APP_EVENT_SHORT);event(APP_EVENT_SHORT);run(60);assert(servo_cal.config.speed_dps==35);
     cal_log.busy=true;event(APP_EVENT_CONFIRM);assert(!strcmp(app_active_id(&manager.context),"servocal") && cal_log.saves==0);
-    cal_log.busy=false;event(APP_EVENT_CONFIRM);run(30);
+    cal_log.busy=false;cal_log.defer_save=true;event(APP_EVENT_CONFIRM);run(120);
+    assert(!left("servocal") && shows_text(lv_screen_active(),"正在保存"));
+    ++servo_cal.save_seq;servo_cal.save_ok=false;run(120);
+    assert(!left("servocal") && shows_text(lv_screen_active(),"保存失败 再试一次"));
+    cal_log.defer_save=false;event(APP_EVENT_CONFIRM);run(30);
     assert(cal_log.saves==1 && servo_cal.stored && servo_cal.config.center_us==1400 && servo_cal.config.limit_deg==5 && servo_cal.config.speed_dps==35 && !servo_cal.config.reverse);
     assert(!servo_state.armed && servo_log.disarm>disarms && !strcmp(app_active_id(&manager.context),"launcher"));
     /* Only that hold stores: the triple press from the menu puts back what the app started with and disarms. */
@@ -809,6 +816,19 @@ static void play_fishing(const char *out)
     event(APP_EVENT_CONFIRM);assert(servo_log.arm==1); /* already enabled: no second request */
     fishing_hook();
     assert(shows_text(lv_screen_active(),"舵机"));
+    fs_t *fish = manager.context.state;
+    const fs_t before_swim = *fish;
+    fish->next_start_ms = UINT32_MAX;
+    fish->move_wait = 1000;
+    run(500); /* let the bite shake finish before comparing directions */
+    fish->fx = fish->gx = FS_FISH_X_MIN * 16;
+    run(100);
+    assert(servo_log.last > 0);
+    fish->fx = fish->gx = FS_FISH_X_MAX * 16;
+    run(100);
+    assert(servo_log.last < 0);
+    *fish = before_swim;
+    fish->now_ms = (uint32_t)manager.context.now_ms;
     assert(fishing_fight(out,false)>=1);
     assert(servo_log.angle>=4 && servo_log.hi>=2 && servo_log.lo<=-1 && servo_log.hi<=29 && servo_log.lo>=-29);
     /* a fight that is not answered at all ends with the line broken and the fish gone */

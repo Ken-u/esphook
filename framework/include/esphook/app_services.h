@@ -27,6 +27,8 @@ typedef enum { APP_SERVO_ARM, APP_SERVO_DISARM, APP_SERVO_FOLLOW,
 typedef struct {
     robot_config_t config;
     bool available, stored;
+    uint32_t save_seq; /* advances when a queued save completes, even if it failed */
+    bool save_ok;
 } app_servo_cal_t;
 typedef struct {
     bool current, connected;

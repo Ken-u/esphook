@@ -94,8 +94,8 @@ static void follow_tests(void)
     robot_follow_frame(&f, &v, 200);
     robot_follow_tick(&f, 200);
     assert(f.locked && f.state == ROBOT_TRACKING);
-    assert(f.goal_deg == 12.0f);
-    assert(f.angle_deg == 1.0f); /* follow caps speed to 10 degrees/s and elapsed tick to 100ms */
+    assert(f.goal_deg == 15.5f);
+    assert(fabsf(f.angle_deg - 0.11f) < 0.001f); /* acceleration starts slowly, tick is capped at 100ms */
     /* Slot order changes and a closer bystander must preserve spatial lock. */
     v.targets[2] = v.targets[0];
     v.targets[0] = (ld2450_target_t){.x_mm = -100, .y_mm = 300, .valid = true};
@@ -156,12 +156,12 @@ static void quiet_follow_tests(void)
         assert(f.goal_deg == 0);
     }
     /* A sustained change gets a small turn. */
-    for (uint64_t now = 1000; now <= 1300; now += 100) {
+    for (uint64_t now = 1000; now <= 1200; now += 100) {
         robot_follow_frame(&f, &right, now);
         assert(f.goal_deg == 0);
     }
-    robot_follow_frame(&f, &right, 1400);
-    assert(f.goal_deg > 8 && f.goal_deg <= 12);
+    robot_follow_frame(&f, &right, 1300);
+    assert(f.goal_deg == 15.5f);
     const float goal = f.goal_deg;
     for (uint64_t now = 1500; now <= 3000; now += 100) {
         ld2450_frame_t jitter = frame(now % 200 ? 540 : 460, 500);
@@ -173,7 +173,36 @@ static void quiet_follow_tests(void)
     c.speed_dps = 5;
     robot_follow_init(&f, &c, 0);
     acquire(&f, &right, 0);
-    assert(f.goal_deg == 5 && robot_follow_speed_dps(&c) == 5);
+    assert(f.goal_deg == 2.5f && robot_follow_speed_dps(&c) == 5);
+}
+static void near_follow_tests(void)
+{
+    robot_config_t c = robot_default_config();
+    robot_follow_t f;
+    robot_follow_init(&f, &c, 0);
+    ld2450_frame_t view = frame(0, 700);
+    acquire(&f, &view, 0);
+    for (uint64_t now = 300; now <= 2000; now += 100) {
+        robot_follow_frame(&f, &view, now);
+        robot_follow_tick(&f, now);
+    }
+    assert(f.goal_deg == 0 && f.target_deg > 2 && fabsf(f.angle_deg) <= 2.5f);
+    view.targets[1] = frame(80, 180).targets[0];
+    robot_follow_frame(&f, &view, 2100);
+    assert(f.dodge_until_ms == 0);
+    robot_follow_frame(&f, &view, 2200);
+    robot_follow_tick(&f, 2200);
+    assert(f.target_deg == -18.0f && f.y_mm == 700);
+    view.targets[1] = frame(-80, 180).targets[0];
+    robot_follow_frame(&f, &view, 2300);
+    robot_follow_tick(&f, 2300);
+    assert(f.target_deg == -18.0f); /* a moving nearby target doesn't reverse an ongoing dodge */
+    view.targets[1].valid = false;
+    for (uint64_t now = 2400; now <= 4100; now += 100) {
+        robot_follow_frame(&f, &view, now);
+        robot_follow_tick(&f, now);
+    }
+    assert(fabsf(f.target_deg) <= 2.5f);
 }
 static void motion_tests(void)
 {
@@ -225,6 +254,6 @@ static void calibration_line_tests(void)
 }
 int main(void)
 {
-    parser_tests(); follow_tests(); quiet_follow_tests(); motion_tests(); calibration_line_tests();
+    parser_tests(); follow_tests(); quiet_follow_tests(); near_follow_tests(); motion_tests(); calibration_line_tests();
     puts("robot: parser, target association, loss/fault recovery, servo limits and calibration lines passed");
 }

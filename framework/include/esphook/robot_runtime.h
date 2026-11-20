@@ -13,6 +13,8 @@ typedef struct {
     bool radar_online;
     robot_config_t config;
     bool config_stored; /* `config` is what NVS holds (or was stored this boot), not the built-in defaults */
+    uint32_t cal_save_seq;
+    bool cal_save_ok;
 } robot_status_t;
 
 esp_err_t robot_start(void);

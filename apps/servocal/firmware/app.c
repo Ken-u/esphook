@@ -46,8 +46,9 @@ typedef struct {
     lv_obj_t *title, *value, *desc, *hint, *hold, *marker, *tick_l, *tick_r;
     robot_config_t entry, cur; /* entry: what the servo used when the app started */
     uint64_t key_ms, sweep_at;
+    uint32_t save_seq;
     unsigned page, phase;
-    bool changed, armed, apply_due, arm_failed, save_failed;
+    bool changed, armed, apply_due, arm_failed, save_failed, saving;
     char shown[4][40];
     int marker_x, tick_x;
 } state_t;
@@ -103,7 +104,7 @@ static void enter(app_context_t *ctx)
 static void leave(app_context_t *ctx)
 {
     const state_t *s = ctx->state;
-    if (!s->changed) return; /* never armed or never changed: the framework disarms a lease on its own */
+    if (!s->changed || s->saving) return; /* an explicitly requested save owns the final settings */
     (void)app_servo_request(ctx, APP_SERVO_DISARM, 0);
     (void)app_servo_cal_apply(ctx, &s->entry, false); /* not stored: the servo goes back to what it used */
 }
@@ -144,6 +145,7 @@ static void step(state_t *s)
 static void event(app_context_t *ctx, const app_event_t *e)
 {
     state_t *s = ctx->state;
+    if (s->saving) return;
     s->key_ms = ctx->now_ms;
     if (e->kind != APP_EVENT_SHORT && e->kind != APP_EVENT_CONFIRM) return;
     const bool hold = e->kind == APP_EVENT_CONFIRM;
@@ -183,10 +185,11 @@ static void event(app_context_t *ctx, const app_event_t *e)
         restart_sweep(ctx, s);
         return;
     }
-    if (!app_servo_cal_apply(ctx, &s->cur, true)) return; /* busy: hold again */
-    (void)app_servo_request(ctx, APP_SERVO_DISARM, 0);
-    s->changed = false;
-    done(ctx);
+    app_servo_cal_t cal;
+    app_servo_cal_read(&cal);
+    s->save_seq = cal.save_seq;
+    s->saving = app_servo_cal_apply(ctx, &s->cur, true);
+    s->save_failed = !s->saving;
 }
 
 /* Pages 3 to 5 move the servo so the choice can be seen: across the whole travel, a nod toward the positive side (the
@@ -208,6 +211,19 @@ static void sweep(app_context_t *ctx, state_t *s)
 static void tick(app_context_t *ctx)
 {
     state_t *s = ctx->state;
+    if (s->saving) {
+        app_servo_cal_t cal;
+        app_servo_cal_read(&cal);
+        if (cal.save_seq == s->save_seq) return;
+        s->saving = false;
+        s->save_failed = !cal.save_ok;
+        if (cal.save_ok) {
+            (void)app_servo_request(ctx, APP_SERVO_DISARM, 0);
+            s->changed = false;
+            done(ctx);
+        }
+        return;
+    }
     if (s->apply_due && app_servo_cal_apply(ctx, &s->cur, false)) s->apply_due = false;
     sweep(ctx, s);
     if (ctx->first_run && ctx->now_ms - s->key_ms >= (s->page == P_INTRO ? IDLE_INTRO_MS : IDLE_PAGE_MS)) app_idle(ctx);
@@ -275,8 +291,9 @@ static void render(app_context_t *ctx)
         break;
     default:
         snprintf(value, sizeof value, "速度 %d°/s", s->cur.speed_dps);
-        snprintf(desc, sizeof desc, "%s", servo.fault ? "舵机故障" : "越大转得越快");
-        snprintf(hint, sizeof hint, "短按 换档 长按 保存");
+        snprintf(desc, sizeof desc, "%s", s->saving ? "正在保存" : s->save_failed ? "保存失败 再试一次" :
+                 servo.fault ? "舵机故障" : "越大转得越快");
+        snprintf(hint, sizeof hint, "%s", s->saving ? "" : "短按 换档 长按 保存");
         break;
     }
     show(s->title, s->shown[0], title);
