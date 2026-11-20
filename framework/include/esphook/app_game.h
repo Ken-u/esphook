@@ -103,9 +103,7 @@ static inline void game_sync_exit(app_context_t *ctx, bool idle)
 /* A shake of the servo (a hit, a crash) when the player has enabled it; silent otherwise. */
 static inline void game_shake(app_context_t *ctx, game_t *g, int amp_deg, unsigned half_ms, unsigned duration_ms)
 {
-    app_servo_t sv;
-    app_servo_read(&sv);
-    if (sv.available && sv.armed) haptic_shake(&g->haptic, ctx->now_ms, amp_deg, half_ms, duration_ms, sv.speed_dps);
+    haptic_cue(ctx, &g->haptic, amp_deg, half_ms, duration_ms);
 }
 
 /* ---- status strip and card ----------------------------------------------------------------------------------- */

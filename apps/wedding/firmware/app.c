@@ -345,4 +345,4 @@ static void icon(void *parent, int x, int y, bool selected)
 const app_descriptor_t esphook_app_wedding = {.api_version = APP_API_VERSION, .id = "wedding", .title = "新婚快乐",
     .flags = APP_STANDBY | APP_DEFAULT_STANDBY | APP_SERVO_DEFAULT_FOLLOW, .refresh_ms = 40,
     .state_size = sizeof(state_t), .on_enter = enter,
-    .on_leave = leave, .on_event = event, .render = render, .icon = icon, .command = command};
+    .on_leave = leave, .on_event = event, .render = render, .icon = icon, .command = command, .menu_group = APP_MENU_DAILY};

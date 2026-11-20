@@ -582,4 +582,4 @@ static void icon(void *parent, int x, int y, bool selected)
 const app_descriptor_t esphook_app_fishing = {.api_version = APP_API_VERSION, .id = "fishing", .title = "钓鱼",
     .flags = APP_SERVO_DEFAULT_HAPTIC,
     .refresh_ms = 33, .state_size = sizeof(state_t), .on_enter = enter, .on_leave = leave, .on_event = event,
-    .on_tick = tick, .render = render, .icon = icon, .command = command};
+    .on_tick = tick, .render = render, .icon = icon, .command = command, .menu_group = APP_MENU_GAMES};

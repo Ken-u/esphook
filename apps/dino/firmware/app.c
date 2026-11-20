@@ -1,4 +1,5 @@
 #include "esphook/app.h"
+#include "esphook/app_haptic.h"
 #include "esphook/app_gfx.h"
 #include "esphook/app_ui.h"
 #include "esphook/app_services.h"
@@ -23,6 +24,7 @@
 
 typedef struct {
     dino_game_t game;
+    haptic_t haptic;
     lv_obj_t *top, *plot, *bottom, *hold, *hud, *best, *score, *panel, *title, *line, *hint_pill, *hint;
     uint32_t top_rgb, dirt_rgb;
 } state_t;
@@ -160,6 +162,7 @@ static void enter(app_context_t *ctx)
 {
     state_t *s = ctx->state;
     dino_start(&s->game, ctx->now_ms, app_random());
+    haptic_init(&s->haptic);
     s->game.best = app_best_get(ctx); /* the record survives leaving the game and a reboot */
     /* Hopping is done by mashing the key, and a press starts a run: three quick presses are never an exit, holding
      * the key for two seconds (a jump never lasts that long) is. */
@@ -169,9 +172,13 @@ static void enter(app_context_t *ctx)
 static void tick(app_context_t *ctx)
 {
     state_t *s = ctx->state;
+    const dino_phase_t before = s->game.phase;
     dino_tick(&s->game, ctx->now_ms);
     dino_view_t view;
     dino_snapshot(&s->game, &view);
+    haptic_base(&s->haptic, view.phase == DINO_PLAY ? app_clamp((int)view.y, 0, 38) : 0);
+    if (before == DINO_PLAY && view.phase == DINO_OVER) haptic_cue(ctx, &s->haptic, -5, 180, 520);
+    haptic_pump(ctx, &s->haptic);
     if (view.phase == DINO_OVER) (void)app_best_record(ctx, view.best);
     app_shared_copy(s_status, view);
 }
@@ -291,5 +298,6 @@ static void icon(void *parent, int x, int y, bool selected)
     app_ui_rect(parent, x + 20, y + 15, 2, 3, 0x2E8B57, 0);
 }
 const app_descriptor_t esphook_app_dino = {.api_version = APP_API_VERSION, .id = "dino", .title = "小恐龙",
+    .flags = APP_SERVO_DEFAULT_HAPTIC,
     .refresh_ms = 33, .state_size = sizeof(state_t), .on_enter = enter, .on_leave = leave, .on_event = event,
-    .on_tick = tick, .render = render, .icon = icon, .command = command};
+    .on_tick = tick, .render = render, .icon = icon, .command = command, .menu_group = APP_MENU_GAMES};

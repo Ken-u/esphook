@@ -1,5 +1,6 @@
 #include "esphook/app.h"
 #include "esphook/app_gfx.h"
+#include "esphook/app_haptic.h"
 #include "esphook/app_services.h"
 #include "esphook/app_ui.h"
 #include "esphook/app_command.h"
@@ -25,12 +26,15 @@
 #define SEAL_R 20
 #define HINT_SLOT_MS 2400U
 #define GOLD 0xFDB927
+#define SHAKE_PERIOD_MS 1000U
 
 typedef struct {
     ft_t core;
+    haptic_t haptic;
     lv_obj_t *plot, *band, *title, *hint, *num, *swatch, *colour_text, *category, *grade, *blessing;
     uint64_t last_ms;
     uint32_t shown_key, shown_draws;
+    int tube_sway, shake_end;
 } state_t;
 _Static_assert(sizeof(state_t) <= APP_STATE_CAPACITY, "fortune state too large");
 _Static_assert(offsetof(state_t, core) == 0, "tests pose the draw through the core at the start of the state");
@@ -66,19 +70,24 @@ static void draw_stick(uint16_t *px, int x0, int y0, int x1, int y1)
     gfx_line(px, x1 - dx / 7, y1 - dy / 7, x1, y1, gfx_rgb565(0xD7263D)); /* the red tip */
     gfx_line(px, x1 + 1 - dx / 7, y1 - dy / 7, x1 + 1, y1, gfx_rgb565(0xA81A2E));
 }
-static void draw_tube(uint16_t *px, const ft_t *f, unsigned now)
+static int shake_wave(unsigned ms, unsigned lead_ms)
+{
+    const int ramp = (int)(ms < 140U ? ms : 140U);
+    return gfx_sin256((ms + lead_ms) * 256U / SHAKE_PERIOD_MS) * ramp / 140;
+}
+static void draw_tube(uint16_t *px, const ft_t *f, unsigned now, int tube_sway)
 {
     const unsigned t = f->phase_ms;
-    int shake = 0, tilt = 0;
+    const int shake = tube_sway * 6 / 256;
+    int tilt = 0;
     unsigned rise = 0;
     if (f->phase == FT_SHAKE) {
         const unsigned ramp = t < 140U ? t * 256U / 140U : 256U;
-        shake = gfx_sin256(t * 9U / 5U) * 5 * (int)ramp / 65536;
         tilt = gfx_sin256(t * 9U / 5U + 64U) * 5 * (int)ramp / 65536;
     } else if (f->phase == FT_POP) {
         rise = ease_out(t, 420U);
         const int settle = t < 200U ? (int)(200U - t) : 0;
-        shake = gfx_sin256(t * 3U) * settle / 2200;
+        tilt = gfx_sin256(t * 3U) * settle / 2200;
     } else if (f->phase >= FT_UNFOLD) rise = 256U;
     const int cx = TUBE_X + shake, rimy = RIM_Y;
     gfx_tint_ellipse(px, cx, FOOT_Y + 1, 21, 4, 0x000000, 130); /* its shadow on the table */
@@ -182,11 +191,11 @@ static void draw_card(uint16_t *px, const ft_t *f, unsigned now)
     }
 }
 
-static void draw_scene(uint16_t *px, const ft_t *f, unsigned now)
+static void draw_scene(uint16_t *px, const ft_t *f, unsigned now, int tube_sway)
 {
     draw_backdrop(px, now);
     if (f->phase == FT_SLIP) { draw_card(px, f, now); return; }
-    draw_tube(px, f, now);
+    draw_tube(px, f, now, tube_sway);
     if (f->phase == FT_UNFOLD) {
         draw_card(px, f, now);
         const unsigned flash = f->phase_ms < 120U ? 120U - f->phase_ms : 0U; /* the flash of the card opening */
@@ -236,6 +245,7 @@ static void enter(app_context_t *ctx)
     app_time_t t;
     app_time_read(&t);
     ft_init(&s->core, app_random() ^ (uint32_t)ctx->now_ms ^ (t.valid ? t.epoch : 0U));
+    haptic_init(&s->haptic);
     s->last_ms = ctx->now_ms;
     app_critical_enter(); s_status = (status_t){0}; app_critical_exit();
     publish(s, true, false);
@@ -248,6 +258,17 @@ static void tick(app_context_t *ctx)
     s->last_ms = now;
     const unsigned before = s->core.phase;
     ft_advance(&s->core, dt);
+    if (before == FT_SHAKE && s->core.phase != FT_SHAKE) s->shake_end = s->tube_sway;
+    const unsigned age = s->core.phase_ms;
+    if (s->core.phase == FT_SHAKE) s->tube_sway = shake_wave(age, 0);
+    else if (s->core.phase == FT_POP && age < 180U) s->tube_sway = s->shake_end * (180 - (int)age) / 180;
+    else s->tube_sway = 0;
+    app_servo_t servo;
+    app_servo_read(&servo);
+    const int wave = s->core.phase == FT_SHAKE ? shake_wave(age, 50U) : s->tube_sway;
+    const int amplitude = app_clamp(servo.speed_dps * 3 / 2, 0, 50);
+    haptic_pan(&s->haptic, wave * amplitude / 256);
+    haptic_pump(ctx, &s->haptic);
     if (before != s->core.phase) publish(s, true, false);
 }
 static void leave(app_context_t *ctx)
@@ -308,7 +329,7 @@ static void render(app_context_t *ctx)
     state_t *s = ctx->state;
     if (!s->plot) build(s, ctx->root);
     sync_hud(s, ctx->now_ms);
-    draw_scene(app_ui_pixels(), &s->core, (unsigned)ctx->now_ms);
+    draw_scene(app_ui_pixels(), &s->core, (unsigned)ctx->now_ms, s->tube_sway);
     app_ui_canvas_refresh(s->plot);
     publish(s, true, true);
 }
@@ -334,5 +355,6 @@ static void icon(void *parent, int x, int y, bool selected)
     app_ui_rect(parent, x + 12, y + 16, 4, 4, 0xFFD65A, 1);
 }
 const app_descriptor_t esphook_app_fortune = {.api_version = APP_API_VERSION, .id = "fortune", .title = "幸运签",
+    .flags = APP_SERVO_DEFAULT_HAPTIC,
     .refresh_ms = 33, .state_size = sizeof(state_t), .on_enter = enter, .on_leave = leave, .on_event = event,
-    .on_tick = tick, .render = render, .icon = icon, .command = command};
+    .on_tick = tick, .render = render, .icon = icon, .command = command, .menu_group = APP_MENU_DAILY};

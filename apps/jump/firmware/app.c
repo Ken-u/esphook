@@ -1,4 +1,5 @@
 #include "esphook/app.h"
+#include "esphook/app_haptic.h"
 #include "esphook/app_gfx.h"
 #include "esphook/app_services.h"
 #include "esphook/app_ui.h"
@@ -21,6 +22,7 @@
 
 typedef struct {
     jp_t core;
+    haptic_t haptic;
     lv_obj_t *plot, *band, *score, *best, *combo, *hint, *panel, *title, *sub, *pop;
     uint64_t last_ms;
     int32_t cam_x16, cam_y16; /* where the floor origin is on the screen, in sixteenths of a pixel */
@@ -218,6 +220,7 @@ static void enter(app_context_t *ctx)
 {
     state_t *s = ctx->state;
     jp_init(&s->core, app_random() ^ (uint32_t)ctx->now_ms);
+    haptic_init(&s->haptic);
     s->core.best = app_best_get(ctx); /* the record survives leaving the game and a reboot */
     s->last_ms = ctx->now_ms;
     s->snap = 1; s->drop_ms = 4000U; s->seen_cur = s->core.cur;
@@ -242,6 +245,12 @@ static void tick(app_context_t *ctx)
     if (dt > 100U) dt = 100U; /* a stall must not eat a jump */
     const unsigned before = s->core.phase;
     jp_advance(&s->core, dt);
+    const jp_t *g = &s->core;
+    haptic_pan(&s->haptic, g->phase == JP_FLY ? (g->ua - g->ub) * 45 / 256 : 0);
+    if (before == JP_FLY && g->phase == JP_LAND)
+        haptic_cue(ctx, &s->haptic, g->result == JP_PERFECT ? 5 : 3, 150, 360);
+    else if (before == JP_FLY && g->phase == JP_FALL) haptic_cue(ctx, &s->haptic, -4, 180, 480);
+    haptic_pump(ctx, &s->haptic);
     if (s->core.phase == JP_OVER) (void)app_best_record(ctx, s->core.best);
     if (s->core.cur != s->seen_cur) { s->seen_cur = s->core.cur; s->drop_ms = 0; }
     else if (s->drop_ms < 4000U) s->drop_ms += dt;
@@ -354,5 +363,6 @@ static void icon(void *parent, int x, int y, bool selected)
     app_ui_rect(parent, x + 19, y + 3, 1, 1, 0xE4E0FF, 0);
 }
 const app_descriptor_t esphook_app_jump = {.api_version = APP_API_VERSION, .id = "jump", .title = "跳一跳",
+    .flags = APP_SERVO_DEFAULT_HAPTIC,
     .refresh_ms = 33, .state_size = sizeof(state_t), .on_enter = enter, .on_leave = leave, .on_event = event,
-    .on_tick = tick, .render = render, .icon = icon, .command = command};
+    .on_tick = tick, .render = render, .icon = icon, .command = command, .menu_group = APP_MENU_GAMES};

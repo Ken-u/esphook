@@ -544,6 +544,7 @@ static void tick(app_context_t *ctx)
     rc_steer(&s->core, steer);
     sync_exit(ctx, s);
     rc_advance(&s->core, dt);
+    haptic_pan(&s->game.haptic, s->core.phase == RC_RACE ? steer * 45 / STEER_MAX : 0);
     if (s->core.phase == RC_OVER) (void)app_best_record(ctx, s->core.best);
     s->bg16 -= (int)((int64_t)bend_at(&s->core, s->core.pos_mm) * (int)rc_speed_kmh(&s->core) * (int)(dt > 200U ? 200U : dt) / 165000);
     while (rc_take_crash(&s->core)) game_shake(ctx, &s->game, 5, 100, 450);
@@ -567,7 +568,8 @@ static void event(app_context_t *ctx, const app_event_t *e)
             s->game.down_in_play = r->phase == RC_COUNT || r->phase == RC_RACE || r->phase == RC_FINISH;
             rc_throttle(r, true);
             /* Nitro is a quick re-press: lift the pedal and put it down again within a fraction of a second. */
-            if (s->last_up_ms && e->ms - s->last_up_ms <= 280U) (void)rc_nitro(r);
+            if (s->last_up_ms && e->ms - s->last_up_ms <= 280U && rc_nitro(r))
+                game_shake(ctx, &s->game, 3, 140, 330);
         }
         break;
     case APP_EVENT_UP:
@@ -664,4 +666,4 @@ static void icon(void *parent, int x, int y, bool selected)
 const app_descriptor_t esphook_app_racing = {.api_version = APP_API_VERSION, .id = "racing", .title = "极速赛车",
     .flags = APP_SERVO_DEFAULT_HAPTIC,
     .refresh_ms = 33, .state_size = sizeof(state_t), .on_enter = enter, .on_leave = leave, .on_event = event,
-    .on_tick = tick, .render = render, .icon = icon, .command = command};
+    .on_tick = tick, .render = render, .icon = icon, .command = command, .menu_group = APP_MENU_GAMES};

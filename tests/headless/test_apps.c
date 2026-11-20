@@ -328,26 +328,52 @@ static void play_basketball(const char *out)
 }
 #endif
 #ifdef ESPHOOK_TEST_DINO
-/* The menu is an iPod-style list: the title and "n/N" of the selected app are on screen at every step, the list scrolls
- * one row at a time and comes round again at the end, and holding the key fills the bar without ever leaving the menu
- * before the half second is up. Frames: the top, the scrolling edge, the last page, and a hold half way. */
+static void menu_double(void)
+{
+    for (unsigned i = 0; i < 2; ++i) { k1(true); run(60); k1(false); run(60); }
+    run(APP_DOUBLE_MS);
+}
 static void check_menu(const char *out)
 {
-    const size_t total=app_count(&manager.context);
-    assert(total>4 && !strcmp(app_active_id(&manager.context),"launcher"));
-    const size_t first=app_selection(&manager.context);
-    for(size_t i=0;i<=total;++i) {
+    const app_descriptor_t *games[32];
+    size_t total = 0;
+    for (size_t i = 0; i < app_count(&manager.context); ++i) {
+        const app_descriptor_t *app = app_at(&manager.context, i);
+        if (app->menu_group == APP_MENU_GAMES) {
+            assert(total < sizeof games / sizeof games[0]);
+            games[total++] = app;
+        }
+    }
+    assert(total > 4 && !left("launcher"));
+    assert(shows_text(lv_screen_active(), "菜单") && shows_text(lv_screen_active(), "双击返回"));
+    dump(out, "launcher-groups");
+    event(APP_EVENT_SHORT); /* Daily, with its own list and back stack */
+    const size_t daily = app_selection(&manager.context);
+    k1(true); run(250); dump(out, "launcher-hold-half");
+    assert(!left("launcher") && shows_text(lv_screen_active(), "菜单"));
+    run(300); k1(false);
+    assert(!left("launcher") && !shows_text(lv_screen_active(), "菜单") && app_selection(&manager.context) == 0);
+    menu_double();
+    assert(!left("launcher") && shows_text(lv_screen_active(), "菜单") && app_selection(&manager.context) == daily);
+    menu_double(); /* At the root, back is the previous app. */
+    assert(!left("settings"));
+    assert(app_open(&manager.context, "launcher")); app_manager_commit(&manager); run(20);
+    while (app_selection(&manager.context) != 0) event(APP_EVENT_SHORT);
+    event(APP_EVENT_CONFIRM);
+    assert(!left("launcher") && shows_text(lv_screen_active(), "游戏"));
+    for(size_t i=0;i<total;++i) {
         const size_t sel=app_selection(&manager.context);
         char count[16];snprintf(count,sizeof count,"%u/%u",(unsigned)sel+1U,(unsigned)total);
         run(300);
-        assert(shows_text(lv_screen_active(),count) && shows_text(lv_screen_active(),app_at(&manager.context,sel)->title));
+        assert(shows_text(lv_screen_active(),count) && shows_text(lv_screen_active(),games[sel]->title));
         if(i==0||i==2||i==3||i==4||i==9||i==total-1) { char name[64];snprintf(name,sizeof name,"launcher-%zu",i);dump(out,name); }
         event(APP_EVENT_SHORT);assert(!strcmp(app_active_id(&manager.context),"launcher"));
         if(i==3) { run(60);dump(out,"launcher-scroll-mid"); } /* the list sliding up one row under the bar */
     }
-    assert(app_selection(&manager.context)==(first+1U)%total); /* total + 1 presses: once round and one more */
-    k1(true);run(250);dump(out,"launcher-hold-half");assert(!strcmp(app_active_id(&manager.context),"launcher"));
-    run(400);assert(strcmp(app_active_id(&manager.context),"launcher")); /* the half second is up: the selected app opens */
+    assert(app_selection(&manager.context)==0);
+    event(APP_EVENT_SHORT);
+    k1(true);run(250);assert(!left("launcher"));
+    run(400);assert(!left(games[1]->id)); /* The selected app opens from the submenu. */
     k1(false);run(100);
     assert(app_open(&manager.context,APP_LAUNCHER));app_manager_commit(&manager);run(20);
 }
@@ -1067,17 +1093,17 @@ static void play_racing(const char *out)
     for(unsigned i=0;i<60 && RC_STATUS("phase=")!=2;++i) run(50);
     assert(RC_STATUS("phase=")==2);run(100);dump(out,"racing-go");
     assert(shows_text(lv_screen_active(),"按住加速 舵机已启用") && RC_STATUS("speed=")==0);
-    /* The radar steers the car. Only crashes send nonzero servo targets. */
+    /* Leaning makes both the car and the servo steer in the same direction. */
     rkey(0,true);run(2500);
     assert(RC_STATUS("speed=")>=80 && RC_STATUS("dist=")>20 && RC_STATUS("phase=")==2);
     rlean(1000,200);
     rlean(1350,600);run(200);
-    assert(RC_INT("steer=")>150 && RC_INT("px=")>50 && servo_log.last==0 && RC_STATUS("src=")==1);dump(out,"racing-right");
+    assert(RC_INT("steer=")>150 && RC_INT("px=")>50 && servo_log.last<0 && RC_STATUS("src=")==1);dump(out,"racing-right");
     rlean(650,1000);run(300);
-    assert(RC_INT("steer=")<-150 && servo_log.last==0);
+    assert(RC_INT("steer=")<-150 && servo_log.last>0);
     rlean(1000,1500);
     for(unsigned i=0;i<60;++i) { rlean(1000-(RC_INT("px=")>0?200:-200),20); } /* wheel back to the middle */
-    run(500);assert(servo_log.last==0 && servo_log.hi<=5 && servo_log.lo>=-5);
+    rlean(1000, 600);assert(servo_log.last==0 && servo_log.hi<=10 && servo_log.lo>=-10);
     /* race on: checkpoints, a crash with a shake, the nitro, and the clock */
     bool nitro_seen=false;
     rdrive(120000,true,out,&nitro_seen);
@@ -1130,16 +1156,21 @@ static void guard_racing(void)
 static void draw_slip(void) { event(APP_EVENT_DOWN);run(1300);event(APP_EVENT_UP);run(FT_POP_MS+FT_UNFOLD_MS+80); }
 static void play_fortune(const char *out)
 {
+    servo_state.armed = true;
+    memset(&servo_log, 0, sizeof servo_log);
     assert(app_open(&manager.context,"fortune"));app_manager_commit(&manager);run(300);
     assert(FT_STATUS("phase=")==FT_IDLE && FT_STATUS("draws=")==0 && shows_text(lv_screen_active(),"今日幸运签") && shows_text(lv_screen_active(),"按键摇签 按住摇得更久"));
     dump(out,"fortune-idle");
+    assert(!servo_log.angle);
     static uint16_t previous[160*80];lv_refr_now(lv_display_get_default());memcpy(previous,framebuffer,sizeof previous);run(150);lv_refr_now(lv_display_get_default());
     assert(changed_pixels(previous,framebuffer)>4); /* motes of light drift over the lattice */
     event(APP_EVENT_DOWN);run(150);assert(FT_STATUS("phase=")==FT_SHAKE && shows_text(lv_screen_active(),"摇签中..."));dump(out,"fortune-shake-a");
     lv_refr_now(lv_display_get_default());memcpy(previous,framebuffer,sizeof previous);run(110);lv_refr_now(lv_display_get_default());
     assert(changed_pixels(previous,framebuffer)>200); /* the tube really moves */
     dump(out,"fortune-shake-b");run(900);
+    assert(servo_log.hi >= 4 && servo_log.hi <= 5 && servo_log.lo <= -4 && servo_log.lo >= -5);
     event(APP_EVENT_UP);run(400);assert(FT_STATUS("phase=")==FT_POP && shows_text(lv_screen_active(),"有签出来了!"));dump(out,"fortune-pop");
+    assert(servo_log.last == 0);
     run(FT_POP_MS-300);run(180);assert(FT_STATUS("phase=")==FT_UNFOLD);dump(out,"fortune-unfold");
     run(FT_UNFOLD_MS);assert(FT_STATUS("phase=")==FT_SLIP && FT_STATUS("draws=")==1);
     unsigned seen_grade[FT_LEVELS]={0},seen_info=0,seen_hint=0;
@@ -1170,6 +1201,7 @@ static void play_fortune(const char *out)
     for(unsigned look=0;look<8U;++look) { date|=shows_text(lv_screen_active(),"11月17日 周一");run(400); }
     assert(date);dump(out,"fortune-date");
     fake_clock.set=false;
+    servo_state.armed=false;
 }
 #endif
 #ifdef ESPHOOK_TEST_ALARM

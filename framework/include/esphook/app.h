@@ -29,6 +29,7 @@ typedef struct {
  * saved one is gone; at most one app may set it, and `face` stays the fallback when none does. */
 enum { APP_HIDDEN = 1U, APP_STANDBY = 2U, APP_NOTIFICATIONS = 4U, APP_DEFAULT_STANDBY = 8U,
        APP_SERVO_DEFAULT_FOLLOW = 16U, APP_SERVO_DEFAULT_HAPTIC = 32U };
+typedef enum { APP_MENU_TOOLS, APP_MENU_GAMES, APP_MENU_DAILY } app_menu_group_t;
 
 /* All lifecycle/event/tick/render callbacks run on the UI task. command is the
  * only exception: called by the USB task; it must enqueue/copy and never use UI. */
@@ -53,6 +54,8 @@ struct app_descriptor {
      * screen as if it had just started. The run is not part of the "back" history. Called on the UI task; answer from
      * stored state, do not block. */
     bool (*first_run)(void);
+    app_menu_group_t menu_group; /* visible apps without a group go under Tools */
+    bool (*on_back)(app_context_t *); /* optional local back action; true handles it before app history */
 };
 struct app_context {
     app_manager_t *manager;
@@ -86,6 +89,7 @@ void app_idle(app_context_t *ctx);
 bool app_set_standby(app_context_t *ctx, const char *id);
 unsigned app_hold_ms(const app_context_t *ctx);
 size_t app_selection(const app_context_t *ctx);
+void app_select(app_context_t *ctx, size_t index);
 void app_select_next(app_context_t *ctx);
 /* The global exit: three quick presses of K1 go back to the menu. A game that is played by mashing the key (a cannon,
  * a pedal, a mallet) can switch it off while it needs every press, and must switch it on again whenever the player
@@ -94,7 +98,7 @@ void app_select_next(app_context_t *ctx);
  * three presses are plain presses: DOWN/UP/SHORT/CONFIRM arrive as usual and nothing navigates. */
 void app_set_triple_exit(app_context_t *ctx, bool enabled);
 bool app_triple_exit(const app_context_t *ctx);
-/* Back: request the app that was on screen before this one, ignoring the menu in between - the app-switcher toggle.
+/* Back: let the current app handle local navigation through on_back, then fall back to app history.
  * The framework remembers the last two apps other than the menu, so from app B (opened after A) back is A, from A
  * it is B again; from the menu itself it is the app the menu was opened from. Returns false, and does nothing, when
  * there is no such app yet (right after boot). Like every navigation it takes effect when the callback returns, and
@@ -105,7 +109,7 @@ bool app_back(app_context_t *ctx);
  * still the menu) and only then goes back, so it comes about 0.3 s after the second click. It is on by default, off
  * wherever the triple exit is off (an app that is played by mashing has neither), and an app that wants its quick
  * double clicks for itself while keeping the triple can switch just this one off. Restored on every app change.
- * In the menu a double click goes back to the app the menu was opened from, with the cursor where it was. */
+ * In the menu a double click goes up a level or returns to the app the menu was opened from. */
 void app_set_double_back(app_context_t *ctx, bool enabled);
 bool app_double_back(const app_context_t *ctx);
 /* The deliberate way out for a game that switched the triple exit off: holding K1 for `ms` (1000..10000, 0 turns it

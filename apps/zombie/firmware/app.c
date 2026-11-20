@@ -376,6 +376,7 @@ static void tick(app_context_t *ctx)
     zb_steer(&s->core, game_steer(ctx, &s->game));
     sync_exit(ctx, s);
     zb_advance(&s->core, game_dt(&s->game, now));
+    haptic_pan(&s->game.haptic, s->core.phase == ZB_PLAY ? s->core.cam_x * 40 / ZB_X_MAX : 0);
     if (s->core.phase == ZB_OVER) (void)app_best_record(ctx, s->core.best);
     while (zb_take_hit(&s->core)) /* a shake for every bite, a longer one for the last */
         game_shake(ctx, &s->game, s->core.hp ? 4 : 7, 120, s->core.hp ? 480 : 900);
@@ -498,4 +499,4 @@ static void icon(void *parent, int x, int y, bool selected)
 const app_descriptor_t esphook_app_zombie = {.api_version = APP_API_VERSION, .id = "zombie", .title = "僵尸围城",
     .flags = APP_SERVO_DEFAULT_HAPTIC,
     .refresh_ms = 33, .state_size = sizeof(state_t), .on_enter = enter, .on_leave = leave, .on_event = event,
-    .on_tick = tick, .render = render, .icon = icon, .command = command};
+    .on_tick = tick, .render = render, .icon = icon, .command = command, .menu_group = APP_MENU_GAMES};

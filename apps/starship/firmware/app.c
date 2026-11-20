@@ -449,6 +449,7 @@ static void tick(app_context_t *ctx)
     sync_exit(ctx, s);
     s->prev_cam = s->core.cam_x;
     ss_advance(&s->core, game_dt(&s->game, now));
+    haptic_pan(&s->game.haptic, s->core.phase == SS_PLAY ? s->core.cam_x * 40 / SS_X_MAX : 0);
     if (s->core.phase == SS_OVER) (void)app_best_record(ctx, s->core.best);
     while (ss_take_hit(&s->core)) /* a light shake for every point of shield lost, a longer one for the last */
         game_shake(ctx, &s->game, s->core.hp ? 4 : 7, 120, s->core.hp ? 480 : 900);
@@ -559,4 +560,4 @@ static void icon(void *parent, int x, int y, bool selected)
 const app_descriptor_t esphook_app_starship = {.api_version = APP_API_VERSION, .id = "starship", .title = "星际战机",
     .flags = APP_SERVO_DEFAULT_HAPTIC,
     .refresh_ms = 33, .state_size = sizeof(state_t), .on_enter = enter, .on_leave = leave, .on_event = event,
-    .on_tick = tick, .render = render, .icon = icon, .command = command};
+    .on_tick = tick, .render = render, .icon = icon, .command = command, .menu_group = APP_MENU_GAMES};

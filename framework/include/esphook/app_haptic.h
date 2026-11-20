@@ -61,6 +61,8 @@ static inline void haptic_shake(haptic_t *h, uint64_t now_ms, int amp_deg, unsig
     haptic_shake_direction(h, now_ms, amp_deg, half_ms, duration_ms, speed_dps, false);
 }
 static inline void haptic_base(haptic_t *h, int angle_x10) { h->base_x10 = angle_x10; }
+/* Screen coordinates grow to the player's right. The calibrated positive servo angle points left. */
+static inline void haptic_pan(haptic_t *h, int right_x10) { haptic_base(h, -right_x10); }
 static inline void haptic_stop(haptic_t *h)
 {
     h->shaking = false;
@@ -103,6 +105,15 @@ static inline haptic_state_t haptic_state(void)
     if (!s.available) return HAPTIC_NONE;
     if (s.fault) return HAPTIC_FAULT;
     return s.armed ? HAPTIC_ARMED : HAPTIC_READY;
+}
+/* A short gameplay cue, starting on the side given by the signed amplitude. */
+static inline void haptic_cue(app_context_t *ctx, haptic_t *h, int amp_deg, unsigned half_ms, unsigned duration_ms)
+{
+    app_servo_t s;
+    app_servo_read(&s);
+    if (s.available && s.armed && !s.fault)
+        haptic_shake_direction(h, ctx->now_ms, amp_deg < 0 ? -amp_deg : amp_deg, half_ms, duration_ms,
+                               s.speed_dps, amp_deg < 0);
 }
 /* Arms the servo (it centres first). Only call this from a deliberate confirmation by the player. */
 static inline bool haptic_arm(app_context_t *ctx, haptic_t *h)

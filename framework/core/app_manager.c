@@ -50,6 +50,7 @@ bool app_set_standby(app_context_t *c, const char *id)
 }
 unsigned app_hold_ms(const app_context_t *c) { return app_input_progress(&c->manager->input[0], c->now_ms); }
 size_t app_selection(const app_context_t *c) { return c->manager->selected; }
+void app_select(app_context_t *c, size_t index) { c->manager->selected = index; }
 void app_select_next(app_context_t *c)
 { size_t n = app_count(c); if (n) c->manager->selected = (c->manager->selected + 1) % n; }
 void app_set_triple_exit(app_context_t *c, bool enabled) { c->manager->triple_blocked = !enabled; }
@@ -63,8 +64,13 @@ static const app_recent_t *back_target(const app_manager_t *m, bool from_menu)
     const app_recent_t *r = &m->recent[from_menu ? 0 : 1];
     return r->valid ? r : NULL;
 }
+static bool handle_local_back(app_context_t *c)
+{
+    return c->app->on_back && c->app->on_back(c);
+}
 bool app_back(app_context_t *c)
 {
+    if (handle_local_back(c)) return true;
     const app_recent_t *r = back_target(c->manager, c->manager->active == c->manager->launcher);
     if (!r) return false;
     request(c, r->app, r->idle);
@@ -183,7 +189,7 @@ static void double_press(app_manager_t *m, uint64_t ms)
     if (m->triple_blocked || m->double_blocked) { m->dbl_clicks = 0; return; }
     if (m->dbl_clicks == 1 && ms >= m->dbl_first_ms && ms - m->dbl_first_ms <= APP_DOUBLE_MS) { m->dbl_clicks = 2; return; }
     m->dbl_clicks = 1; m->dbl_first_ms = ms;
-    m->dbl_launcher = m->active == m->launcher; m->dbl_selected = m->selected;
+    m->dbl_origin = m->active; m->dbl_selected = m->selected;
 }
 static void double_release(app_manager_t *m, unsigned action, uint64_t ms)
 {
@@ -194,7 +200,17 @@ static void double_fire(app_manager_t *m, uint64_t ms)
 {
     m->dbl_pending = false; m->dbl_clicks = 0;
     if (m->triple_blocked || m->double_blocked) return; /* the app on screen has opted out since */
-    const app_recent_t *r = back_target(m, m->dbl_launcher);
+    const size_t selected = m->selected;
+    if (m->active == m->dbl_origin && m->context.app->on_back) {
+        if (m->active == m->launcher) m->selected = m->dbl_selected;
+        if (handle_local_back(&m->context)) {
+            m->activity_ms = ms; m->dirty = true;
+            app_manager_commit(m);
+            return;
+        }
+        m->selected = selected;
+    }
+    const app_recent_t *r = back_target(m, m->dbl_origin == m->launcher);
     if (!r) return; /* nothing to go back to: the pair of clicks stays what it was */
     if (m->active == m->launcher) m->selected = m->dbl_selected; /* the clicks that were a double must not have moved the menu cursor */
     request(&m->context, r->app, r->idle);

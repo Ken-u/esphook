@@ -614,4 +614,4 @@ static void icon(void *parent, int x, int y, bool selected)
 }
 const app_descriptor_t esphook_app_alarm = {.api_version = APP_API_VERSION, .id = "alarm", .title = "闹钟",
     .flags = APP_STANDBY, .refresh_ms = 50, .state_size = sizeof(state_t), .init = init, .on_enter = enter, .on_leave = leave,
-    .on_event = event, .on_tick = tick, .render = render, .icon = icon, .command = command};
+    .on_event = event, .on_tick = tick, .render = render, .icon = icon, .command = command, .menu_group = APP_MENU_DAILY};
