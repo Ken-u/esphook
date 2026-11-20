@@ -999,9 +999,14 @@ static void pose_racing(const char *out)
     assert(RC_STATUS("vox=")>1000 && RC_STATUS("vox=")<3500); /* cars, trees, posts and the gantry are stacks of slices, within budget */
     r->nitro_ms=2000;r->nitro=700;r->speed16=250*16;
     run(40);dump(out,"racing-pose-nitro");
+    const unsigned crashes = RC_STATUS("crashes="), angle_requests = servo_log.angle;
     r->nitro_ms=0;r->car[2].pos_mm=r->pos_mm+4600;r->car[2].px=rc_px(r);r->car[2].speed=60;
     run(60);dump(out,"racing-pose-crash");
     assert(RC_STATUS("vox=")>500 && RC_STATUS("vox=")<3500);
+    assert(RC_STATUS("crashes=") > crashes);
+    run(550);
+    assert(servo_log.angle > angle_requests + 1 && servo_log.last == 0);
+    assert(servo_log.hi > 0 && servo_log.hi <= 5 && servo_log.lo >= -5);
     /* and a bend to the left, with the road empty: the chevrons and the swing of the road */
     memset(r->car,0,sizeof r->car);r->spawn_wait=60000;
     at=r->pos_mm+300000;while(rc_curve_at(r,at)>-230) at+=1000;
@@ -1031,17 +1036,17 @@ static void play_racing(const char *out)
     for(unsigned i=0;i<60 && RC_STATUS("phase=")!=2;++i) run(50);
     assert(RC_STATUS("phase=")==2);run(100);dump(out,"racing-go");
     assert(shows_text(lv_screen_active(),"按住加速 舵机已启用") && RC_STATUS("speed=")==0);
-    /* the key is the pedal; the radar is the wheel and the servo follows it */
+    /* The radar steers the car. Only crashes send nonzero servo targets. */
     rkey(0,true);run(2500);
     assert(RC_STATUS("speed=")>=80 && RC_STATUS("dist=")>20 && RC_STATUS("phase=")==2);
     rlean(1000,200);
     rlean(1350,600);run(200);
-    assert(RC_INT("steer=")>150 && RC_INT("px=")>50 && servo_log.last>6 && servo_log.last<=14 && RC_STATUS("src=")==1);dump(out,"racing-right");
+    assert(RC_INT("steer=")>150 && RC_INT("px=")>50 && servo_log.last==0 && RC_STATUS("src=")==1);dump(out,"racing-right");
     rlean(650,1000);run(300);
-    assert(RC_INT("steer=")<-150 && servo_log.last<-6 && servo_log.last>=-14);
+    assert(RC_INT("steer=")<-150 && servo_log.last==0);
     rlean(1000,1500);
     for(unsigned i=0;i<60;++i) { rlean(1000-(RC_INT("px=")>0?200:-200),20); } /* wheel back to the middle */
-    run(500);assert(abs(servo_log.last)<=14 && servo_log.hi<=14 && servo_log.lo>=-14);
+    run(500);assert(servo_log.last==0 && servo_log.hi<=5 && servo_log.lo>=-5);
     /* race on: checkpoints, a crash with a shake, the nitro, and the clock */
     bool nitro_seen=false;
     rdrive(120000,true,out,&nitro_seen);

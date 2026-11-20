@@ -214,7 +214,8 @@ static void robot_task(void *arg)
             cdc_write("OK robot calibration set (robot save to persist)");
         }
         angle = robot_slew(angle, following ? follow.goal_deg : manual_goal,
-                           follow.config.speed_dps, (now - last_step) / 1000.0f);
+                           following ? robot_follow_speed_dps(&follow.config) : follow.config.speed_dps,
+                           (now - last_step) / 1000.0f);
         last_step = now;
         if (armed) {
             int pulse = robot_pulse_us(&follow.config, angle);

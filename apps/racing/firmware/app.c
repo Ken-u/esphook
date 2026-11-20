@@ -546,8 +546,6 @@ static void tick(app_context_t *ctx)
     rc_advance(&s->core, dt);
     if (s->core.phase == RC_OVER) (void)app_best_record(ctx, s->core.best);
     s->bg16 -= (int)((int64_t)bend_at(&s->core, s->core.pos_mm) * (int)rc_speed_kmh(&s->core) * (int)(dt > 200U ? 200U : dt) / 165000);
-    /* the servo is the steering wheel while racing and a shaker in a crash */
-    haptic_base(&s->game.haptic, s->core.phase == RC_RACE ? steer * 140 / 256 : 0);
     while (rc_take_crash(&s->core)) game_shake(ctx, &s->game, 5, 100, 450);
     haptic_pump(ctx, &s->game.haptic);
 }

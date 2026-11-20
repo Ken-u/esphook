@@ -9,6 +9,11 @@
 #define STALE_MS 800
 #define HOLD_MS 1500
 #define MATCH_MM 700.0f
+#define FOLLOW_GAIN 0.20f
+#define FOLLOW_LIMIT_DEG 8.0f
+#define FOLLOW_SPEED_DPS 10.0f
+#define FOLLOW_DEADBAND_DEG 2.0f
+#define FOLLOW_CONFIRM_MS 350
 
 static float clamp(float v, float lo, float hi) { return fminf(hi, fmaxf(lo, v)); }
 robot_config_t robot_default_config(void)
@@ -68,8 +73,14 @@ static bool usable(const ld2450_target_t *t)
 void robot_follow_frame(robot_follow_t *f, const ld2450_frame_t *frame, uint64_t now)
 {
     /* A gap must expire association BEFORE a new report can revive it. */
-    if (f->locked && now - f->seen_ms > HOLD_MS) f->locked = false;
-    if (!f->have_frame || now - f->frame_ms > STALE_MS) f->candidate_hits = 0;
+    if (f->locked && now - f->seen_ms > HOLD_MS) {
+        f->locked = false;
+        f->goal_deg = 0;
+    }
+    if (!f->have_frame || now - f->frame_ms > STALE_MS) {
+        f->candidate_hits = 0;
+        f->turn_direction = 0;
+    }
     f->have_frame = true;
     f->frame_ms = now;
     const ld2450_target_t *best = NULL;
@@ -84,10 +95,12 @@ void robot_follow_frame(robot_follow_t *f, const ld2450_frame_t *frame, uint64_t
     }
     if (!best) {
         f->candidate_hits = 0;
+        f->turn_direction = 0;
         f->state = f->locked ? ROBOT_LOST : ROBOT_IDLE;
         return;
     }
-    if (!f->locked) {
+    const bool acquired = !f->locked;
+    if (acquired) {
         if (!f->candidate_hits || hypotf(best->x_mm - f->candidate_x,
                                         best->y_mm - f->candidate_y) > MATCH_MM)
             f->candidate_hits = 0;
@@ -103,9 +116,27 @@ void robot_follow_frame(robot_follow_t *f, const ld2450_frame_t *frame, uint64_t
     }
     f->seen_ms = now;
     f->state = ROBOT_TRACKING;
-    float angle = clamp(atan2f(f->x_mm, f->y_mm) * RAD_TO_DEG,
-                        -f->config.limit_deg, f->config.limit_deg);
-    if (fabsf(angle - f->goal_deg) >= 1.5f) f->goal_deg = angle;
+    /* Turn a fraction of the estimated bearing so a noisy or off-centre target gets a small glance. */
+    const float limit = fminf(f->config.limit_deg, FOLLOW_LIMIT_DEG);
+    const float goal = clamp(atan2f(f->x_mm, f->y_mm) * RAD_TO_DEG * FOLLOW_GAIN, -limit, limit);
+    if (acquired) {
+        f->goal_deg = goal;
+        f->turn_direction = 0;
+        return;
+    }
+    const float error = goal - f->goal_deg;
+    const int direction = error >= FOLLOW_DEADBAND_DEG ? 1 : error <= -FOLLOW_DEADBAND_DEG ? -1 : 0;
+    if (direction != f->turn_direction) {
+        f->turn_direction = direction;
+        f->turn_since_ms = now;
+    } else if (direction && now - f->turn_since_ms >= FOLLOW_CONFIRM_MS) {
+        f->goal_deg = goal;
+        f->turn_direction = 0;
+    }
+}
+float robot_follow_speed_dps(const robot_config_t *config)
+{
+    return fminf(config->speed_dps, FOLLOW_SPEED_DPS);
 }
 float robot_slew(float current, float goal, float speed, float seconds)
 {
@@ -121,11 +152,12 @@ void robot_follow_tick(robot_follow_t *f, uint64_t now)
     if (f->locked && now - f->seen_ms > HOLD_MS) {
         f->locked = false;
         f->candidate_hits = 0;
+        f->turn_direction = 0;
         f->goal_deg = 0;
         if (!stale) f->state = ROBOT_IDLE;
     }
     if (!f->locked && (stale || f->state == ROBOT_IDLE)) f->goal_deg = 0;
-    f->angle_deg = robot_slew(f->angle_deg, f->goal_deg, f->config.speed_dps,
+    f->angle_deg = robot_slew(f->angle_deg, f->goal_deg, robot_follow_speed_dps(&f->config),
                               (now - f->step_ms) / 1000.0f);
     f->step_ms = now;
 }

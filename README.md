@@ -190,7 +190,7 @@ Windows 用 `--port COM4`。电脑上只有一个 Espressif 串口时可以省�
 | [跳一跳](docs/robot-jump.md) | 按住蓄力、松开起跳 | 等距方块，落中心加倍并连击 |
 | [钓鱼](docs/robot-fishing.md) | 抛竿、按提示拉鱼 | 第一人称，鱼越大拉得越久、舵机摇得越凶，3 条命 |
 | [星际战机](docs/robot-starship.md) | 雷达或 K2/K3 左右，K1 开炮 | 第一人称太空射击，体素飞船和小行星 |
-| [极速赛车](docs/robot-racing.md) | K1 油门，雷达或 K2/K3 转向 | 第一人称公路赛，弯道、警示牌、氮气，转弯时舵机跟着转 |
+| [极速赛车](docs/robot-racing.md) | K1 油门，雷达或 K2/K3 转向 | 第一人称公路赛，弯道、警示牌、氮气，撞车时舵机短摇 |
 | [僵尸围城](docs/robot-zombie.md) | 雷达或 K2/K3 转向，按住 K1 开火 | 第一人称打僵尸，一波比一波多；僵尸和墓碑是[切片堆叠](docs/stack-render.md)出来的立体像素体 |
 | [做 T 高手](docs/robot-stock-t.md) | 按住确认买入，短按卖出 | 电脑准备 A 股历史五分钟 K 线并通过 USB 上传，每天结算收益；`./scripts/stock-t.sh` |
 

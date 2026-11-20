@@ -251,7 +251,7 @@ app_alarm_spec_t once = {.owner = "fishing", .target = "alarm", .label = "鱼汛
 | 水族箱 | 按键投一撮鱼食：鱼群追食、吃饱、气泡、水草、光柱；纯 C 模拟核心，见 [robot-aquarium.md](robot-aquarium.md) |
 | 钓鱼 | 抛竿、等鱼咬钩，按提示的时机/时长按键拉鱼，鱼越大需要的次数越多、舵机摇得越凶；纯 C 规则，见 [robot-fishing.md](robot-fishing.md) |
 | 星际战机 | 第一人称太空射击，雷达左右转向，按键开炮，被击中掉血并摇舵机，共 3 滴血，见 [robot-starship.md](robot-starship.md) |
-| 极速赛车 | 第一人称伪 3D 公路赛，按住加速，转弯时舵机跟着转，氮气定时充满，见 [robot-racing.md](robot-racing.md) |
+| 极速赛车 | 第一人称伪 3D 公路赛，按住加速，撞车时舵机短摇，氮气定时充满，见 [robot-racing.md](robot-racing.md) |
 | 黄金矿工 | 单键放钩，钩金块/钻石/神秘袋，重物可以扔炸药，限时达到目标金额过关，最多 20 关；纯 C 核心，见 [robot-miner.md](robot-miner.md) |
 | 跳一跳 | 等距方块，按住蓄力、松开起跳，落中心加倍并连击；纯 C 核心，保留三击退出，见 [robot-jump.md](robot-jump.md) |
 | 僵尸围城 | 第一人称打僵尸，雷达（或 K2/K3）转向，按住开火，被咬掉血并轻摇舵机，3 滴血；纯 C 核心，见 [robot-zombie.md](robot-zombie.md) |

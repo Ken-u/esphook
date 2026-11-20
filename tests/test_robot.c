@@ -94,8 +94,8 @@ static void follow_tests(void)
     robot_follow_frame(&f, &v, 200);
     robot_follow_tick(&f, 200);
     assert(f.locked && f.state == ROBOT_TRACKING);
-    assert(f.goal_deg == c.limit_deg);
-    assert(f.angle_deg <= 3.51f); /* elapsed tick is capped to 100ms */
+    assert(f.goal_deg == 8.0f);
+    assert(f.angle_deg == 1.0f); /* follow caps speed to 10 degrees/s and elapsed tick to 100ms */
     /* Slot order changes and a closer bystander must preserve spatial lock. */
     v.targets[2] = v.targets[0];
     v.targets[0] = (ld2450_target_t){.x_mm = -100, .y_mm = 300, .valid = true};
@@ -115,7 +115,7 @@ static void follow_tests(void)
     assert(f.state == ROBOT_IDLE && !f.locked && f.goal_deg == 0);
     float old = f.angle_deg;
     robot_follow_tick(&f, 10000);
-    assert(f.state == ROBOT_FAULT && f.angle_deg >= old - 3.51f);
+    assert(f.state == ROBOT_FAULT && f.angle_deg >= old - 1.01f);
     /* Recovered data cannot revive an association from a long outage. */
     v = frame(-1000, 1000);
     robot_follow_frame(&f, &v, 10100);
@@ -139,6 +139,41 @@ static void follow_tests(void)
         robot_follow_frame(&f, i % 2 ? &empty : &v, i * 100);
         assert(!f.locked);
     }
+}
+static void quiet_follow_tests(void)
+{
+    robot_config_t c = robot_default_config();
+    robot_follow_t f;
+    robot_follow_init(&f, &c, 0);
+    ld2450_frame_t center = frame(0, 500);
+    acquire(&f, &center, 0);
+
+    /* A single large jump can pull the filtered position but must not move the goal. */
+    ld2450_frame_t right = frame(500, 500);
+    robot_follow_frame(&f, &right, 300);
+    for (uint64_t now = 400; now <= 900; now += 100) {
+        robot_follow_frame(&f, &center, now);
+        assert(f.goal_deg == 0);
+    }
+    /* A sustained change gets a small turn. */
+    for (uint64_t now = 1000; now <= 1300; now += 100) {
+        robot_follow_frame(&f, &right, now);
+        assert(f.goal_deg == 0);
+    }
+    robot_follow_frame(&f, &right, 1400);
+    assert(f.goal_deg > 6 && f.goal_deg <= 8);
+    const float goal = f.goal_deg;
+    for (uint64_t now = 1500; now <= 3000; now += 100) {
+        ld2450_frame_t jitter = frame(now % 200 ? 540 : 460, 500);
+        robot_follow_frame(&f, &jitter, now);
+        assert(f.goal_deg == goal);
+    }
+    /* A tighter user calibration takes precedence over both follow caps. */
+    c.limit_deg = 5;
+    c.speed_dps = 5;
+    robot_follow_init(&f, &c, 0);
+    acquire(&f, &right, 0);
+    assert(f.goal_deg == 5 && robot_follow_speed_dps(&c) == 5);
 }
 static void motion_tests(void)
 {
@@ -190,6 +225,6 @@ static void calibration_line_tests(void)
 }
 int main(void)
 {
-    parser_tests(); follow_tests(); motion_tests(); calibration_line_tests();
+    parser_tests(); follow_tests(); quiet_follow_tests(); motion_tests(); calibration_line_tests();
     puts("robot: parser, target association, loss/fault recovery, servo limits and calibration lines passed");
 }
