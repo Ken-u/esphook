@@ -821,12 +821,16 @@ static void play_fishing(const char *out)
     fish->next_start_ms = UINT32_MAX;
     fish->move_wait = 1000;
     run(500); /* let the bite shake finish before comparing directions */
-    fish->fx = fish->gx = FS_FISH_X_MIN * 16;
-    run(100);
-    assert(servo_log.last > 0);
     fish->fx = fish->gx = FS_FISH_X_MAX * 16;
+    fish->fy = (FS_FISH_Y_MIN + FS_FISH_Y_MAX) * 8;
+    fish->gy = FS_FISH_Y_MIN * 16;
     run(100);
-    assert(servo_log.last < 0);
+    assert(servo_log.last >= 3);
+    fish->fx = fish->gx = FS_FISH_X_MIN * 16;
+    fish->fy = (FS_FISH_Y_MIN + FS_FISH_Y_MAX) * 8;
+    fish->gy = FS_FISH_Y_MAX * 16;
+    run(100);
+    assert(servo_log.last <= -3);
     *fish = before_swim;
     fish->now_ms = (uint32_t)manager.context.now_ms;
     assert(fishing_fight(out,false)>=1);

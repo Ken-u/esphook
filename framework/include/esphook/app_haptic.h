@@ -15,7 +15,7 @@
 #define HAPTIC_MAX_HALF_MS 700U
 
 typedef struct {
-    bool shaking, sent_valid;
+    bool shaking, sent_valid, first_negative;
     uint64_t start_ms, end_ms, last_tx_ms;
     unsigned half_ms;
     int amp_x10;  /* peak amplitude of the running shake, 0.1 degree */
@@ -37,8 +37,8 @@ static inline int haptic_amp_now(const haptic_t *h, uint64_t now)
 /* Shake around the base angle: swing +-amp_deg every half_ms, fading out over duration_ms. A swing takes time at the
  * service's slew rate, so the half period is stretched until the servo can actually reach the amplitude. A weaker
  * shake never cuts a stronger one short. */
-static inline void haptic_shake(haptic_t *h, uint64_t now_ms, int amp_deg, unsigned half_ms, unsigned duration_ms,
-                                int speed_dps)
+static inline void haptic_shake_direction(haptic_t *h, uint64_t now_ms, int amp_deg, unsigned half_ms,
+                                          unsigned duration_ms, int speed_dps, bool first_negative)
 {
     if (amp_deg < 1 || duration_ms == 0) return;
     if (amp_deg > 30) amp_deg = 30;
@@ -49,10 +49,16 @@ static inline void haptic_shake(haptic_t *h, uint64_t now_ms, int amp_deg, unsig
     if (half_ms > HAPTIC_MAX_HALF_MS) half_ms = HAPTIC_MAX_HALF_MS;
     if (haptic_amp_now(h, now_ms) > amp_deg * 10) return;
     h->shaking = true;
+    h->first_negative = first_negative;
     h->start_ms = now_ms;
     h->end_ms = now_ms + duration_ms;
     h->half_ms = half_ms;
     h->amp_x10 = amp_deg * 10;
+}
+static inline void haptic_shake(haptic_t *h, uint64_t now_ms, int amp_deg, unsigned half_ms,
+                                unsigned duration_ms, int speed_dps)
+{
+    haptic_shake_direction(h, now_ms, amp_deg, half_ms, duration_ms, speed_dps, false);
 }
 static inline void haptic_base(haptic_t *h, int angle_x10) { h->base_x10 = angle_x10; }
 static inline void haptic_stop(haptic_t *h)
@@ -71,7 +77,7 @@ static inline bool haptic_step(haptic_t *h, uint64_t now_ms, int limit_deg, int 
         else {
             unsigned step = (unsigned)((now_ms - h->start_ms) / h->half_ms);
             int amp = haptic_amp_now(h, now_ms);
-            target += (step & 1U) ? -amp : amp;
+            target += ((step & 1U) != h->first_negative) ? -amp : amp;
         }
     }
     const int reach = (limit_deg - 1) * 10; /* stay a degree away from the configured stops */

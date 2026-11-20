@@ -428,8 +428,12 @@ static void drain_shakes(state_t *s, uint64_t now)
     app_servo_read(&sv);
     int amp;
     unsigned half, dur;
-    while (fs_take_shake(&s->core, &amp, &half, &dur))
-        if (sv.available && sv.armed) haptic_shake(&s->haptic, now, amp, half, dur, sv.speed_dps);
+    const bool pull_right = s->core.phase == FS_FIGHT && s->core.gy > s->core.fy;
+    while (fs_take_shake(&s->core, &amp, &half, &dur)) {
+        /* Short strokes reverse quickly within the calibrated speed. The first tug follows the fish. */
+        if (sv.available && sv.armed)
+            haptic_shake_direction(&s->haptic, now, app_clamp(amp, 1, 4), half, dur, sv.speed_dps, pull_right);
+    }
 }
 static void enter(app_context_t *ctx)
 {
@@ -458,10 +462,12 @@ static void tick(app_context_t *ctx)
         if (s->core.nibbles > s->seen_nibbles) s->nibble_ms = (uint32_t)ctx->now_ms;
         s->seen_nibbles = s->core.nibbles;
     }
-    const int middle = (FS_FISH_X_MIN + FS_FISH_X_MAX) / 2;
-    const int span = FS_FISH_X_MAX - middle;
-    const int fish_angle_x10 = s->core.phase == FS_FIGHT ? (middle - fs_fish_x(&s->core)) * 80 / span : 0;
-    haptic_base(&s->haptic, fish_angle_x10); /* positive servo angle points to the viewer's left */
+    const int middle = (FS_FISH_Y_MIN + FS_FISH_Y_MAX) * 8;
+    const int span = FS_FISH_Y_MAX * 16 - middle;
+    /* Y is sideways on the water. Lead the eased float a little to cover mechanical travel time. */
+    const int lateral = (s->core.fy + s->core.gy) / 2;
+    const int fish_angle_x10 = app_clamp((middle - lateral) * 60 / span, -60, 60);
+    haptic_base(&s->haptic, s->core.phase == FS_FIGHT ? fish_angle_x10 : 0);
     drain_shakes(s, ctx->now_ms);
     haptic_pump(ctx, &s->haptic);
 }
