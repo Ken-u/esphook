@@ -1,5 +1,6 @@
 #include "esphook/app.h"
 #include "esphook/app_gfx.h"
+#include "esphook/app_haptic.h"
 #include "esphook/app_ui.h"
 #include "esphook/app_services.h"
 #include <math.h>
@@ -26,6 +27,7 @@
 
 typedef struct {
     basketball_game_t game;
+    haptic_t haptic;
     lv_obj_t *top, *plot, *bottom, *hold, *hud, *results;
     lv_obj_t *clock_pill, *clock_label, *score_pill, *score_label, *bar, *shots_pill, *shots_label, *hint_pill, *hint, *float_label;
     lv_obj_t *title, *result_score, *result_line, *result_hint;
@@ -41,6 +43,7 @@ static basketball_view_t s_status;
 static void enter(app_context_t *ctx)
 {
     state_t *s=ctx->state; basketball_start(&s->game, ctx->now_ms, app_random());
+    haptic_init(&s->haptic);
     /* Shots come fast: no global exit during the two minutes (it is back on the result screen, where any short press
      * leaves anyway). Holding the key for two seconds, which a shot never does, leaves at any time. */
     app_set_exit_hold(ctx, EXIT_HOLD_MS);
@@ -49,12 +52,21 @@ static void tick(app_context_t *ctx)
 {
     state_t *s=ctx->state; basketball_tick(&s->game, ctx->now_ms);
     basketball_view_t view; basketball_snapshot(&s->game, ctx->now_ms, &view);
+    int angle_x10 = 0;
+    if (view.phase == BASKETBALL_PLAY) {
+        const float x = view.in_flight ? view.ball_x : view.hoop_x;
+        const float strength = view.in_flight ? 3.0f : 1.25f;
+        angle_x10 = app_clamp((int)lroundf((BASKETBALL_CENTER_X - x) * strength), -80, 80);
+    }
+    haptic_base(&s->haptic, angle_x10);
+    haptic_pump(ctx, &s->haptic);
     app_set_triple_exit(ctx, view.phase != BASKETBALL_PLAY);
     app_shared_copy(s_status, view);
 }
 static void leave(app_context_t *ctx)
 {
     state_t *s=ctx->state; basketball_stop(&s->game);
+    haptic_stop(&s->haptic);
     if (s->plot) app_ui_canvas_refresh(s->plot); /* The shared canvas goes to the next app. */
     app_critical_enter(); s_status.phase=BASKETBALL_OFF; app_critical_exit();
 }
@@ -376,5 +388,6 @@ static void icon(void *parent, int x, int y, bool selected)
     app_ui_rect(ball, 5, 0, 1, 11, 0x573122, 0); app_ui_rect(ball, 0, 5, 11, 1, 0x573122, 0);
 }
 const app_descriptor_t esphook_app_basketball = {.api_version=APP_API_VERSION, .id="basketball", .title="投篮",
+    .flags=APP_SERVO_DEFAULT_HAPTIC,
     .refresh_ms=33, .state_size=sizeof(state_t), .on_enter=enter, .on_leave=leave, .on_event=event,
     .on_tick=tick, .render=render, .icon=icon, .command=command};

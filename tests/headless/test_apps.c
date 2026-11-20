@@ -306,8 +306,12 @@ static void play_basketball(const char *out)
     /* shots come fast: three quick presses are shots, and only holding the key for two seconds leaves mid-game */
     assert(!mash_leaves("basketball") && game_status("basketball","robot game status","shots=")>=1);
     assert(!hold_leaves("basketball",1900) && hold_leaves("basketball",2100) && !strcmp(app_active_id(&manager.context),"launcher"));
+    const unsigned previous_angles = servo_log.angle;
+    servo_state.armed = true; /* a calibrated unit enters this game with haptics enabled */
     assert(app_open(&manager.context,"basketball"));app_manager_commit(&manager);run(100);
     assert(game_status("basketball","robot game status","phase=")==1);dump(out,"basketball-idle");
+    run(350);
+    assert(servo_log.angle > previous_angles && abs(servo_log.last) <= 8);
     unsigned made=0;bool saw_hit=false,saw_miss=false;
     for(unsigned shot=0;shot<60 && !(saw_hit && saw_miss);++shot) {
         event(APP_EVENT_SHORT);run(160);if(shot==0) dump(out,"basketball-flight");
@@ -320,6 +324,8 @@ static void play_basketball(const char *out)
     assert(saw_hit && saw_miss);
     for(unsigned s=0;s<40 && game_status("basketball","robot game status","phase=")!=2;++s) run(5000);
     assert(game_status("basketball","robot game status","phase=")==2);run(300);dump(out,"basketball-result");
+    assert(servo_log.last == 0);
+    servo_state.armed = false;
 }
 #endif
 #ifdef ESPHOOK_TEST_DINO
@@ -791,6 +797,8 @@ static void fishing_hook(void)
 }
 static void play_fishing(const char *out)
 {
+    servo_state.armed = false;
+    memset(&servo_log, 0, sizeof servo_log);
     assert(app_open(&manager.context,"fishing"));app_manager_commit(&manager);run(300);
     assert(game_status("fishing","robot fishing status","phase=")==0 && game_status("fishing","robot fishing status","servo=")==1);
     assert(shows_hint("按键抛竿 长按启用舵机") && shows_text(lv_screen_active(),"钓0"));dump(out,"fishing-idle");
