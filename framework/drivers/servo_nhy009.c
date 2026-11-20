@@ -1,7 +1,5 @@
 #include "motion_ports.h"
 #include "hw_pwm.h"
-#include "sdkconfig.h"
-#ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
 #include "driver/ledc.h"
 /* LEDC timer/channel come from hw_pwm.h: the buzzer (main/beeper.c) has timer 0 / channel 0 and re-tunes its timer
  * for every note, this driver keeps timer 1 / channel 1 at a steady PWM. The clock source is shared by the whole
@@ -30,4 +28,3 @@ esp_err_t servo_port_write(int pulse_us)
     esp_err_t err = ledc_set_duty(LEDC_LOW_SPEED_MODE, SERVO_CHANNEL, duty);
     return err == ESP_OK ? ledc_update_duty(LEDC_LOW_SPEED_MODE, SERVO_CHANNEL) : err;
 }
-#endif

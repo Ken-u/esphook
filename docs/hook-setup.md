@@ -149,7 +149,7 @@ DEVICE_PORT=18765
 
 ## 6. 屏幕上的样子、OTA 和测试
 
-- 完成是绿色、错误是红色、确认是黄色；标题和正文占主要面积，过长的文字自动滚动。静态效果预览在仓库根目录的 [screen-layout-preview.html](../screen-layout-preview.html) 和 [screen-focus-preview.html](../screen-focus-preview.html)。
+- 完成是绿色、错误是红色、确认是黄色；标题和正文占主要面积，过长的文字自动滚动。静态效果预览：[screen-layout-preview.html](previews/screen-layout-preview.html) 和 [screen-focus-preview.html](previews/screen-focus-preview.html)。
 - OTA 只更新 `ota_0` / `ota_1` 应用分区，不覆盖 NVS、分区表和固定 `fontdata` 中文字库。网页上传、curl、USB 完整刷写和 reverse device link 的限制见 [ota.md](ota.md)。
 - 主机侧测试：
 

@@ -15,7 +15,7 @@
 #define HAPTIC_MAX_HALF_MS 700U
 
 typedef struct {
-    bool shaking, sent_valid;
+    bool shaking, sent_valid, first_negative;
     uint64_t start_ms, end_ms, last_tx_ms;
     unsigned half_ms;
     int amp_x10;  /* peak amplitude of the running shake, 0.1 degree */
@@ -37,8 +37,8 @@ static inline int haptic_amp_now(const haptic_t *h, uint64_t now)
 /* Shake around the base angle: swing +-amp_deg every half_ms, fading out over duration_ms. A swing takes time at the
  * service's slew rate, so the half period is stretched until the servo can actually reach the amplitude. A weaker
  * shake never cuts a stronger one short. */
-static inline void haptic_shake(haptic_t *h, uint64_t now_ms, int amp_deg, unsigned half_ms, unsigned duration_ms,
-                                int speed_dps)
+static inline void haptic_shake_direction(haptic_t *h, uint64_t now_ms, int amp_deg, unsigned half_ms,
+                                          unsigned duration_ms, int speed_dps, bool first_negative)
 {
     if (amp_deg < 1 || duration_ms == 0) return;
     if (amp_deg > 30) amp_deg = 30;
@@ -49,12 +49,20 @@ static inline void haptic_shake(haptic_t *h, uint64_t now_ms, int amp_deg, unsig
     if (half_ms > HAPTIC_MAX_HALF_MS) half_ms = HAPTIC_MAX_HALF_MS;
     if (haptic_amp_now(h, now_ms) > amp_deg * 10) return;
     h->shaking = true;
+    h->first_negative = first_negative;
     h->start_ms = now_ms;
     h->end_ms = now_ms + duration_ms;
     h->half_ms = half_ms;
     h->amp_x10 = amp_deg * 10;
 }
+static inline void haptic_shake(haptic_t *h, uint64_t now_ms, int amp_deg, unsigned half_ms,
+                                unsigned duration_ms, int speed_dps)
+{
+    haptic_shake_direction(h, now_ms, amp_deg, half_ms, duration_ms, speed_dps, false);
+}
 static inline void haptic_base(haptic_t *h, int angle_x10) { h->base_x10 = angle_x10; }
+/* Screen coordinates grow to the player's right. The calibrated positive servo angle points left. */
+static inline void haptic_pan(haptic_t *h, int right_x10) { haptic_base(h, -right_x10); }
 static inline void haptic_stop(haptic_t *h)
 {
     h->shaking = false;
@@ -71,7 +79,7 @@ static inline bool haptic_step(haptic_t *h, uint64_t now_ms, int limit_deg, int 
         else {
             unsigned step = (unsigned)((now_ms - h->start_ms) / h->half_ms);
             int amp = haptic_amp_now(h, now_ms);
-            target += (step & 1U) ? -amp : amp;
+            target += ((step & 1U) != h->first_negative) ? -amp : amp;
         }
     }
     const int reach = (limit_deg - 1) * 10; /* stay a degree away from the configured stops */
@@ -97,6 +105,15 @@ static inline haptic_state_t haptic_state(void)
     if (!s.available) return HAPTIC_NONE;
     if (s.fault) return HAPTIC_FAULT;
     return s.armed ? HAPTIC_ARMED : HAPTIC_READY;
+}
+/* A short gameplay cue, starting on the side given by the signed amplitude. */
+static inline void haptic_cue(app_context_t *ctx, haptic_t *h, int amp_deg, unsigned half_ms, unsigned duration_ms)
+{
+    app_servo_t s;
+    app_servo_read(&s);
+    if (s.available && s.armed && !s.fault)
+        haptic_shake_direction(h, ctx->now_ms, amp_deg < 0 ? -amp_deg : amp_deg, half_ms, duration_ms,
+                               s.speed_dps, amp_deg < 0);
 }
 /* Arms the servo (it centres first). Only call this from a deliberate confirmation by the player. */
 static inline bool haptic_arm(app_context_t *ctx, haptic_t *h)

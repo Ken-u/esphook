@@ -1,4 +1,5 @@
 #include "esphook/app.h"
+#include "esphook/app_haptic.h"
 #include "esphook/app_fish.h"
 #include "esphook/app_gfx.h"
 #include "esphook/app_services.h"
@@ -17,6 +18,7 @@
 
 typedef struct {
     aq_t tank;
+    haptic_t haptic;
     lv_obj_t *plot, *band, *hold, *fed, *eaten, *hint;
     uint64_t last_ms;
     uint32_t shown_fed, shown_eaten;
@@ -348,6 +350,7 @@ static void enter(app_context_t *ctx)
 {
     state_t *s = ctx->state;
     aq_init(&s->tank, app_random() ^ (uint32_t)ctx->now_ms);
+    haptic_init(&s->haptic);
     app_set_triple_exit(ctx, false); /* food is thrown by mashing the key; holding it for two seconds is the way out */
     app_set_exit_hold(ctx, EXIT_HOLD_MS);
     s->last_ms = ctx->now_ms;
@@ -361,6 +364,10 @@ static void tick(app_context_t *ctx)
     const uint64_t dt = ctx->now_ms > s->last_ms ? ctx->now_ms - s->last_ms : 0U;
     s->last_ms = ctx->now_ms;
     aq_advance(&s->tank, dt > AQ_MAX_ADVANCE_MS ? AQ_MAX_ADVANCE_MS : (uint32_t)dt);
+    const uint32_t age = s->tank.since_feed_ms;
+    const int toward_food = s->tank.thrown && age < 1200U ? (s->tank.drop_x - AQ_W / 2) * (int)(1200U - age) / 1200 : 0;
+    haptic_pan(&s->haptic, toward_food);
+    haptic_pump(ctx, &s->haptic);
 }
 static void leave(app_context_t *ctx)
 {
@@ -418,5 +425,6 @@ static void icon(void *parent, int x, int y, bool selected)
     app_ui_rect(parent, x + 22, y + 17, 2, 6, 0x2E9A4C, 1);
 }
 const app_descriptor_t esphook_app_aquarium = {.api_version = APP_API_VERSION, .id = "aquarium", .title = "水族箱",
+    .flags = APP_SERVO_DEFAULT_HAPTIC,
     .refresh_ms = 33, .state_size = sizeof(state_t), .on_enter = enter, .on_leave = leave, .on_event = event,
-    .on_tick = tick, .render = render, .icon = icon, .command = command};
+    .on_tick = tick, .render = render, .icon = icon, .command = command, .menu_group = APP_MENU_DAILY};

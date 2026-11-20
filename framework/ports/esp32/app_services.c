@@ -48,6 +48,7 @@ void app_radar_read(app_radar_t *out)
     out->rejected = s.rejected; out->frame = s.raw;
     robot_ui_t v; robot_ui_get(&v); out->range_mm = v.range_mm;
 }
+bool app_radar_set_view_range(unsigned range_mm) { return robot_ui_set_radar_range(range_mm); }
 void app_servo_read(app_servo_t *out)
 {
     robot_status_t s; robot_get_status(&s); memset(out, 0, sizeof *out);
@@ -60,12 +61,28 @@ void app_servo_cal_read(app_servo_cal_t *out)
 {
     robot_status_t s; robot_get_status(&s); memset(out, 0, sizeof *out);
     out->available = s.servo_ready; out->stored = s.config_stored;
+    out->save_seq = s.cal_save_seq; out->save_ok = s.cal_save_ok;
     out->config = s.servo_ready ? s.config : robot_default_config();
 }
 bool app_servo_cal_apply(app_context_t *ctx, const robot_config_t *config, bool save)
 {
     if (s_servo_owner[0] && strcmp(s_servo_owner, ctx->app->id)) return false;
     return robot_servo_calibrate(config, save);
+}
+void app_follow_trim_read(app_follow_trim_t *out)
+{
+    robot_status_t s; robot_get_status(&s);
+    *out = (app_follow_trim_t){
+        .saved_deg = s.trim_saved_deg, .active_deg = s.trim_active_deg, .aim_deg = s.trim_aim_deg,
+        .save_seq = s.trim_save_seq,
+        .tracking = s.state, .available = s.radar_ready && s.servo_ready, .online = s.radar_online,
+        .preview = s.trim_preview, .save_ok = s.trim_save_ok,
+    };
+}
+bool app_follow_trim_apply(app_context_t *ctx, int degrees, bool save)
+{
+    if ((!save || s_servo_owner[0]) && strcmp(s_servo_owner, ctx->app->id)) return false;
+    return robot_follow_trim_request(degrees, save);
 }
 bool app_servo_request(app_context_t *ctx, app_servo_action_t action, int value)
 {
@@ -77,6 +94,14 @@ void app_services_release(const char *id, void *user)
 {
     (void)user;
     if (!strcmp(s_servo_owner, id)) { (void)robot_servo_request(APP_SERVO_DISARM, 0); s_servo_owner[0] = '\0'; }
+}
+void app_services_activate(const app_context_t *ctx, void *user)
+{
+    (void)user;
+    robot_app_motion_t mode = ROBOT_APP_MOTION_NONE;
+    if (ctx->app->flags & APP_SERVO_DEFAULT_HAPTIC) mode = ROBOT_APP_MOTION_HAPTIC;
+    else if (ctx->standby || (ctx->app->flags & APP_SERVO_DEFAULT_FOLLOW)) mode = ROBOT_APP_MOTION_FOLLOW;
+    robot_set_app_motion(mode);
 }
 void app_display_read(robot_ui_t *out) { robot_ui_get(out); }
 bool app_display_update(const char *json, size_t length, char *error, size_t size)

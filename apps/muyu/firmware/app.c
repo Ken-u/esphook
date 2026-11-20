@@ -1,5 +1,6 @@
 #include "esphook/app_math.h"
 #include "esphook/app.h"
+#include "esphook/app_haptic.h"
 #include "esphook/app_gfx.h"
 #include "esphook/app_ui.h"
 #include "esphook/app_services.h"
@@ -34,6 +35,7 @@
 
 typedef struct {
     muyu_t core;
+    haptic_t haptic;
     lv_obj_t *plot, *band, *hold, *hint, *hud, *count, *tag, *tag_text, *floating[2];
     unsigned hud_width;
 } state_t;
@@ -285,6 +287,7 @@ static void enter(app_context_t *ctx)
 {
     state_t *s = ctx->state;
     muyu_start(&s->core, ctx->now_ms);
+    haptic_init(&s->haptic);
     app_set_triple_exit(ctx, false); /* a mallet is swung by mashing the key; holding for two seconds is the way out */
     app_set_exit_hold(ctx, EXIT_HOLD_MS);
     app_critical_enter(); s_status = (status_t){0}; app_critical_exit();
@@ -295,6 +298,11 @@ static void tick(app_context_t *ctx)
     state_t *s = ctx->state;
     uint32_t before = s->core.count;
     muyu_tick(&s->core, ctx->now_ms);
+    muyu_view_t view;
+    muyu_snapshot(&s->core, &view);
+    const int lift = muyu_lift(view.since_knock_ms, view.swing_from);
+    haptic_base(&s->haptic, app_clamp(MUYU_LIFT_REST - lift, 0, MUYU_LIFT_REST) * 38 / MUYU_LIFT_REST);
+    haptic_pump(ctx, &s->haptic);
     if (s->core.count != before) publish(s, true, false);
 }
 static void leave(app_context_t *ctx)
@@ -372,5 +380,6 @@ static void icon(void *parent, int x, int y, bool selected)
     app_ui_rect(parent, x + 25, y + 18, 2, 2, GOLD, 0);
 }
 const app_descriptor_t esphook_app_muyu = {.api_version = APP_API_VERSION, .id = "muyu", .title = "电子木鱼",
+    .flags = APP_SERVO_DEFAULT_HAPTIC,
     .refresh_ms = 33, .state_size = sizeof(state_t), .on_enter = enter, .on_leave = leave, .on_event = event,
-    .on_tick = tick, .render = render, .icon = icon, .command = command};
+    .on_tick = tick, .render = render, .icon = icon, .command = command, .menu_group = APP_MENU_DAILY};

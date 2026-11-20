@@ -1,4 +1,5 @@
 #include "esphook/app.h"
+#include "esphook/app_haptic.h"
 #include "esphook/app_gfx.h"
 #include "esphook/app_ui.h"
 #include "esphook/app_services.h"
@@ -22,6 +23,7 @@
 
 typedef struct {
     ski_game_t game;
+    haptic_t haptic;
     lv_obj_t *top, *plot, *bottom, *hold, *score_pill, *score, *gem_pill, *gem_count, *combo, *combo_text, *popup, *popup_text, *panel,
         *title, *line1, *line2;
     uint32_t sky_rgb, snow_rgb;
@@ -272,6 +274,7 @@ static void enter(app_context_t *ctx)
 {
     state_t *s = ctx->state;
     ski_start(&s->game, ctx->now_ms, app_random());
+    haptic_init(&s->haptic);
     s->game.best = app_best_get(ctx); /* the record survives leaving the game and a reboot */
     /* Jumping and spinning are done with the key, and a press starts a run: three quick presses are never an exit.
      * Holding it for three seconds (a spin ends long before that) is. */
@@ -281,9 +284,16 @@ static void enter(app_context_t *ctx)
 static void tick(app_context_t *ctx)
 {
     state_t *s = ctx->state;
+    const ski_phase_t before = s->game.phase;
+    const bool airborne = !s->game.grounded;
     ski_tick(&s->game, ctx->now_ms);
     ski_view_t view;
     ski_snapshot(&s->game, &view);
+    haptic_base(&s->haptic, view.phase == SKI_PLAY && !view.grounded ? 35 : 0);
+    if (before == SKI_PLAY && view.phase == SKI_OVER) haptic_cue(ctx, &s->haptic, -5, 180, 520);
+    else if (airborne && view.grounded && view.phase == SKI_PLAY)
+        haptic_cue(ctx, &s->haptic, view.popup_age_ms < 100 ? -4 : -2, 150, 330);
+    haptic_pump(ctx, &s->haptic);
     if (view.phase == SKI_OVER) (void)app_best_record(ctx, view.best);
     app_shared_copy(s_status, view);
 }
@@ -415,5 +425,6 @@ static void icon(void *parent, int x, int y, bool selected)
     app_ui_rect(parent, x + 11, y + 3, 4, 4, 0xF3C6A0, 2);                          /* head */
 }
 const app_descriptor_t esphook_app_ski = {.api_version = APP_API_VERSION, .id = "ski", .title = "滑雪冒险",
+    .flags = APP_SERVO_DEFAULT_HAPTIC,
     .refresh_ms = 33, .state_size = sizeof(state_t), .on_enter = enter, .on_leave = leave, .on_event = event,
-    .on_tick = tick, .render = render, .icon = icon, .command = command};
+    .on_tick = tick, .render = render, .icon = icon, .command = command, .menu_group = APP_MENU_GAMES};

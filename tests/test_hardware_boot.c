@@ -24,6 +24,7 @@ esp_err_t cdc_write(const char *s) { (void)s;return ESP_OK; }
 void *xQueueCreate(unsigned n,unsigned size) { assert(n && size);return &tasks; }
 int xQueueSend(void *q,const void *v,unsigned wait) { (void)q;(void)v;(void)wait;return 1; }
 int xQueueReceive(void *q,void *v,unsigned wait) { (void)q;(void)v;(void)wait;return 0; }
+unsigned uxQueueMessagesWaiting(void *q) { (void)q;return 0; }
 int xQueueReset(void *q) { (void)q;return 1; }
 void vQueueDelete(void *q) { (void)q; }
 int xTaskCreate(void (*f)(void *),const char *n,unsigned stack,void *u,unsigned priority,TaskHandle_t *h)

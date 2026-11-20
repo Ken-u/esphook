@@ -1,4 +1,5 @@
 #include "basketball_game.h"
+#include "esphook/app_math.h"
 #include <math.h>
 #include <string.h>
 
@@ -13,6 +14,16 @@ static uint32_t draw(uint32_t *state)
 static float clamp_x(float x)
 {
     return fminf(BASKETBALL_HOOP_MAX_X, fmaxf(BASKETBALL_HOOP_MIN_X, x));
+}
+int basketball_pan(const basketball_game_t *game, uint64_t now_ms, int limit_deg, int speed_dps)
+{
+    if (game->phase != BASKETBALL_PLAY || limit_deg < 2 || speed_dps < 1) return 0;
+    const float reach_px = BASKETBALL_HOOP_MAX_X - BASKETBALL_CENTER_X;
+    /* Leave headroom for the fastest leg and whole-degree rounding. Look ahead to cover the request and PWM delay. */
+    const int speed_reach_x10 = (int)(speed_dps * 8.0f * reach_px / BASKETBALL_MAX_SPEED);
+    const int reach_x10 = app_clamp(speed_reach_x10, 0, app_clamp((limit_deg - 1) * 10, 0, 80));
+    const float x = basketball_hoop_at(game, now_ms + 65U);
+    return (int)lroundf((x - BASKETBALL_CENTER_X) * reach_x10 / reach_px);
 }
 /* Multiply before dividing: integer speeds and times then give exact positions. */
 static float path_x(const basketball_path_t *p, uint64_t at)

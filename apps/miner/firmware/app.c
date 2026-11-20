@@ -1,4 +1,5 @@
 #include "esphook/app.h"
+#include "esphook/app_haptic.h"
 #include "esphook/app_gfx.h"
 #include "esphook/app_services.h"
 #include "esphook/app_ui.h"
@@ -19,6 +20,7 @@
 
 typedef struct {
     mn_t core;
+    haptic_t haptic;
     lv_obj_t *plot, *band, *hold, *money, *level, *clock, *hint, *panel, *title, *sub, *pop;
     uint64_t last_ms;
     uint32_t shown_key;
@@ -238,6 +240,7 @@ static void enter(app_context_t *ctx)
 {
     state_t *s = ctx->state;
     mn_init(&s->core, app_random() ^ (uint32_t)ctx->now_ms);
+    haptic_init(&s->haptic);
     s->core.best = app_best_get(ctx); /* the record survives leaving the game and a reboot */
     s->last_ms = ctx->now_ms;
     /* The claw is fired by a tap: three quick taps are never an exit, holding the key for two seconds is. */
@@ -261,6 +264,10 @@ static void tick(app_context_t *ctx)
     if (dt > 100U) dt = 100U; /* a stall must not throw the claw across the mine */
     const unsigned before = s->core.phase;
     mn_advance(&s->core, dt);
+    int dx, dy;
+    mn_dir(&s->core, &dx, &dy);
+    haptic_pan(&s->haptic, s->core.phase == MN_PLAY ? dx * 65 / 256 : 0);
+    haptic_pump(ctx, &s->haptic);
     if (s->core.phase == MN_CLEAR || s->core.phase == MN_OVER) (void)app_best_record(ctx, s->core.best);
     if (before != s->core.phase) publish(s, true, false);
 }
@@ -370,5 +377,6 @@ static void icon(void *parent, int x, int y, bool selected)
     app_ui_rect(parent, x + 10, y + 19, 4, 3, 0xFFF3A0, 1);
 }
 const app_descriptor_t esphook_app_miner = {.api_version = APP_API_VERSION, .id = "miner", .title = "黄金矿工",
+    .flags = APP_SERVO_DEFAULT_HAPTIC,
     .refresh_ms = 33, .state_size = sizeof(state_t), .on_enter = enter, .on_leave = leave, .on_event = event,
-    .on_tick = tick, .render = render, .icon = icon, .command = command};
+    .on_tick = tick, .render = render, .icon = icon, .command = command, .menu_group = APP_MENU_GAMES};

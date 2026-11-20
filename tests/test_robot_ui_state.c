@@ -17,11 +17,15 @@ int main(void)
     assert(robot_ui_command("ui {\"v\":1,\"mode\":\"text\",\"text\":\"你好\",\"ttl_ms\":500}"));
     assert(strstr(reply, "\"ok\":true"));
     clock_us = 499000;
+    assert(robot_ui_set_radar_range(3000));
+    assert(!robot_ui_set_radar_range(6001));
     robot_ui_get(&view);
-    assert(view.mode == UI_TEXT && !strcmp(view.text, "你好"));
+    assert(view.mode == UI_TEXT && !strcmp(view.text, "你好") && view.range_mm == 3000);
     clock_us = 500000;
     robot_ui_get(&view);
-    assert(view.mode == UI_AUTO && !view.text[0]);
+    assert(view.mode == UI_AUTO && !view.text[0] && view.range_mm == 6000);
+    assert(robot_ui_set_radar_range(1500));
+    assert(robot_ui_command("ui status") && strstr(reply, "\"range_mm\":1500"));
     assert(robot_ui_command("robot radar"));
     clock_us += INT64_C(86400000000);
     robot_ui_get(&view);

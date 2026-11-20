@@ -19,10 +19,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
-#include "sdkconfig.h"
-#ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
 #include "robot_runtime.h"
-#endif
 #include <stdio.h>
 #include <string.h>
 
@@ -170,11 +167,9 @@ static void report(void)
     beeper_stats_t st;
     beeper_stats(&st);
     unsigned servo_hz = 0;
-#ifdef CONFIG_DESKTOP_FOLLOW_ROBOT
     robot_status_t robot;
     robot_get_status(&robot);
     if (robot.servo_ready) servo_hz = ledc_get_freq(LEDC_LOW_SPEED_MODE, (ledc_timer_t)HW_LEDC_SERVO_TIMER);
-#endif
     char line[160];
     snprintf(line, sizeof line, "sound=%s ready=%u played=%u dropped=%u bad=%u failures=%u hz=%u buzzer_hz=%u servo_hz=%u",
              st.enabled ? "on" : "off", st.ready ? 1U : 0U, st.played, st.dropped, st.bad, st.failures,

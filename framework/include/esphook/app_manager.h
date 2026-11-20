@@ -13,11 +13,11 @@ struct app_manager {
     /* The last two apps other than the menu, newest first: where "back" goes (see app_back). */
     app_recent_t recent[2];
     /* A double click in the making. It outlives app changes on purpose: the first click of a double on the standby
-     * screen is what opens the menu. `dbl_launcher` and `dbl_selected` are what the first click found. */
-    bool dbl_pending, dbl_launcher;
+     * screen is what opens the menu. `dbl_origin` and `dbl_selected` are what the first click found. */
+    bool dbl_pending;
     unsigned dbl_clicks;
     uint64_t dbl_first_ms, dbl_due_ms;
-    size_t dbl_selected;
+    size_t dbl_origin, dbl_selected;
     uint64_t activity_ms, rendered_ms, alarm_ms;
     unsigned exit_hold_ms, alarm_id; /* alarm_id: an alarm that started and has not been announced to its app yet */
     app_input_t input[3];

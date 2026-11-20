@@ -1,0 +1,4 @@
+interface:
+  display_name: "esphook Agent Hook"
+  short_description: "Set up the daemon, pairing and Agent hooks for the esphook reminder screen"
+  default_prompt: "Use $esphook-hook to set up the host daemon, pair the board and install Agent hooks, asking before changing any config."

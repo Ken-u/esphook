@@ -2,10 +2,10 @@
 #include "esphook/app_ui.h"
 #include "esphook/app_services.h"
 #include <stdio.h>
-typedef struct { lv_obj_t *header,*title,*body,*keys,*ring,*stripe; unsigned selected; bool legacy,seen; const char *feedback; } state_t;
+typedef struct { lv_obj_t *header,*title,*body,*keys,*ring,*stripe; unsigned selected; bool three_keys,seen; const char *feedback; } state_t;
 static void enter(app_context_t *ctx)
 {
-    state_t *s=ctx->state; app_device_info_t device; app_device_info(&device); s->legacy=!device.robot_hardware;
+    state_t *s=ctx->state; app_device_info_t device; app_device_info(&device); s->three_keys=!device.robot_hardware;
     s->header=app_ui_label(ctx->root,&aihook_font_12,4,0,152,15,LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
     s->stripe=app_ui_rect(ctx->root,0,16,2,45,0x47E6AE,0);
     s->title=app_ui_label(ctx->root,&aihook_font_16,5,16,148,22,LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
@@ -24,7 +24,7 @@ static void render(app_context_t *ctx)
     lv_obj_set_style_text_color(s->title,app_ui_color(color),LV_PART_MAIN);
     lv_obj_set_style_text_color(s->body,app_ui_color(color),LV_PART_MAIN);
     char word[16]; app_key_word(s->selected,word,sizeof word);
-    snprintf(text,sizeof text,"%s %s",s->feedback?s->feedback:s->legacy?"按键回复":"长按回复",word);
+    snprintf(text,sizeof text,"%s %s",s->feedback?s->feedback:s->three_keys?"按键回复":"长按回复",word);
     app_ui_text(s->keys,text); app_ui_progress(s->ring,app_hold_ms(ctx));
 }
 static void tick(app_context_t *ctx)
@@ -36,10 +36,10 @@ static void event(app_context_t *ctx,const app_event_t *e)
 {
     state_t *s=ctx->state;
     if(e->kind==APP_EVENT_SHORT) {
-        if(s->legacy) s->feedback=app_hook_reply(e->key)?"已排队":"发送失败";
+        if(s->three_keys) s->feedback=app_hook_reply(e->key)?"已排队":"发送失败";
         else { s->selected=(s->selected+1)%3; s->feedback=NULL; }
     }
-    if(e->kind==APP_EVENT_CONFIRM && !s->legacy) s->feedback=app_hook_reply(s->selected)?"已排队":"发送失败";
+    if(e->kind==APP_EVENT_CONFIRM && !s->three_keys) s->feedback=app_hook_reply(s->selected)?"已排队":"发送失败";
 }
 static void icon(void *parent,int x,int y,bool selected)
 {

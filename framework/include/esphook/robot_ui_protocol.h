@@ -5,6 +5,8 @@
 
 #define ROBOT_UI_JSON_MAX 1024
 #define ROBOT_UI_TEXT_MAX 192
+#define RADAR_VIEW_MIN_RANGE_MM 1000U
+#define RADAR_VIEW_MAX_RANGE_MM 6000U
 
 typedef enum { UI_AUTO, UI_FACE, UI_TEXT, UI_RADAR } robot_ui_mode_t;
 typedef enum { FACE_AUTO, FACE_NEUTRAL, FACE_HAPPY, FACE_SLEEPY, FACE_SAD, FACE_CUSTOM } robot_expression_t;

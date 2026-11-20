@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 static void debounce_tests(void)
 {
@@ -284,6 +285,32 @@ static void play(strategy_t strategy, unsigned seed, unsigned *shots, unsigned *
     *shots = view.shots;
     *made = view.made;
 }
+static void pan_tests(void)
+{
+    basketball_game_t idle, shot;
+    basketball_start(&idle, 0, 24);
+    uint64_t release = 0;
+    while (fabsf(basketball_hoop_at(&idle, release) - BASKETBALL_CENTER_X) < 35.0f) release += 20;
+    basketball_tick(&idle, release);
+    shot = idle;
+    assert(basketball_shoot(&shot, release));
+    int old = basketball_pan(&idle, release, 12, 35);
+    assert(abs(old) >= 3 * 10);
+    for (uint64_t now = release; now < release + BASKETBALL_SHOT_MS; now += 20) {
+        basketball_tick(&idle, now);
+        basketball_tick(&shot, now);
+        const int pan = basketball_pan(&shot, now, 12, 35);
+        const float x = basketball_hoop_at(&idle, now);
+        assert(pan == basketball_pan(&idle, now, 12, 35)); /* the ball never takes over */
+        if (fabsf(x - BASKETBALL_CENTER_X) > 12.0f) assert((pan > 0) == (x > BASKETBALL_CENTER_X));
+        assert(abs(pan - old) <= 4 && abs(pan) <= 80);
+        assert(abs(basketball_pan(&shot, now, 4, 35)) <= 30);
+        assert(abs(basketball_pan(&shot, now, 12, 5)) <= 25);
+        old = pan;
+    }
+    basketball_tick(&shot, BASKETBALL_DURATION_MS);
+    assert(basketball_pan(&shot, BASKETBALL_DURATION_MS, 12, 35) == 0);
+}
 static void full_game_tests(void)
 {
     unsigned counts[STRATEGIES][2] = {{0}};
@@ -311,6 +338,6 @@ static void full_game_tests(void)
 int main(void)
 {
     debounce_tests(); interrupt_debounce_tests(); bounce_tests(); shot_tests(); timing_tests(); random_path_tests();
-    full_game_tests();
+    pan_tests(); full_game_tests();
     puts("basketball: debounce, bouncing random path, judgment at the rim, timer and scoring passed");
 }

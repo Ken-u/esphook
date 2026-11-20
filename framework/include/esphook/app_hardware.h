@@ -8,7 +8,8 @@ typedef struct { bool radar, servo; unsigned physical_keys; } app_hardware_polic
 typedef struct {
     app_hardware_profile_t active, configured;
     app_hardware_state_t screen, radar, servo;
-    bool drivers_compiled, restart_required;
+    bool drivers_compiled; /* always true: the one universal image has the radar and servo drivers; kept for older PC tools */
+    bool restart_required;
     unsigned physical_keys;
     uint32_t radar_frames;
 } app_hardware_info_t;

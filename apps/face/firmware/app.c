@@ -106,4 +106,4 @@ static bool command(const char *line)
     return true;
 }
 const app_descriptor_t esphook_app_face = {.api_version=APP_API_VERSION, .id="face", .title="表情",
-    .flags=APP_STANDBY, .refresh_ms=40, .state_size=sizeof(state_t), .on_enter=enter, .on_event=event, .render=render, .icon=icon, .command=command};
+    .flags=APP_STANDBY | APP_SERVO_DEFAULT_FOLLOW, .refresh_ms=40, .state_size=sizeof(state_t), .on_enter=enter, .on_event=event, .render=render, .icon=icon, .command=command, .menu_group = APP_MENU_DAILY};

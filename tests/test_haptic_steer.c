@@ -58,6 +58,10 @@ static void test_haptic_shake(void)
     assert(!h.shaking);
     /* back at the base angle once it is over */
     assert(angle == 0);
+    haptic_init(&h);
+    haptic_shake_direction(&h, 2000, 4, 120, 480, 35, true);
+    assert(haptic_step(&h, 2000, 30, 35, &angle) && angle == -4);
+    assert(haptic_step(&h, 2000 + h.half_ms, 30, 35, &angle) && angle > 0);
     /* The amplitude never leaves the stops. */
     haptic_init(&h);
     haptic_shake(&h, 5000, 30, 100, 2000, 90);

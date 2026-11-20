@@ -61,8 +61,6 @@ void radar_view_draw(uint16_t *p, const ld2450_frame_t *raw, bool online,
         unsigned phase = phase_ms % 4000;
         float degree = -60 + (phase <= 2000 ? phase : 4000 - phase) * 0.06f;
         ray(p, degree * PI_F / 180, 0x21A9);
-        /* Marker numbers are radar slot numbers, not persistent identities. */
-        static const uint16_t digits[] = {0x2497, 0x73E7, 0x73CF};
         for (unsigned i = 0; i < LD2450_TARGETS; ++i) {
             int x, y;
             if (!radar_view_project(&raw->targets[i], range, &x, &y)) continue;
@@ -70,12 +68,6 @@ void radar_view_draw(uint16_t *p, const ld2450_frame_t *raw, bool online,
                 pixel(p, x + d, y, radar_target_color(i));
                 pixel(p, x, y + d, radar_target_color(i));
             }
-            /* Clamp annotations independently: never write beyond the image. */
-            int label_x = x + 4 < RADAR_VIEW_WIDTH - 3 ? x + 4 : x - 6;
-            int label_y = y > 5 ? y - 5 : y + 3;
-            for (int bit = 0; bit < 15; ++bit)
-                if (digits[i] & (1U << (14 - bit)))
-                    pixel(p, label_x + bit % 3, label_y + bit / 3, radar_target_color(i));
         }
     }
     /* The machine itself: a small head with its lens, so it is clear which way the radar looks. */

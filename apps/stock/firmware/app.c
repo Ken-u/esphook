@@ -1,4 +1,5 @@
 #include "esphook/app.h"
+#include "esphook/app_haptic.h"
 #include "esphook/app_ui.h"
 #include "esphook/app_services.h"
 #include <math.h>
@@ -9,9 +10,19 @@
 typedef struct {
     lv_obj_t *chart, *header, *price, *badge, *badge_text, *footer, *panel, *card, *accent, *title, *profit, *detail, *hint;
     remote_game_view_t view;
+    haptic_t haptic;
+    uint32_t previous_id;
+    unsigned previous_trades;
+    remote_phase_t previous_phase;
+    bool connected;
 } state_t;
 _Static_assert(sizeof(state_t) <= APP_STATE_CAPACITY, "stock state too large");
-static void enter(app_context_t *ctx) { stock_transport_event("launch", ctx->now_ms); }
+static void enter(app_context_t *ctx)
+{
+    state_t *s = ctx->state;
+    haptic_init(&s->haptic);
+    stock_transport_event("launch", ctx->now_ms);
+}
 static void leave(app_context_t *ctx)
 {
     state_t *s=ctx->state; stock_transport_event("menu", ctx->now_ms);
@@ -31,6 +42,19 @@ static void render(app_context_t *ctx)
 {
     state_t *s=ctx->state; stock_transport_view(ctx->now_ms, &s->view);
     remote_game_view_t *v=&s->view;
+    const bool connected = v->active && !v->offline;
+    if (!connected) haptic_stop(&s->haptic);
+    else if (s->connected && s->previous_id == v->id) {
+        if (v->phase == REMOTE_RESULT && s->previous_phase != REMOTE_RESULT)
+            haptic_cue(ctx, &s->haptic, v->pct_bps < 0 ? -5 : 5, 180, 520);
+        else if (v->phase == REMOTE_PLAY && v->trades > s->previous_trades)
+            haptic_cue(ctx, &s->haptic, v->holding ? 3 : -3, 120, 290);
+    }
+    s->connected = connected;
+    s->previous_id = v->id;
+    s->previous_phase = v->phase;
+    s->previous_trades = v->trades;
+    haptic_pump(ctx, &s->haptic);
     v->held_ms=app_hold_ms(ctx);
     if (!s->chart) {
         s->header = app_ui_label(ctx->root, &aihook_font_12, 2, 0, 100, 13, LV_LABEL_LONG_MODE_CLIP);
@@ -98,5 +122,6 @@ static void icon(void *parent, int x, int y, bool selected)
         app_ui_rect(parent,x+3+k*6,y+top,1,12,color,0); app_ui_rect(parent,x+1+k*6,y+top+3,5,6,color,0); }
 }
 const app_descriptor_t esphook_app_stock = {.api_version=APP_API_VERSION, .id="stock", .title="做T",
+    .flags = APP_SERVO_DEFAULT_HAPTIC,
     .refresh_ms=40, .state_size=sizeof(state_t), .init=stock_transport_init, .on_enter=enter,
-    .on_leave=leave, .on_event=event, .render=render, .icon=icon, .command=stock_transport_command};
+    .on_leave=leave, .on_event=event, .render=render, .icon=icon, .command=stock_transport_command, .menu_group = APP_MENU_GAMES};

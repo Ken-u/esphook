@@ -11,8 +11,8 @@ import tarfile
 import tempfile
 import zipfile
 ROOT=Path(__file__).resolve().parents[1]
-SOURCE_PATHS=("main","framework","apps","cmake",".agents","scripts","tests","docs","bin","host","tools",
-    "AGENTS.md","README.md","CMakeLists.txt","sdkconfig.defaults","partitions_aihook.csv","dependencies.lock",
+SOURCE_PATHS=("main","framework","apps","cmake",".agents","scripts","tests","docs","bin","host","tools","examples",
+    "AGENTS.md","CLAUDE.md","README.md","CMakeLists.txt","sdkconfig.defaults","partitions_aihook.csv","dependencies.lock",
     "version.txt","install.sh","run.py","run.sh","run.cmd",".gitignore")
 
 def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -96,7 +96,7 @@ def package(inputs,dist):
         "- **esphook-host.tar.gz**: compatible PC/install archive. **esphook-firmware.bin**: app-only OTA image.\n"
         "- Python 3.10+; first real USB use installs pinned esptool/pyserial into an isolated environment and needs Internet. Building apps needs ESP-IDF 5.5.4 or its container.\n"
         "- Recommended setup: use uv to create .esphook-venv and install tools/requirements-flash.txt; see docs/usb-environment.md in the kit/SDK or ENVIRONMENT.md in full-flash. No ESP-IDF is needed for flashing or PC tools.\n"
-        "- SDK USB virtual keys share the same gestures and support persistent physical/USB/reply-word mappings. Default auto profile preserves legacy keys and never initializes servo PWM; select robot and reboot explicitly.\n"
+        "- SDK USB virtual keys share the same gestures and support persistent physical/USB/reply-word mappings. Default auto profile keeps all three keys and never initializes servo PWM; select robot and reboot explicitly.\n"
         "- Settings report detected radar, unknown screen/servo connections and saved hardware profiles; optional peripherals can be absent.\n"
         "- CI verifies both board builds, app lifecycle/rendering, input and packaging; actual screen frame rate and hardware behavior still need device testing.\n")
     return [dist/name for name in (*names,"SHA256SUMS")]

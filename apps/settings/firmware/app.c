@@ -73,7 +73,6 @@ static void event(app_context_t *ctx,const app_event_t *e)
     if(e->kind!=APP_EVENT_CONFIRM) return;
     if(s->page==5) {
         app_hardware_info_t info;app_hardware_info(&info);
-        if(!info.drivers_compiled) { s->feedback="仅屏幕固件";return; }
         if(info.restart_required && !s->editing) { app_device_restart();return; }
         if(!s->editing) { s->editing=true;s->candidate=info.configured;s->feedback=NULL; }
         else {

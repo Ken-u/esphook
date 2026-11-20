@@ -60,3 +60,5 @@ bool basketball_shoot(basketball_game_t *game, uint64_t now_ms);
 void basketball_snapshot(const basketball_game_t *game, uint64_t now_ms, basketball_view_t *view);
 /* Hoop centre at any time (also in the future) along the predetermined path. */
 float basketball_hoop_at(const basketball_game_t *game, uint64_t at_ms);
+/* Horizontal pan target in tenths of a degree, positive toward screen right. */
+int basketball_pan(const basketball_game_t *game, uint64_t now_ms, int limit_deg, int speed_dps);

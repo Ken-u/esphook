@@ -15,6 +15,9 @@
 #ifdef ESPHOOK_TEST_RACING
 #include "racing_core.h"
 #endif
+#ifdef ESPHOOK_TEST_FISHING
+#include "fishing_core.h"
+#endif
 #ifdef ESPHOOK_TEST_FORTUNE
 #include "fortune_core.h"
 #endif
@@ -120,7 +123,8 @@ bool app_command_menu(void) { app_menu(&manager.context);return true; }
 /* The radar sees one person and the servo is a plain recorder: a game can be steered and its servo requests inspected. */
 static ld2450_target_t radar_target={.valid=true,.x_mm=1000,.y_mm=1500};
 static bool radar_online=true;
-void app_radar_read(app_radar_t *r) { memset(r,0,sizeof *r);r->available=true;r->online=radar_online;r->range_mm=6000;r->frame.targets[0]=radar_target;r->frame.targets[0].x_mm=(int16_t)-radar_target.x_mm; }
+void app_radar_read(app_radar_t *r) { memset(r,0,sizeof *r);r->available=true;r->online=radar_online;r->range_mm=ui.range_mm;r->frame.targets[0]=radar_target;r->frame.targets[0].x_mm=(int16_t)-radar_target.x_mm; }
+bool app_radar_set_view_range(unsigned range_mm) { ui.range_mm = range_mm; return true; }
 /* radar_target.x_mm is where the player stands to their own right; the sensor's +X is the player's left, so the frame is mirrored. */
 static app_servo_t servo_state={.available=true,.tracking=ROBOT_IDLE,.limit_deg=30,.speed_dps=35};
 static struct { unsigned arm,disarm,angle; int last,lo,hi; } servo_log;
@@ -135,24 +139,51 @@ bool app_servo_request(app_context_t *c,app_servo_action_t a,int v)
 }
 /* The calibration service is a record too: what the servo uses, what was stored, and every request. */
 static app_servo_cal_t servo_cal={.config={.center_us=1500,.limit_deg=30,.speed_dps=35},.available=true,.stored=true};
-static struct { unsigned applies,saves;bool busy; } cal_log;
+static struct { unsigned applies,saves;bool busy,defer_save; } cal_log;
 void app_servo_cal_read(app_servo_cal_t *c) { *c=servo_cal; }
 bool app_servo_cal_apply(app_context_t *c,const robot_config_t *cfg,bool save)
 {
     (void)c;
     if(cal_log.busy || !servo_cal.available || !app_servo_cal_valid(cfg)) return false;
     ++cal_log.applies;servo_cal.config=*cfg;servo_state.limit_deg=cfg->limit_deg;servo_state.speed_dps=cfg->speed_dps;
-    if(save) { ++cal_log.saves;servo_cal.stored=true; }
+    if(save && !cal_log.defer_save) { ++cal_log.saves;servo_cal.stored=true;++servo_cal.save_seq;servo_cal.save_ok=true; }
     return true;
 }
+#ifdef ESPHOOK_TEST_FOLLOWTRIM
+static app_follow_trim_t follow_trim;
+static bool follow_save_fails;
+void app_follow_trim_read(app_follow_trim_t *out) { *out = follow_trim; }
+bool app_follow_trim_apply(app_context_t *ctx, int degrees, bool save)
+{
+    assert(!strcmp(ctx->app->id, "followtrim") && robot_follow_trim_valid(degrees));
+    if (!save) {
+        assert(servo_state.armed);
+        follow_trim.preview = true;
+        follow_trim.active_deg = degrees;
+    } else {
+        ++follow_trim.save_seq;
+        follow_trim.save_ok = !follow_save_fails;
+        if (follow_trim.save_ok) follow_trim.saved_deg = degrees;
+    }
+    return true;
+}
+static void release_followtrim(const char *id, void *user)
+{
+    (void)user;
+    if (strcmp(id, "followtrim")) return;
+    follow_trim.preview = false;
+    follow_trim.active_deg = 0;
+    servo_state.armed = false;
+}
+#endif
 void app_hook_read(app_hook_t *h) { memset(h,0,sizeof *h);h->current=h->connected=true;h->clients=1;h->unread=2;strcpy(h->client,"Codex");strcpy(h->title,"任务已完成");strcpy(h->body,"长按回复继续"); }
 bool app_hook_reply(unsigned key) { return key<3; }
 void app_key_word(unsigned key,char *s,size_t n) { const char *words[]={"ok","continue","done"};snprintf(s,n,"%s",words[key%3]); }
 static unsigned restarts;
 static app_hardware_profile_t hardware_profile=APP_PROFILE_ROBOT,hardware_active=APP_PROFILE_ROBOT;
-static bool hardware_drivers=true,hardware_save_ok=true;
+static bool hardware_save_ok=true;
 app_hardware_profile_t app_hardware_active(void) { return hardware_active; }
-void app_hardware_info(app_hardware_info_t *h) { memset(h,0,sizeof *h);h->active=hardware_active;h->configured=hardware_profile;h->drivers_compiled=hardware_drivers;h->restart_required=h->active!=h->configured;h->screen=APP_HW_INITIALIZED;h->radar=APP_HW_DETECTED;h->servo=APP_HW_INITIALIZED;h->physical_keys=1; }
+void app_hardware_info(app_hardware_info_t *h) { memset(h,0,sizeof *h);h->active=hardware_active;h->configured=hardware_profile;h->drivers_compiled=true;h->restart_required=h->active!=h->configured;h->screen=APP_HW_INITIALIZED;h->radar=APP_HW_DETECTED;h->servo=APP_HW_INITIALIZED;h->physical_keys=1; }
 bool app_hardware_set_profile(app_hardware_profile_t p) { if(!hardware_save_ok) return false;hardware_profile=p;return true; }
 void app_device_restart(void) { ++restarts; }
 void app_device_info(app_device_info_t *d) { memset(d,0,sizeof *d);strcpy(d->version,"0.3.0");strcpy(d->build,"2026-11-16");strcpy(d->daemon_host,"192.168.1.10");strcpy(d->ip,"192.168.1.24");d->daemon_port=18765;d->robot_hardware=true; }
@@ -246,9 +277,100 @@ static bool shows_text(lv_obj_t *obj,const char *text)
     for(uint32_t i=0;i<lv_obj_get_child_count(obj);++i) if(shows_text(lv_obj_get_child(obj,(int32_t)i),text)) return true;
     return false;
 }
+#ifdef ESPHOOK_TEST_FOLLOWTRIM
+static void open_followtrim(void)
+{
+    assert(app_open(&manager.context, "followtrim"));
+    app_manager_commit(&manager);
+    run(60);
+}
+static void play_followtrim(const char *out)
+{
+    follow_trim = (app_follow_trim_t){.available = true, .aim_deg = -17.6f};
+    open_followtrim();
+    const unsigned arms = servo_log.arm;
+    dump(out, "followtrim-setup");
+    assert(shows_text(lv_screen_active(), "正前取中") && shows_text(lv_screen_active(), "0°"));
+    assert(!hold_leaves("followtrim", 600));
+    assert(!follow_trim.preview && servo_log.arm == arms && shows_text(lv_screen_active(), "等待雷达目标"));
+
+    follow_trim.tracking = ROBOT_TRACKING;
+    follow_trim.online = true;
+    assert(!hold_leaves("followtrim", 600)); /* capture and preview, retaining the saved value */
+    assert(follow_trim.preview && follow_trim.active_deg == 18 && follow_trim.saved_deg == 0 && servo_log.arm == arms + 1);
+    assert(shows_text(lv_screen_active(), "左 18°") && shows_text(lv_screen_active(), "跟随预览"));
+    dump(out, "followtrim-preview");
+    k1(true); run(650);
+    assert(shows_text(lv_screen_active(), "松手保存") && follow_trim.save_seq == 0);
+    app_manager_cancel_key(&manager, 0, manager.context.now_ms); run(60);
+    assert(!left("followtrim") && follow_trim.save_seq == 0);
+    assert(hold_leaves("followtrim", 2100));
+    assert(!follow_trim.preview && !servo_state.armed && follow_trim.save_seq == 0);
+
+    open_followtrim();
+    event(APP_EVENT_SHORT);
+    assert(shows_text(lv_screen_active(), "向左调"));
+    assert(!hold_leaves("followtrim", 600));
+    for (unsigned i = 0; i < 3; ++i) { k1(true); run(35); k1(false); }
+    assert(!left("followtrim") && follow_trim.active_deg == 3 && follow_trim.saved_deg == 0);
+    follow_save_fails = true;
+    hold_leaves("followtrim", 600);
+    assert(!left("followtrim") && follow_trim.save_seq == 1 && follow_trim.saved_deg == 0);
+    assert(shows_text(lv_screen_active(), "保存失败 再试一次"));
+    follow_save_fails = false;
+    hold_leaves("followtrim", 600);
+    assert(!left(app_standby_id(&manager.context)) && manager.context.standby);
+    assert(!follow_trim.preview && follow_trim.save_seq == 2 && follow_trim.saved_deg == 3);
+}
+#endif
 /* The hint line of a game that switched the triple off alternates with the way out: either may be on screen. */
 static bool shows_hint(const char *hint) { return shows_text(lv_screen_active(),hint) || shows_text(lv_screen_active(),"按住2秒退出"); }
 static unsigned changed_pixels(const uint16_t *a,const uint16_t *b) { unsigned n=0;for(unsigned i=0;i<160*64;++i) n+=a[i]!=b[i];return n; }
+#ifdef ESPHOOK_TEST_RADAR
+static void check_radar(const char *out)
+{
+    const ld2450_target_t saved_target = radar_target;
+    const robot_ui_t saved_ui = ui;
+    ui = robot_ui_default();
+    radar_target.x_mm = 107;
+    radar_target.y_mm = 1549;
+    assert(app_open(&manager.context, "radar"));
+    app_manager_commit(&manager);
+    run(100);
+    lv_obj_t *screen = lv_screen_active();
+    assert(shows_text(screen, "R1 6000 X/Y mm") && shows_text(screen, "X+107\nY1549"));
+    radar_target.y_mm = 1548;
+    run(100);
+    assert(shows_text(screen, "X+107\nY1548"));
+
+    k1(true);
+    run(1200);
+    assert(ui.range_mm == 3000 && shows_text(screen, "R1 3000 X/Y mm"));
+    k1(false);
+    run(100);
+    assert(!left("radar") && ui.range_mm == 3000);
+    assert(!hold_leaves("radar", 650));
+    run(100);
+    assert(ui.range_mm == 1500 && shows_text(screen, "R1 1500 X/Y mm"));
+    assert(shows_text(screen, "X+107\nY1548"));
+    dump(out, "radar-mm");
+    assert(!hold_leaves("radar", 650));
+    assert(ui.range_mm == 6000);
+
+    radar_target.x_mm = -32767;
+    radar_target.y_mm = -32767;
+    run(100);
+    assert(shows_text(screen, "X-32767\nY-32767"));
+    dump(out, "radar-mm-edge");
+    k1(true);
+    run(80);
+    k1(false);
+    run(850);
+    assert(!strcmp(app_active_id(&manager.context), "launcher"));
+    radar_target = saved_target;
+    ui = saved_ui;
+}
+#endif
 #ifdef ESPHOOK_TEST_BASKETBALL
 /* Shoots until it has seen a make and a miss, then lets the clock run out. Frames are for eyes only. */
 static void play_basketball(const char *out)
@@ -257,8 +379,11 @@ static void play_basketball(const char *out)
     /* shots come fast: three quick presses are shots, and only holding the key for two seconds leaves mid-game */
     assert(!mash_leaves("basketball") && game_status("basketball","robot game status","shots=")>=1);
     assert(!hold_leaves("basketball",1900) && hold_leaves("basketball",2100) && !strcmp(app_active_id(&manager.context),"launcher"));
+    const unsigned previous_angles = servo_log.angle;
+    servo_state.armed = true; /* a calibrated unit enters this game with haptics enabled */
     assert(app_open(&manager.context,"basketball"));app_manager_commit(&manager);run(100);
     assert(game_status("basketball","robot game status","phase=")==1);dump(out,"basketball-idle");
+    assert(servo_log.angle > previous_angles && abs(servo_log.last) <= 8);
     unsigned made=0;bool saw_hit=false,saw_miss=false;
     for(unsigned shot=0;shot<60 && !(saw_hit && saw_miss);++shot) {
         event(APP_EVENT_SHORT);run(160);if(shot==0) dump(out,"basketball-flight");
@@ -271,29 +396,57 @@ static void play_basketball(const char *out)
     assert(saw_hit && saw_miss);
     for(unsigned s=0;s<40 && game_status("basketball","robot game status","phase=")!=2;++s) run(5000);
     assert(game_status("basketball","robot game status","phase=")==2);run(300);dump(out,"basketball-result");
+    assert(servo_log.last == 0);
+    servo_state.armed = false;
 }
 #endif
 #ifdef ESPHOOK_TEST_DINO
-/* The menu is an iPod-style list: the title and "n/N" of the selected app are on screen at every step, the list scrolls
- * one row at a time and comes round again at the end, and holding the key fills the bar without ever leaving the menu
- * before the half second is up. Frames: the top, the scrolling edge, the last page, and a hold half way. */
+static void menu_double(void)
+{
+    for (unsigned i = 0; i < 2; ++i) { k1(true); run(60); k1(false); run(60); }
+    run(APP_DOUBLE_MS);
+}
 static void check_menu(const char *out)
 {
-    const size_t total=app_count(&manager.context);
-    assert(total>4 && !strcmp(app_active_id(&manager.context),"launcher"));
-    const size_t first=app_selection(&manager.context);
-    for(size_t i=0;i<=total;++i) {
+    const app_descriptor_t *games[32];
+    size_t total = 0;
+    for (size_t i = 0; i < app_count(&manager.context); ++i) {
+        const app_descriptor_t *app = app_at(&manager.context, i);
+        if (app->menu_group == APP_MENU_GAMES) {
+            assert(total < sizeof games / sizeof games[0]);
+            games[total++] = app;
+        }
+    }
+    assert(total > 4 && !left("launcher"));
+    assert(shows_text(lv_screen_active(), "菜单") && shows_text(lv_screen_active(), "双击返回"));
+    dump(out, "launcher-groups");
+    event(APP_EVENT_SHORT); /* Daily, with its own list and back stack */
+    const size_t daily = app_selection(&manager.context);
+    k1(true); run(250); dump(out, "launcher-hold-half");
+    assert(!left("launcher") && shows_text(lv_screen_active(), "菜单"));
+    run(300); k1(false);
+    assert(!left("launcher") && !shows_text(lv_screen_active(), "菜单") && app_selection(&manager.context) == 0);
+    menu_double();
+    assert(!left("launcher") && shows_text(lv_screen_active(), "菜单") && app_selection(&manager.context) == daily);
+    menu_double(); /* At the root, back is the previous app. */
+    assert(!left("settings"));
+    assert(app_open(&manager.context, "launcher")); app_manager_commit(&manager); run(20);
+    while (app_selection(&manager.context) != 0) event(APP_EVENT_SHORT);
+    event(APP_EVENT_CONFIRM);
+    assert(!left("launcher") && shows_text(lv_screen_active(), "游戏"));
+    for(size_t i=0;i<total;++i) {
         const size_t sel=app_selection(&manager.context);
         char count[16];snprintf(count,sizeof count,"%u/%u",(unsigned)sel+1U,(unsigned)total);
         run(300);
-        assert(shows_text(lv_screen_active(),count) && shows_text(lv_screen_active(),app_at(&manager.context,sel)->title));
+        assert(shows_text(lv_screen_active(),count) && shows_text(lv_screen_active(),games[sel]->title));
         if(i==0||i==2||i==3||i==4||i==9||i==total-1) { char name[64];snprintf(name,sizeof name,"launcher-%zu",i);dump(out,name); }
         event(APP_EVENT_SHORT);assert(!strcmp(app_active_id(&manager.context),"launcher"));
         if(i==3) { run(60);dump(out,"launcher-scroll-mid"); } /* the list sliding up one row under the bar */
     }
-    assert(app_selection(&manager.context)==(first+1U)%total); /* total + 1 presses: once round and one more */
-    k1(true);run(250);dump(out,"launcher-hold-half");assert(!strcmp(app_active_id(&manager.context),"launcher"));
-    run(400);assert(strcmp(app_active_id(&manager.context),"launcher")); /* the half second is up: the selected app opens */
+    assert(app_selection(&manager.context)==0);
+    event(APP_EVENT_SHORT);
+    k1(true);run(250);assert(!left("launcher"));
+    run(400);assert(!left(games[1]->id)); /* The selected app opens from the submenu. */
     k1(false);run(100);
     assert(app_open(&manager.context,APP_LAUNCHER));app_manager_commit(&manager);run(20);
 }
@@ -495,11 +648,11 @@ static void play_servocal(const char *out)
     assert(shows_text(lv_screen_active(),"舵机待重启") && shows_text(lv_screen_active(),"长按 重启生效"));
     event(APP_EVENT_CONFIRM);assert(restarts==1 && hardware_profile==APP_PROFILE_ROBOT);
     assert(app_open(&manager.context,"launcher"));app_manager_commit(&manager);run(20);
-    /* A screen-only firmware has no servo driver at all. */
-    hardware_active=APP_PROFILE_SCREEN;hardware_profile=APP_PROFILE_SCREEN;hardware_drivers=false;restarts=0;servo_open();
-    assert(shows_text(lv_screen_active(),"没有舵机") && shows_text(lv_screen_active(),"本固件不含舵机驱动"));
-    event(APP_EVENT_CONFIRM);assert(!strcmp(app_active_id(&manager.context),"launcher") && restarts==0 && hardware_profile==APP_PROFILE_SCREEN);
-    hardware_active=hardware_profile=APP_PROFILE_ROBOT;hardware_drivers=true;restarts=0;
+    /* The `screen` profile has no servo either and offers the same way on. */
+    hardware_active=hardware_profile=APP_PROFILE_SCREEN;restarts=0;servo_open();
+    assert(shows_text(lv_screen_active(),"舵机未启用") && shows_text(lv_screen_active(),"长按 切到机器人配置"));
+    event(APP_EVENT_SHORT);assert(!strcmp(app_active_id(&manager.context),"launcher") && restarts==0 && hardware_profile==APP_PROFILE_SCREEN);
+    hardware_active=hardware_profile=APP_PROFILE_ROBOT;restarts=0;
     servo_fresh();
     /* A robot whose calibration is stored does not ask at boot; the first page waits for the go-ahead and arms nothing. */
     assert(!has_servocal_first_run());
@@ -537,7 +690,11 @@ static void play_servocal(const char *out)
     /* A busy motion service keeps the final hold from leaving; the next one stores, disarms and goes back to the menu. */
     event(APP_EVENT_SHORT);event(APP_EVENT_SHORT);run(60);assert(servo_cal.config.speed_dps==35);
     cal_log.busy=true;event(APP_EVENT_CONFIRM);assert(!strcmp(app_active_id(&manager.context),"servocal") && cal_log.saves==0);
-    cal_log.busy=false;event(APP_EVENT_CONFIRM);run(30);
+    cal_log.busy=false;cal_log.defer_save=true;event(APP_EVENT_CONFIRM);run(120);
+    assert(!left("servocal") && shows_text(lv_screen_active(),"正在保存"));
+    ++servo_cal.save_seq;servo_cal.save_ok=false;run(120);
+    assert(!left("servocal") && shows_text(lv_screen_active(),"保存失败 再试一次"));
+    cal_log.defer_save=false;event(APP_EVENT_CONFIRM);run(30);
     assert(cal_log.saves==1 && servo_cal.stored && servo_cal.config.center_us==1400 && servo_cal.config.limit_deg==5 && servo_cal.config.speed_dps==35 && !servo_cal.config.reverse);
     assert(!servo_state.armed && servo_log.disarm>disarms && !strcmp(app_active_id(&manager.context),"launcher"));
     /* Only that hold stores: the triple press from the menu puts back what the app started with and disarms. */
@@ -738,6 +895,8 @@ static void fishing_hook(void)
 }
 static void play_fishing(const char *out)
 {
+    servo_state.armed = false;
+    memset(&servo_log, 0, sizeof servo_log);
     assert(app_open(&manager.context,"fishing"));app_manager_commit(&manager);run(300);
     assert(game_status("fishing","robot fishing status","phase=")==0 && game_status("fishing","robot fishing status","servo=")==1);
     assert(shows_hint("按键抛竿 长按启用舵机") && shows_text(lv_screen_active(),"钓0"));dump(out,"fishing-idle");
@@ -763,6 +922,23 @@ static void play_fishing(const char *out)
     event(APP_EVENT_CONFIRM);assert(servo_log.arm==1); /* already enabled: no second request */
     fishing_hook();
     assert(shows_text(lv_screen_active(),"舵机"));
+    fs_t *fish = manager.context.state;
+    const fs_t before_swim = *fish;
+    fish->next_start_ms = UINT32_MAX;
+    fish->move_wait = 1000;
+    run(500); /* let the bite shake finish before comparing directions */
+    fish->fx = fish->gx = FS_FISH_X_MAX * 16;
+    fish->fy = (FS_FISH_Y_MIN + FS_FISH_Y_MAX) * 8;
+    fish->gy = FS_FISH_Y_MIN * 16;
+    run(100);
+    assert(servo_log.last >= 3);
+    fish->fx = fish->gx = FS_FISH_X_MIN * 16;
+    fish->fy = (FS_FISH_Y_MIN + FS_FISH_Y_MAX) * 8;
+    fish->gy = FS_FISH_Y_MAX * 16;
+    run(100);
+    assert(servo_log.last <= -3);
+    *fish = before_swim;
+    fish->now_ms = (uint32_t)manager.context.now_ms;
     assert(fishing_fight(out,false)>=1);
     assert(servo_log.angle>=4 && servo_log.hi>=2 && servo_log.lo<=-1 && servo_log.hi<=29 && servo_log.lo>=-29);
     /* a fight that is not answered at all ends with the line broken and the fish gone */
@@ -883,7 +1059,7 @@ static void play_starship(const char *out)
     for(unsigned i=0;i<4000 && SS_STATUS("phase=")!=3;++i) run(50);
     assert(SS_STATUS("phase=")==3);run(1000);tap();assert(SS_STATUS("phase=")==1);
     radar_online=false;run(300);
-    key(2,true);run(1000);assert((int)SS_STATUS("cam=")>600 && SS_STATUS("src=")==2);key(2,false);
+    key(2,true);run(1000);assert((int)SS_STATUS("cam=")>600 && SS_STATUS("src=")==2 && servo_log.last<0);key(2,false);
     run(1200);assert(abs((int)SS_STATUS("cam="))<300 || SS_STATUS("phase=")!=1);
     key(1,true);run(1000);assert((int)SS_STATUS("cam=")<-600 || SS_STATUS("phase=")!=1);key(1,false);
     assert(!strcmp(app_active_id(&manager.context),"starship")); /* neither is navigation */
@@ -953,9 +1129,14 @@ static void pose_racing(const char *out)
     assert(RC_STATUS("vox=")>1000 && RC_STATUS("vox=")<3500); /* cars, trees, posts and the gantry are stacks of slices, within budget */
     r->nitro_ms=2000;r->nitro=700;r->speed16=250*16;
     run(40);dump(out,"racing-pose-nitro");
+    const unsigned crashes = RC_STATUS("crashes="), angle_requests = servo_log.angle;
     r->nitro_ms=0;r->car[2].pos_mm=r->pos_mm+4600;r->car[2].px=rc_px(r);r->car[2].speed=60;
     run(60);dump(out,"racing-pose-crash");
     assert(RC_STATUS("vox=")>500 && RC_STATUS("vox=")<3500);
+    assert(RC_STATUS("crashes=") > crashes);
+    run(550);
+    assert(servo_log.angle > angle_requests + 1 && servo_log.last == 0);
+    assert(servo_log.hi > 0 && servo_log.hi <= 10 && servo_log.lo >= -10);
     /* and a bend to the left, with the road empty: the chevrons and the swing of the road */
     memset(r->car,0,sizeof r->car);r->spawn_wait=60000;
     at=r->pos_mm+300000;while(rc_curve_at(r,at)>-230) at+=1000;
@@ -985,17 +1166,17 @@ static void play_racing(const char *out)
     for(unsigned i=0;i<60 && RC_STATUS("phase=")!=2;++i) run(50);
     assert(RC_STATUS("phase=")==2);run(100);dump(out,"racing-go");
     assert(shows_text(lv_screen_active(),"按住加速 舵机已启用") && RC_STATUS("speed=")==0);
-    /* the key is the pedal; the radar is the wheel and the servo follows it */
+    /* Leaning makes both the car and the servo steer in the same direction. */
     rkey(0,true);run(2500);
     assert(RC_STATUS("speed=")>=80 && RC_STATUS("dist=")>20 && RC_STATUS("phase=")==2);
     rlean(1000,200);
     rlean(1350,600);run(200);
-    assert(RC_INT("steer=")>150 && RC_INT("px=")>50 && servo_log.last>6 && servo_log.last<=14 && RC_STATUS("src=")==1);dump(out,"racing-right");
+    assert(RC_INT("steer=")>150 && RC_INT("px=")>50 && servo_log.last<0 && RC_STATUS("src=")==1);dump(out,"racing-right");
     rlean(650,1000);run(300);
-    assert(RC_INT("steer=")<-150 && servo_log.last<-6 && servo_log.last>=-14);
+    assert(RC_INT("steer=")<-150 && servo_log.last>0);
     rlean(1000,1500);
     for(unsigned i=0;i<60;++i) { rlean(1000-(RC_INT("px=")>0?200:-200),20); } /* wheel back to the middle */
-    run(500);assert(abs(servo_log.last)<=14 && servo_log.hi<=14 && servo_log.lo>=-14);
+    rlean(1000, 600);assert(servo_log.last==0 && servo_log.hi<=10 && servo_log.lo>=-10);
     /* race on: checkpoints, a crash with a shake, the nitro, and the clock */
     bool nitro_seen=false;
     rdrive(120000,true,out,&nitro_seen);
@@ -1048,16 +1229,21 @@ static void guard_racing(void)
 static void draw_slip(void) { event(APP_EVENT_DOWN);run(1300);event(APP_EVENT_UP);run(FT_POP_MS+FT_UNFOLD_MS+80); }
 static void play_fortune(const char *out)
 {
+    servo_state.armed = true;
+    memset(&servo_log, 0, sizeof servo_log);
     assert(app_open(&manager.context,"fortune"));app_manager_commit(&manager);run(300);
     assert(FT_STATUS("phase=")==FT_IDLE && FT_STATUS("draws=")==0 && shows_text(lv_screen_active(),"今日幸运签") && shows_text(lv_screen_active(),"按键摇签 按住摇得更久"));
     dump(out,"fortune-idle");
+    assert(!servo_log.angle);
     static uint16_t previous[160*80];lv_refr_now(lv_display_get_default());memcpy(previous,framebuffer,sizeof previous);run(150);lv_refr_now(lv_display_get_default());
     assert(changed_pixels(previous,framebuffer)>4); /* motes of light drift over the lattice */
     event(APP_EVENT_DOWN);run(150);assert(FT_STATUS("phase=")==FT_SHAKE && shows_text(lv_screen_active(),"摇签中..."));dump(out,"fortune-shake-a");
     lv_refr_now(lv_display_get_default());memcpy(previous,framebuffer,sizeof previous);run(110);lv_refr_now(lv_display_get_default());
     assert(changed_pixels(previous,framebuffer)>200); /* the tube really moves */
     dump(out,"fortune-shake-b");run(900);
+    assert(servo_log.hi >= 4 && servo_log.hi <= 5 && servo_log.lo <= -4 && servo_log.lo >= -5);
     event(APP_EVENT_UP);run(400);assert(FT_STATUS("phase=")==FT_POP && shows_text(lv_screen_active(),"有签出来了!"));dump(out,"fortune-pop");
+    assert(servo_log.last == 0);
     run(FT_POP_MS-300);run(180);assert(FT_STATUS("phase=")==FT_UNFOLD);dump(out,"fortune-unfold");
     run(FT_UNFOLD_MS);assert(FT_STATUS("phase=")==FT_SLIP && FT_STATUS("draws=")==1);
     unsigned seen_grade[FT_LEVELS]={0},seen_info=0,seen_hint=0;
@@ -1088,6 +1274,7 @@ static void play_fortune(const char *out)
     for(unsigned look=0;look<8U;++look) { date|=shows_text(lv_screen_active(),"11月17日 周一");run(400); }
     assert(date);dump(out,"fortune-date");
     fake_clock.set=false;
+    servo_state.armed=false;
 }
 #endif
 #ifdef ESPHOOK_TEST_ALARM
@@ -1411,7 +1598,7 @@ static void play_zombie(const char *out)
     assert(servo_log.angle>before+1 && servo_log.lo>=-8 && servo_log.hi<=8 && servo_log.hi>0 && servo_log.lo<0);
     /* K2 and K3 turn the view when the radar sees nobody; the radar turns it when it does */
     zb_z_t quiet[]={zz(ZK_WALKER,900,1400)};zpose(1,quiet);
-    zkey(2,true);run(1000);assert(ZB_INT("cam=")>600 && ZB_STATUS("src=")==2);zkey(2,false);
+    zkey(2,true);run(1000);assert(ZB_INT("cam=")>600 && ZB_STATUS("src=")==2 && servo_log.last<0);zkey(2,false);
     run(1200);assert(abs(ZB_INT("cam="))<300);
     zkey(1,true);run(1000);assert(ZB_INT("cam=")<-600);zkey(1,false);
     assert(!strcmp(app_active_id(&manager.context),"zombie")); /* neither is navigation */
@@ -1666,6 +1853,9 @@ int main(int argc,char **argv)
     lv_display_set_buffers(d,draw_buffer,NULL,sizeof draw_buffer,LV_DISPLAY_RENDER_MODE_PARTIAL);lv_display_set_flush_cb(d,flush);
     for(size_t i=0;i<esphook_app_count;++i) if(esphook_apps[i]->init) assert(esphook_apps[i]->init());
     app_platform_t p={.scene_create=scene,.scene_delete=destroy,.save_standby=save,.time_read=read_time};ui=robot_ui_default();
+#ifdef ESPHOOK_TEST_FOLLOWTRIM
+    p.release_services = release_followtrim;
+#endif
     assert(app_manager_init(&manager,esphook_apps,esphook_app_count,&p,app_manager_default_standby(esphook_apps,esphook_app_count,"face"),0));run(100);
 #ifdef ESPHOOK_TEST_STOCK
     stock_data();
@@ -1683,6 +1873,9 @@ int main(int argc,char **argv)
             }
         }
     }
+#ifdef ESPHOOK_TEST_RADAR
+    check_radar(out);
+#endif
 #ifdef ESPHOOK_TEST_BASKETBALL
     play_basketball(out);
 #endif
@@ -1740,6 +1933,9 @@ int main(int argc,char **argv)
 #endif
 #ifdef ESPHOOK_TEST_SERVOCAL
     play_servocal(out);
+#endif
+#ifdef ESPHOOK_TEST_FOLLOWTRIM
+    play_followtrim(out);
 #endif
     assert(app_open(&manager.context,"settings"));app_manager_commit(&manager);run(20);
     event(APP_EVENT_SHORT);event(APP_EVENT_SHORT);event(APP_EVENT_SHORT);event(APP_EVENT_CONFIRM);

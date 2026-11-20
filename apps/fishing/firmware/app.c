@@ -428,8 +428,12 @@ static void drain_shakes(state_t *s, uint64_t now)
     app_servo_read(&sv);
     int amp;
     unsigned half, dur;
-    while (fs_take_shake(&s->core, &amp, &half, &dur))
-        if (sv.available && sv.armed) haptic_shake(&s->haptic, now, amp, half, dur, sv.speed_dps);
+    const bool pull_right = s->core.phase == FS_FIGHT && s->core.gy > s->core.fy;
+    while (fs_take_shake(&s->core, &amp, &half, &dur)) {
+        /* Short strokes reverse quickly within the calibrated speed. The first tug follows the fish. */
+        if (sv.available && sv.armed)
+            haptic_shake_direction(&s->haptic, now, app_clamp(amp, 1, 4), half, dur, sv.speed_dps, pull_right);
+    }
 }
 static void enter(app_context_t *ctx)
 {
@@ -458,6 +462,12 @@ static void tick(app_context_t *ctx)
         if (s->core.nibbles > s->seen_nibbles) s->nibble_ms = (uint32_t)ctx->now_ms;
         s->seen_nibbles = s->core.nibbles;
     }
+    const int middle = (FS_FISH_Y_MIN + FS_FISH_Y_MAX) * 8;
+    const int span = FS_FISH_Y_MAX * 16 - middle;
+    /* Y is sideways on the water. Lead the eased float a little to cover mechanical travel time. */
+    const int lateral = (s->core.fy + s->core.gy) / 2;
+    const int fish_angle_x10 = app_clamp((middle - lateral) * 60 / span, -60, 60);
+    haptic_base(&s->haptic, s->core.phase == FS_FIGHT ? fish_angle_x10 : 0);
     drain_shakes(s, ctx->now_ms);
     haptic_pump(ctx, &s->haptic);
 }
@@ -478,7 +488,7 @@ static void event(app_context_t *ctx, const app_event_t *e)
     }
     else if (e->kind == APP_EVENT_UP) fs_release(&s->core, now);
     else if (e->kind == APP_EVENT_CONFIRM && s->core.phase != FS_FIGHT && s->core.phase != FS_BITE)
-        (void)haptic_arm(ctx, &s->haptic); /* a deliberate half-second hold is the only thing that enables the servo */
+        (void)haptic_arm(ctx, &s->haptic); /* manual enable from a quiet screen */
     drain_shakes(s, e->ms);
     sync_exit(ctx, s);
     publish(s, true, false);
@@ -570,5 +580,6 @@ static void icon(void *parent, int x, int y, bool selected)
     app_ui_rect(parent, x + 10, y + 18, 2, 2, 0x101820, 1);
 }
 const app_descriptor_t esphook_app_fishing = {.api_version = APP_API_VERSION, .id = "fishing", .title = "钓鱼",
+    .flags = APP_SERVO_DEFAULT_HAPTIC,
     .refresh_ms = 33, .state_size = sizeof(state_t), .on_enter = enter, .on_leave = leave, .on_event = event,
-    .on_tick = tick, .render = render, .icon = icon, .command = command};
+    .on_tick = tick, .render = render, .icon = icon, .command = command, .menu_group = APP_MENU_GAMES};

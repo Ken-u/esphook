@@ -48,7 +48,12 @@ class PackageTests(unittest.TestCase):
         self.run_python(sdk,"scripts/check-apps.py")
         self.run_python(sdk,"apps/counter/pc/main.py","--dry-run")
         self.assertTrue((sdk/"main/CMakeLists.txt").is_file())
-        self.assertTrue((sdk/".agents/skills/esphook-app/SKILL.md").is_file())
+        for skill in ("esphook-app","esphook-pc","esphook-check","esphook-device","esphook-hook"):
+            self.assertTrue((sdk/".agents/skills"/skill/"SKILL.md").is_file(),skill)
+            self.assertTrue((kit/".agents/skills"/skill/"agents/openai.yaml").is_file(),skill)
+        self.assertEqual((kit/"CLAUDE.md").read_text().strip(),"@AGENTS.md")
+        self.run_python(kit,"scripts/check-docs.py")
+        self.assertEqual(json.loads(self.run_python(kit,"run.py","device","status","--dry-run"))["action"],"status")
         self.assertFalse((sdk/".git").exists() or (sdk/"managed_components").exists() or (sdk/"build").exists())
 
     def test_flash_integrity_and_checksums(self):

@@ -27,7 +27,16 @@ typedef enum { APP_SERVO_ARM, APP_SERVO_DISARM, APP_SERVO_FOLLOW,
 typedef struct {
     robot_config_t config;
     bool available, stored;
+    uint32_t save_seq; /* advances when a queued save completes, even if it failed */
+    bool save_ok;
 } app_servo_cal_t;
+typedef struct {
+    int saved_deg, active_deg;
+    float aim_deg; /* filtered follow angle before compensation, sway and travel limits */
+    uint32_t save_seq;
+    robot_state_t tracking;
+    bool available, online, preview, save_ok;
+} app_follow_trim_t;
 typedef struct {
     bool current, connected;
     unsigned clients, unread;
@@ -41,6 +50,8 @@ typedef struct {
 } app_device_info_t;
 
 void app_radar_read(app_radar_t *out);
+/* Set the screen's radar radius in RAM, keeping the current display mode and expiry. */
+bool app_radar_set_view_range(unsigned range_mm);
 void app_servo_read(app_servo_t *out);
 /* Queued, bounded and rate-limited by the motion service. Never auto-arms.
  * The first request leases the servo to this app; leaving disarms its lease. */
@@ -52,6 +63,9 @@ void app_servo_cal_read(app_servo_cal_t *out);
  * neutral so the change can be watched) but never arms it, and it is refused (false) while another app holds the servo,
  * when there is no servo, for an invalid combination or when the motion service's queue is full. */
 bool app_servo_cal_apply(app_context_t *ctx, const robot_config_t *config, bool save);
+void app_follow_trim_read(app_follow_trim_t *out);
+/* A preview requires the app's armed servo lease and expires on scene exit. A save applies to follow mode only. */
+bool app_follow_trim_apply(app_context_t *ctx, int degrees, bool save);
 void app_display_read(robot_ui_t *out);
 bool app_display_update(const char *json, size_t length, char *error, size_t error_size);
 void app_hook_read(app_hook_t *out);

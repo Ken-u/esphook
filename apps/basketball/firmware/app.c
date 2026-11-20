@@ -1,5 +1,6 @@
 #include "esphook/app.h"
 #include "esphook/app_gfx.h"
+#include "esphook/app_haptic.h"
 #include "esphook/app_ui.h"
 #include "esphook/app_services.h"
 #include <math.h>
@@ -26,6 +27,7 @@
 
 typedef struct {
     basketball_game_t game;
+    haptic_t haptic;
     lv_obj_t *top, *plot, *bottom, *hold, *hud, *results;
     lv_obj_t *clock_pill, *clock_label, *score_pill, *score_label, *bar, *shots_pill, *shots_label, *hint_pill, *hint, *float_label;
     lv_obj_t *title, *result_score, *result_line, *result_hint;
@@ -37,10 +39,12 @@ typedef struct {
 } state_t;
 _Static_assert(sizeof(state_t) <= APP_STATE_CAPACITY, "basketball state too large");
 static basketball_view_t s_status;
+static int s_pan_x10;
 
 static void enter(app_context_t *ctx)
 {
     state_t *s=ctx->state; basketball_start(&s->game, ctx->now_ms, app_random());
+    haptic_init(&s->haptic);
     /* Shots come fast: no global exit during the two minutes (it is back on the result screen, where any short press
      * leaves anyway). Holding the key for two seconds, which a shot never does, leaves at any time. */
     app_set_exit_hold(ctx, EXIT_HOLD_MS);
@@ -49,14 +53,20 @@ static void tick(app_context_t *ctx)
 {
     state_t *s=ctx->state; basketball_tick(&s->game, ctx->now_ms);
     basketball_view_t view; basketball_snapshot(&s->game, ctx->now_ms, &view);
+    app_servo_t servo;
+    app_servo_read(&servo);
+    const int pan = basketball_pan(&s->game, ctx->now_ms, servo.limit_deg, servo.speed_dps);
+    haptic_pan(&s->haptic, pan);
+    haptic_pump(ctx, &s->haptic);
     app_set_triple_exit(ctx, view.phase != BASKETBALL_PLAY);
-    app_shared_copy(s_status, view);
+    app_critical_enter(); s_status = view; s_pan_x10 = pan; app_critical_exit();
 }
 static void leave(app_context_t *ctx)
 {
     state_t *s=ctx->state; basketball_stop(&s->game);
+    haptic_stop(&s->haptic);
     if (s->plot) app_ui_canvas_refresh(s->plot); /* The shared canvas goes to the next app. */
-    app_critical_enter(); s_status.phase=BASKETBALL_OFF; app_critical_exit();
+    app_critical_enter(); s_status.phase=BASKETBALL_OFF; s_pan_x10 = 0; app_critical_exit();
 }
 static void event(app_context_t *ctx, const app_event_t *e)
 {
@@ -358,6 +368,13 @@ static bool command(const char *line)
 {
     if (app_command_is(line, "robot game start")) { (void)app_command_reply(app_command_open("basketball") ? "OK game queued" : "ERR game queue full"); return true; }
     if (app_command_is(line, "robot game stop")) { (void)app_command_menu(); return true; }
+    if (app_command_is(line, "robot game motion")) {
+        int hoop, pan;
+        bool in_flight;
+        app_critical_enter(); hoop = (int)s_status.hoop_x; pan = s_pan_x10; in_flight = s_status.in_flight; app_critical_exit();
+        (void)app_command_replyf("hoop_x=%d pan_right_x10=%d in_flight=%u", hoop, pan, in_flight ? 1U : 0U);
+        return true;
+    }
     if (!app_command_is(line, "robot game status")) return false;
     basketball_view_t v; app_shared_copy(v, s_status);
     (void)app_command_replyf("phase=%u seconds=%u shots=%lu made=%lu score=%lu", (unsigned)v.phase, v.seconds_left,
@@ -376,5 +393,6 @@ static void icon(void *parent, int x, int y, bool selected)
     app_ui_rect(ball, 5, 0, 1, 11, 0x573122, 0); app_ui_rect(ball, 0, 5, 11, 1, 0x573122, 0);
 }
 const app_descriptor_t esphook_app_basketball = {.api_version=APP_API_VERSION, .id="basketball", .title="投篮",
+    .flags=APP_SERVO_DEFAULT_HAPTIC,
     .refresh_ms=33, .state_size=sizeof(state_t), .on_enter=enter, .on_leave=leave, .on_event=event,
-    .on_tick=tick, .render=render, .icon=icon, .command=command};
+    .on_tick=tick, .render=render, .icon=icon, .command=command, .menu_group = APP_MENU_GAMES};

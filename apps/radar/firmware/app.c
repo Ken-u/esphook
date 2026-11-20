@@ -5,14 +5,18 @@
 #include "esphook/radar_view.h"
 #include <stdio.h>
 #include <string.h>
+
 typedef struct { lv_obj_t *plot, *heading, *labels[3]; } state_t;
 _Static_assert(sizeof(state_t) <= APP_STATE_CAPACITY, "radar state too large");
 static void enter(app_context_t *ctx)
 {
     state_t *s = ctx->state;
-    s->heading = app_ui_label(ctx->root, &aihook_font_12, 2, 0, 158, 15, LV_LABEL_LONG_MODE_CLIP);
-    for (unsigned i=0; i<3; ++i) {
-        s->labels[i] = app_ui_label(ctx->root, LV_FONT_DEFAULT, 110, 17+i*21, 50, 20, LV_LABEL_LONG_MODE_CLIP);
+    s->heading = app_ui_label(ctx->root, &aihook_font_12, 2, 0, 106, 15, LV_LABEL_LONG_MODE_CLIP);
+    lv_obj_t *hint = app_ui_label(ctx->root, &aihook_font_12, 110, 0, 50, 15, LV_LABEL_LONG_MODE_CLIP);
+    app_ui_text(hint, "长按切换");
+    for (unsigned i = 0; i < LD2450_TARGETS; ++i) {
+        s->labels[i] = app_ui_label(ctx->root, LV_FONT_DEFAULT, 109, 17 + i * 21, 51, 20, LV_LABEL_LONG_MODE_CLIP);
+        lv_obj_set_style_text_letter_space(s->labels[i], -1, LV_PART_MAIN);
         uint16_t color = radar_target_color(i);
         lv_obj_set_style_text_color(s->labels[i], lv_color_make((color>>11)*255/31,((color>>5)&63)*255/63,(color&31)*255/31), LV_PART_MAIN);
     }
@@ -20,23 +24,44 @@ static void enter(app_context_t *ctx)
 }
 static void render(app_context_t *ctx)
 {
-    state_t *s=ctx->state; app_radar_t radar; app_radar_read(&radar); unsigned count=0;
-    for (unsigned i=0; i<3; ++i) {
-        const ld2450_target_t *t=&radar.frame.targets[i]; char value[32];
-        if (radar.online && t->valid) { ++count; snprintf(value,sizeof value,"%u%+.1f\nY%4.1f",i+1,-(int)t->x_mm/1000.0,t->y_mm/1000.0); /* X as the viewer sees it: right is + */ }
-        else snprintf(value,sizeof value,"%u --\nY --",i+1);
-        app_ui_text(s->labels[i],value);
+    state_t *s = ctx->state;
+    app_radar_t radar;
+    app_radar_read(&radar);
+    unsigned count = 0;
+    for (unsigned i = 0; i < LD2450_TARGETS; ++i) {
+        const ld2450_target_t *target = &radar.frame.targets[i];
+        char value[24];
+        if (radar.online && target->valid) {
+            ++count;
+            /* Mirror X so the viewer's right is positive. */
+            snprintf(value, sizeof value, "X%+d\nY%d", -(int)target->x_mm, (int)target->y_mm);
+        } else {
+            snprintf(value, sizeof value, "X --\nY --");
+        }
+        app_ui_text(s->labels[i], value);
     }
     char text[48];
-    if (!radar.available) snprintf(text,sizeof text,"雷达不可用");
-    else if (!radar.online) snprintf(text,sizeof text,"NO DATA %.1fm",radar.range_mm/1000.0);
-    else snprintf(text,sizeof text,"R%u %.1fm X/Y m",count,radar.range_mm/1000.0);
-    app_ui_text(s->heading,text);
-    radar_view_draw(app_ui_pixels(),&radar.frame,radar.online,radar.range_mm,(unsigned)ctx->now_ms);
+    if (!radar.available) snprintf(text, sizeof text, "雷达不可用");
+    else if (!radar.online) snprintf(text, sizeof text, "NO DATA %u mm", radar.range_mm);
+    else snprintf(text, sizeof text, "R%u %u X/Y mm", count, radar.range_mm);
+    app_ui_text(s->heading, text);
+    radar_view_draw(app_ui_pixels(), &radar.frame, radar.online, radar.range_mm, (unsigned)ctx->now_ms);
     app_ui_canvas_refresh(s->plot);
 }
 static void leave(app_context_t *ctx) { state_t *s=ctx->state; app_ui_canvas_refresh(s->plot); }
-static void event(app_context_t *ctx,const app_event_t *e) { if(e->kind==APP_EVENT_SHORT) app_menu(ctx); }
+static void event(app_context_t *ctx, const app_event_t *event)
+{
+    if (event->kind == APP_EVENT_SHORT) {
+        app_menu(ctx);
+    } else if (event->kind == APP_EVENT_CONFIRM) {
+        app_radar_t radar;
+        app_radar_read(&radar);
+        unsigned range = RADAR_VIEW_MAX_RANGE_MM;
+        if (radar.range_mm > 3000) range = 3000;
+        else if (radar.range_mm > 1500) range = 1500;
+        (void)app_radar_set_view_range(range);
+    }
+}
 static void icon(void *parent,int x,int y,bool selected)
 {
     /* The machine at the top, its beam opening downwards towards the person in front of it. */
