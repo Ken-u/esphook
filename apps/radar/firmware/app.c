@@ -34,9 +34,9 @@ static void render(app_context_t *ctx)
         if (radar.online && target->valid) {
             ++count;
             /* Mirror X so the viewer's right is positive. */
-            snprintf(value, sizeof value, "%u%+d\nY%d", i + 1, -(int)target->x_mm, (int)target->y_mm);
+            snprintf(value, sizeof value, "X%+d\nY%d", -(int)target->x_mm, (int)target->y_mm);
         } else {
-            snprintf(value, sizeof value, "%u --\nY --", i + 1);
+            snprintf(value, sizeof value, "X --\nY --");
         }
         app_ui_text(s->labels[i], value);
     }

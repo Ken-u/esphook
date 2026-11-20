@@ -262,10 +262,10 @@ static void check_radar(const char *out)
     app_manager_commit(&manager);
     run(100);
     lv_obj_t *screen = lv_screen_active();
-    assert(shows_text(screen, "R1 6000 X/Y mm") && shows_text(screen, "1+107\nY1549"));
+    assert(shows_text(screen, "R1 6000 X/Y mm") && shows_text(screen, "X+107\nY1549"));
     radar_target.y_mm = 1548;
     run(100);
-    assert(shows_text(screen, "1+107\nY1548"));
+    assert(shows_text(screen, "X+107\nY1548"));
 
     k1(true);
     run(1200);
@@ -276,7 +276,7 @@ static void check_radar(const char *out)
     assert(!hold_leaves("radar", 650));
     run(100);
     assert(ui.range_mm == 1500 && shows_text(screen, "R1 1500 X/Y mm"));
-    assert(shows_text(screen, "1+107\nY1548"));
+    assert(shows_text(screen, "X+107\nY1548"));
     dump(out, "radar-mm");
     assert(!hold_leaves("radar", 650));
     assert(ui.range_mm == 6000);
@@ -284,7 +284,7 @@ static void check_radar(const char *out)
     radar_target.x_mm = -32767;
     radar_target.y_mm = -32767;
     run(100);
-    assert(shows_text(screen, "1-32767\nY-32767"));
+    assert(shows_text(screen, "X-32767\nY-32767"));
     dump(out, "radar-mm-edge");
     k1(true);
     run(80);

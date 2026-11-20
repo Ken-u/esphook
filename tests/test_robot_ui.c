@@ -104,7 +104,13 @@ static void radar_tests(void)
     radar_view_draw(image, &frame, true, 6000, 0);
     for (unsigned i = 0; i < 3; ++i) {
         assert(radar_view_project(&frame.targets[i], 6000, &x, &y));
-        assert(image[y * RADAR_VIEW_WIDTH + x] == radar_target_color(i));
+        uint16_t color = radar_target_color(i);
+        assert(image[y * RADAR_VIEW_WIDTH + x] == color);
+        unsigned pixels = 0;
+        for (size_t j = 0; j < sizeof image / sizeof *image; ++j) {
+            if (image[j] == color) ++pixels;
+        }
+        assert(pixels == 9); /* Each target has one cross and no separate annotation. */
     }
     radar_view_draw(image, &frame, false, 6000, 0);
     assert(radar_view_project(&frame.targets[0], 6000, &x, &y));
